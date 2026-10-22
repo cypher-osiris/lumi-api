@@ -81,6 +81,9 @@ const FIXED: Record<string, PaidRoute> = {
   "/v1/institutional": "institutional",
 };
 
+/** Unfilled path placeholders in any common style: {coin}, {{coin}}, :coin, <coin>, [coin], ${coin}, $coin. */
+const PATH_TEMPLATE_RE = /^(?:\{\{?\s*|:|<|\[|\$\{?)(?:coin|id|symbol|ticker|asset|vendor|vendor_?id|vendorId)(?:\s*\}\}?|>|\])?$/i;
+
 export function createApp(env: Env, opts: AppOptions = {}): App {
   const config = loadConfig(env);
   setPrivateNames(env.PRIVATE_NAMES);
@@ -318,10 +321,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
-    // A scanner probing the OpenAPI template literally (/v1/signal/{coin}, /v1/trust/vendors/{id}/report) gets a
+    // A scanner probing the OpenAPI template literally (/v1/signal/{coin}, /v1/signal/:coin, /v1/trust/vendors/:id/report, ...) gets a
     // helpful 400 with a concrete example URL instead of a bare 404. Nothing is quoted or charged.
     const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
-    if (rawArg !== undefined && /^\{(coin|id)\}$/.test(rawArg)) {
+    if (rawArg !== undefined && PATH_TEMPLATE_RE.test(rawArg)) {
       const example = route === "vendor_report" ? `${base}/v1/trust/vendors/scalpstream/report` : `${base}/v1/${route}/xrp`;
       return json(400, {
         error: "path_template_not_filled",
