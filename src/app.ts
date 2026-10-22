@@ -25,6 +25,8 @@ import { SEED_OBSERVATIONS } from "./trust/seed";
 import { D1CatalogStore, MemoryCatalogStore, type CatalogStore } from "./trust/catalog";
 import { createCatalog, type Catalog, type CatalogJob, type QueueLike } from "./trust/catalog_service";
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
+import { applyRate, createXrpPricer, type XrpPricer } from "./pricing";
+import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
 import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
 export interface AppOptions {
@@ -40,6 +42,8 @@ export interface AppOptions {
   catalogStore?: CatalogStore;
   /** Queue override (tests). Default: env.TRUST_QUEUE; absent = jobs run inline. */
   queue?: QueueLike;
+  /** Private request log override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  trafficStore?: TrafficStore;
 }
 
 /** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
@@ -67,9 +71,13 @@ export interface App {
   /** Queue consumer: one catalog ingest page or quote-check batch. */
   queue(job: CatalogJob): Promise<unknown>;
   config: Config;
+  pricer: XrpPricer;
   trust: Trust;
   catalog: Catalog;
   sales: SalesStore;
+  traffic: TrafficStore;
+  /** Best-effort private request log (hashed IPs only); call once per request from the Worker entry point. */
+  logTraffic(request: Request, response: Response, ctx?: WaitUntil): void;
 }
 
 const NEEDS: Record<PaidRoute, DataFile[]> = {
@@ -120,6 +128,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
 
   const split = (v?: string) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   const sales: SalesStore = opts.salesStore ?? (env.TRUST_DB ? new D1SalesStore(env.TRUST_DB) : new MemorySalesStore());
+  const traffic: TrafficStore = opts.trafficStore ?? (env.TRUST_DB ? new D1TrafficStore(env.TRUST_DB) : new MemoryTrafficStore());
+  const trafficOn = env.TRAFFIC_LOG !== "0";
   const alertCfg: AlertConfig = {
     webhookUrl: env.SALES_WEBHOOK_URL || undefined,
     email: env.SALES_ALERT_EMAIL || undefined,
@@ -147,8 +157,18 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const xrplRpc = split(env.XRPL_RPC_URLS).length ? split(env.XRPL_RPC_URLS) : DEFAULT_XRPL_RPC[config.network] ?? DEFAULT_XRPL_RPC["xrpl:0"];
   const baseRpc = env.BASE_RPC_URL ?? "https://mainnet.base.org";
   const xrplBuyers = split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo];
+  const catalogStore = opts.catalogStore ?? (env.TRUST_DB ? new D1CatalogStore(env.TRUST_DB) : new MemoryCatalogStore());
+  /** Live XRP/USD rate (only used when XRP_PRICING=live); last known rate persisted in catalog meta. */
+  const pricer = createXrpPricer({
+    fetch: doFetch,
+    fallback: config.xrpUsdFallback,
+    now,
+    log: (e) => deps.log?.(e),
+    memo: { get: () => catalogStore.getMeta("xrp_usd_rate"), set: (v) => catalogStore.setMeta("xrp_usd_rate", v) },
+    extraSources: [{ name: "lumitrades", url: `${config.dataBaseUrl}/prices.json`, pick: (j: any) => j?.assets?.ripple?.price ?? j?.ripple?.price ?? j?.XRP?.price }],
+  });
   const catalog = createCatalog({
-    store: opts.catalogStore ?? (env.TRUST_DB ? new D1CatalogStore(env.TRUST_DB) : new MemoryCatalogStore()),
+    store: catalogStore,
     fetch: doFetch,
     now,
     log: (e) => deps.log?.(e),
@@ -344,6 +364,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         config,
         coins,
         trust,
+        samples: () => samplesDoc(base),
         quote: async (p: string) => {
           const r = await handle(new Request(url.origin + p, { headers: { Accept: "application/json" } }));
           const t = await r.text();
@@ -362,6 +383,15 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return json(405, { error: "method_not_allowed" }, { Allow: "GET, OPTIONS" });
     }
+    // Owner-only private traffic summary (Authorization: Bearer <OWNER_MCP_KEY>): hashed IPs only.
+    if (path === "/v1/owner/traffic") {
+      const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") ?? "")?.[1]?.trim();
+      if (!bearer || !(await isOwnerKey(bearer, env.OWNER_MCP_KEY))) {
+        return json(401, { error: "owner_key_required", hint: "Authorization: Bearer <OWNER_MCP_KEY>" }, { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" });
+      }
+      const days = Number(url.searchParams.get("days") ?? "7");
+      return json(200, { ...(await trafficSummary(traffic, now(), days)), logging: trafficOn }, { "Cache-Control": "no-store" });
+    }
     // Owner-only sales ledger summary (Authorization: Bearer <OWNER_MCP_KEY>). Excludes Lumi's own test wallets.
     if (path === "/v1/owner/sales") {
       const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") ?? "")?.[1]?.trim();
@@ -378,7 +408,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     // ---------------- free
     switch (path) {
       case "/":
-        if (/text\/html/i.test(request.headers.get("accept") ?? "")) {
+        if (prefersHtml(request.headers.get("accept"))) {
           return new Response(indexHtml(config, base, await coins()), {
             headers: { "Content-Type": "text/html; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300", Vary: "Accept" },
           });
@@ -388,6 +418,17 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           r.headers.set("Vary", "Accept");
           return r;
         }
+      case "/favicon.ico":
+      case "/favicon.png":
+        return new Response(null, { status: 301, headers: { Location: "https://lumitrades.io/assets/favicon-32.png", "Cache-Control": "public, max-age=86400" } });
+      case "/apple-touch-icon.png":
+        return new Response(null, { status: 301, headers: { Location: "https://lumitrades.io/assets/apple-touch-icon.png", "Cache-Control": "public, max-age=86400" } });
+      case "/robots.txt":
+        return new Response(`User-agent: *\nAllow: /\nDisallow: /v1/owner/\nDisallow: /mcp/\n\nSitemap: ${base}/sitemap.xml\n`, {
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+        });
+      case "/sitemap.xml":
+        return new Response(sitemapXml(base), { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" } });
       case "/health":
         return json(200, {
           status: "ok",
@@ -450,7 +491,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     // helpful 400 with a concrete example URL instead of a bare 404. Nothing is quoted or charged.
     const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
     if (rawArg !== undefined && PATH_TEMPLATE_RE.test(rawArg)) {
-      const example = route === "vendor_report" ? `${base}/v1/trust/vendors/scalpstream/report` : `${base}/v1/${route}/xrp`;
+      const example = route === "vendor_report" ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/xrp`;
       return json(400, {
         error: "path_template_not_filled",
         detail: `Replace ${rawArg} with a real value. ${route === "vendor_report" ? "Vendor ids: GET /v1/trust/vendors (free)." : "Coins: GET /v1/coins (free)."}`,
@@ -482,6 +523,9 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const quote: Quote = {
       routeKey: coin ? `${route}:${coin.symbol}` : vendorId ? `${route}:${vendorId}` : route,
       amountDrops: config.pricesDrops[route],
+      ...(config.xrpPricing === "live" ? { liveDrops: true } : {}),
+      xrpUsd: config.xrpRate?.usd ?? config.xrpUsdFallback,
+      samplesUrl: `${base}/v1/samples`,
       amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
       amountEvm: config.evm?.amounts[route],
       description: resourceDescription(
@@ -533,11 +577,21 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
 
   return {
     config,
+    pricer,
     trust,
     sales,
     catalog,
+    traffic,
+    logTraffic(request: Request, response: Response, ctx?: WaitUntil) {
+      if (!trafficOn || request.method === "OPTIONS") return;
+      const p = trafficRow(request, response, env.TRAFFIC_SALT || env.INVOICE_SECRET || undefined, now())
+        .then((row) => traffic.insert(row))
+        .catch((e) => console.error(JSON.stringify({ event: "traffic_log_error", error: String(e).slice(0, 200) })));
+      if (ctx) ctx.waitUntil(p);
+    },
     async scheduled() {
-      const [probes, cat] = await Promise.allSettled([trust.runProbes(), catalog.cron()]);
+      const prune = traffic.prune(now() - TRAFFIC_RETENTION_DAYS * 86_400_000).catch(() => {});
+      const [probes, cat] = await Promise.allSettled([trust.runProbes(), catalog.cron(), prune]);
       return { probes: probes.status === "fulfilled" ? probes.value : { error: String(probes.reason) }, catalog: cat.status === "fulfilled" ? cat.value : { error: String(cat.reason) } };
     },
     queue: async (job: CatalogJob) => {
@@ -547,6 +601,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     },
     async fetch(request: Request, ctx?: WaitUntil): Promise<Response> {
       try {
+        if (config.xrpPricing === "live") {
+          const rate = await pricer.rate(ctx ? (p) => ctx.waitUntil(p) : undefined);
+          applyRate(config, rate);
+        }
         return await handle(request, ctx);
       } catch (err) {
         console.error(JSON.stringify({ event: "unhandled_error", error: String(err) }));
@@ -589,4 +647,28 @@ function safeDecode(s: string): string {
   } catch {
     return s;
   }
+}
+
+/** True when the Accept header ranks text/html (or xhtml) above JSON, using q-values; ties go to whichever is listed first. */
+export function prefersHtml(accept: string | null | undefined): boolean {
+  if (!accept) return false;
+  let html = -1, json = -1, htmlPos = Infinity, jsonPos = Infinity;
+  accept.split(",").forEach((part, i) => {
+    const [type, ...params] = part.trim().toLowerCase().split(";").map((x) => x.trim());
+    const qp = params.find((p) => p.startsWith("q="));
+    const q = qp ? Math.max(0, Math.min(1, Number(qp.slice(2)) || 0)) : 1;
+    if (type === "text/html" || type === "application/xhtml+xml") { if (q > html) { html = q; htmlPos = i; } }
+    else if (type === "application/json" || type === "application/*" || type.endsWith("+json")) { if (q > json) { json = q; jsonPos = i; } }
+  });
+  if (html <= 0) return false;
+  return html > json || (html === json && htmlPos < jsonPos);
+}
+
+/** API sitemap: the human and machine-readable entry points (paid routes are listed in /openapi.json, not here). */
+export function sitemapXml(base: string): string {
+  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog"];
+  const day = new Date().toISOString().slice(0, 10);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    paths.map((p) => `  <url><loc>${base}${p}</loc><lastmod>${day}</lastmod><changefreq>daily</changefreq></url>`).join("\n") +
+    `\n</urlset>\n`;
 }

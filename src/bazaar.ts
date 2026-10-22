@@ -20,17 +20,17 @@ export const BAZAAR_MAX_DESCRIPTION = 500;
 export const SERVICE_NAME = "Lumi Trades";
 export const SERVICE_ICON = "https://lumitrades.io/assets/icon-512.png";
 export const ROUTE_TAGS: Record<PaidRoute, string[]> = {
-  signal: ["crypto-signals", "trading-signals", "technical-analysis", "crypto", "market-data"],
-  levels: ["support-resistance", "price-levels", "technical-analysis", "crypto", "trading"],
-  slate: ["trade-ideas", "paper-trading", "crypto-trading", "trading", "crypto"],
-  market: ["market-data", "crypto-market", "fear-and-greed", "funding-rates", "bitcoin"],
-  brief: ["market-brief", "crypto-news", "daily-report", "research", "crypto"],
+  signal: ["crypto-signals", "trading-signals", "technical-analysis", "xrp", "bitcoin"],
+  levels: ["support-resistance", "technical-analysis", "price-levels", "xrp", "crypto"],
+  slate: ["trade-ideas", "paper-trading", "crypto-trading", "xrp", "crypto"],
+  market: ["market-data", "bitcoin", "funding-rates", "open-interest", "crypto"],
+  brief: ["market-brief", "crypto-news", "daily-report", "xrp", "crypto"],
   yen: ["macro", "forex", "yen-carry-trade", "japan", "bitcoin"],
   sentiment: ["sentiment", "fear-and-greed", "funding-rates", "open-interest", "crypto"],
-  events: ["economic-calendar", "events", "macro", "catalysts", "crypto"],
-  trades: ["paper-trading", "trade-history", "trading", "crypto", "trade-ideas"],
-  institutional: ["institutional", "policy", "regulation", "tokenization", "cbdc"],
-  vendor_report: ["x402", "trust-score", "due-diligence", "security", "agent-commerce"],
+  events: ["economic-calendar", "events", "macro", "bitcoin", "crypto"],
+  trades: ["paper-trading", "trade-history", "trade-ideas", "trading", "crypto"],
+  institutional: ["regulation", "stablecoins", "tokenization", "xrp", "xrpl"],
+  vendor_report: ["x402", "trust-score", "xrpl", "security", "due-diligence"],
 };
 
 export function serviceMeta(route: PaidRoute): { serviceName: string; tags: string[]; iconUrl: string } {

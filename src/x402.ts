@@ -85,6 +85,13 @@ export interface Quote {
   bazaar?: Record<string, unknown>;
   /** Bazaar service metadata copied onto `resource` (serviceName, tags, iconUrl). */
   service?: { serviceName?: string; tags?: string[]; iconUrl?: string };
+  /** Free, truncated samples of every product (top-level `samples` in every 402 body/header, plus a Link header). */
+  samplesUrl?: string;
+  /** Live XRP pricing: the XRP amount is carried (MAC-protected) in the invoice id so a rate change between the
+   *  402 and the paid retry cannot invalidate the quote. */
+  liveDrops?: boolean;
+  /** XRP/USD rate used to value XRP sales in the ledger. */
+  xrpUsd?: number;
 }
 
 // ---------------------------------------------------------------- encoding
@@ -146,7 +153,7 @@ function macInput(cfg: Config, routeKey: string, amount: string, exp: string, no
   return [INVOICE_PREFIX, routeKey, amount, cfg.network, cfg.payTo, exp, nonce].join("|");
 }
 
-/** invoiceId = lumi1.<routeKey>.<expiry base36>.<nonce>.<mac> */
+/** invoiceId = lumi1.<routeKey>.<expiry base36>.<nonce>.<mac>, or lumi1.<routeKey>.<exp>.<nonce>.<drops>.<mac> (live XRP pricing) */
 /** Every price offered in the quote is bound into the invoice MAC (one invoice covers all accepted assets). */
 function quoteAmounts(cfg: Config, quote: Quote): string {
   const ious = offeredIous(cfg, quote).map(([o, amt]) => `,${o.symbol}:${o.currency}:${o.issuer}:${amt}`).join("");
@@ -165,11 +172,13 @@ export async function issueInvoiceId(cfg: Config, quote: Quote, nowMs = Date.now
   const exp = Math.floor(nowMs / 1000 + cfg.invoiceTtlSeconds).toString(36);
   const nonce = b64url(crypto.getRandomValues(new Uint8Array(9)));
   const mac = await hmac(cfg.invoiceSecret, macInput(cfg, quote.routeKey, quoteAmounts(cfg, quote), exp, nonce));
-  return [INVOICE_PREFIX, quote.routeKey, exp, nonce, mac].join(".");
+  return quote.liveDrops
+    ? [INVOICE_PREFIX, quote.routeKey, exp, nonce, quote.amountDrops, mac].join(".")
+    : [INVOICE_PREFIX, quote.routeKey, exp, nonce, mac].join(".");
 }
 
 export type InvoiceCheck =
-  | { ok: true; expiresAt: number }
+  | { ok: true; expiresAt: number; amountDrops?: string }
   | { ok: false; reason: "malformed_invoice" | "invalid_invoice" | "invoice_expired" | "invoice_route_mismatch" };
 
 export async function checkInvoiceId(
@@ -179,14 +188,18 @@ export async function checkInvoiceId(
   nowMs = Date.now(),
 ): Promise<InvoiceCheck> {
   const parts = invoiceId.split(".");
-  if (parts.length !== 5 || parts[0] !== INVOICE_PREFIX) return { ok: false, reason: "malformed_invoice" };
-  const [, routeKey, exp, nonce, mac] = parts;
-  const expected = await hmac(cfg.invoiceSecret, macInput(cfg, routeKey, quoteAmounts(cfg, quote), exp, nonce));
+  if ((parts.length !== 5 && parts.length !== 6) || parts[0] !== INVOICE_PREFIX) return { ok: false, reason: "malformed_invoice" };
+  const [, routeKey, exp, nonce] = parts;
+  const mac = parts[parts.length - 1];
+  const drops = parts.length === 6 ? parts[4] : undefined;
+  if (drops !== undefined && !/^[1-9]\d{0,11}$/.test(drops)) return { ok: false, reason: "malformed_invoice" };
+  const q = drops ? { ...quote, amountDrops: drops } : quote;
+  const expected = await hmac(cfg.invoiceSecret, macInput(cfg, routeKey, quoteAmounts(cfg, q), exp, nonce));
   if (!timingSafeEqual(mac, expected)) return { ok: false, reason: "invalid_invoice" };
   if (routeKey !== quote.routeKey) return { ok: false, reason: "invoice_route_mismatch" };
   const expiresAt = parseInt(exp, 36) * 1000;
   if (!Number.isFinite(expiresAt) || expiresAt < nowMs) return { ok: false, reason: "invoice_expired" };
-  return { ok: true, expiresAt };
+  return drops ? { ok: true, expiresAt, amountDrops: drops } : { ok: true, expiresAt };
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -344,7 +357,9 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
     resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json", ...(quote.service ?? {}) },
     accepts: buildAccepts(cfg, quote, invoiceId),
     extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
-  };
+    // Top level (not in `resource`, which clients echo to the facilitator): a free, zero-cost next step for hesitant buyers.
+    ...(quote.samplesUrl ? { samples: quote.samplesUrl } : {}),
+  } as PaymentRequired;
 }
 
 /** x402 Bazaar discovery extension: every paid route is a plain GET returning JSON (inputs are in the URL path). */
@@ -382,7 +397,11 @@ export function json(status: number, body: unknown, headers: Record<string, stri
 async function paymentRequiredResponse(cfg: Config, quote: Quote, error: string): Promise<Response> {
   // Body uses the same canonical (sorted-key) order as the header, so naive string comparisons of the two match.
   const body = JSON.parse(canonicalJson(await buildPaymentRequired(cfg, quote, error)));
-  return json(402, body, { [HEADER_PAYMENT_REQUIRED]: encodeHeader(body), "Cache-Control": "no-store" });
+  return json(402, body, {
+    [HEADER_PAYMENT_REQUIRED]: encodeHeader(body),
+    "Cache-Control": "no-store",
+    ...(quote.samplesUrl ? { Link: `<${quote.samplesUrl}>; rel="describedby"; title="free samples"` } : {}),
+  });
 }
 
 function decodePaymentPayload(header: string): PaymentPayload | null {
@@ -464,9 +483,10 @@ export async function requirePayment(
   request: Request,
   cfg: Config,
   deps: PaywallDeps,
-  quote: Quote,
+  quote0: Quote,
   serve: (settlement: Settlement, paid: PaymentRequirements) => Promise<Response> | Response,
 ): Promise<Response> {
+  let quote = quote0;
   const header = request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT);
   if (!header) return paymentRequiredResponse(cfg, quote, "PAYMENT-SIGNATURE header is required");
 
@@ -482,6 +502,8 @@ export async function requirePayment(
 
   const check = await checkInvoiceId(cfg, invoiceId, quote);
   if (!check.ok) return paymentRequiredResponse(cfg, quote, check.reason);
+  // Live XRP pricing: honour the XRP amount this invoice was issued with (MAC-checked above).
+  if (check.amountDrops) quote = { ...quote, amountDrops: check.amountDrops };
 
   const expected = buildAccepts(cfg, quote, invoiceId).find((r) => sameRequirements(r, payload.accepted));
   if (!expected) {
@@ -581,7 +603,8 @@ export async function requirePayment(
     network: settlement.network,
     asset: assetLabel(expected),
     amount: expected.asset === "XRP" ? dropsToXrpStr(expected.amount) : expected.amount,
-    usd: quoteUsd(quote),
+    // XRP sales are valued at the XRP actually received times the XRP/USD rate; stablecoins at face value.
+    usd: expected.asset === "XRP" && quote.xrpUsd ? Math.round((Number(expected.amount) / 1e6) * quote.xrpUsd * 1e6) / 1e6 : expected.asset === "XRP" ? undefined : Number(expected.amount) || quoteUsd(quote),
     payer: settlement.payer,
     tx: settlement.transaction,
     facilitator: "t54",

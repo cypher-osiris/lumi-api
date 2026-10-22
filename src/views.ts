@@ -9,7 +9,7 @@ import { sanitize, splitSentences } from "./sanitize";
 
 export const SOURCE = "lumitrades.io";
 export const DISCLAIMER =
-  "Analytics and education only. Not financial advice. Trade ideas are paper trades tracked publicly on lumitrades.io, " +
+  "Analytics and education only. Not financial advice. Trade ideas are hypothetical paper trades for illustration, " +
   "not orders or signals to copy. Crypto is volatile and leverage can magnify losses. Do your own research.";
 
 export interface CoinRef {
@@ -170,20 +170,27 @@ export const TRADE_FIELDS = [
   "missed_it", "plan_type", "trigger", "parent_id", "reasoning", "cancel_reason",
 ] as const;
 
+/** Outcome fields are never published: no win/loss track record anywhere in the API. */
+const OUTCOME_FIELDS = new Set<string>(["exit_price", "pnl_pct", "targets_hit"]);
+const ACTIVE = new Set(["open", "pending"]);
+
 export function tradeView(t: Json, coins: CoinRef[]) {
   const coin = coins.find((c) => c.id === t.coin);
   const out: Record<string, unknown> = { coin: coin ? coin.symbol : t.coin };
-  for (const f of TRADE_FIELDS) if (t[f] !== undefined && t[f] !== null) out[f] = t[f];
+  const active = ACTIVE.has(String(t.status));
+  for (const f of TRADE_FIELDS) {
+    if (t[f] === undefined || t[f] === null) continue;
+    if (OUTCOME_FIELDS.has(f) || (!active && (f === "unrealized_pnl_pct" || f === "mark_price"))) continue;
+    out[f] = t[f];
+  }
+  // Outcome statuses are normalised so a closed idea never reads as a win or a loss.
+  if (!active && t.status !== "cancelled") out.status = "closed";
   return out;
 }
 
 export function slateView(trades: Json, coins: CoinRef[]) {
   const all: Json[] = Array.isArray(trades?.trades) ? trades.trades : [];
-  const active = all.filter((t) => t.status === "open" || t.status === "pending");
-  const closed = all
-    .filter((t) => ["won", "lost", "stopped"].includes(t.status))
-    .sort((a, b) => String(b.closed_at ?? "").localeCompare(String(a.closed_at ?? "")))
-    .slice(0, 5);
+  const active = all.filter((t) => ACTIVE.has(String(t.status)));
   const noSetup: Record<string, string> = {};
   for (const [id, entry] of Object.entries<Json>(trades?.slate?.coins ?? {})) {
     if (!entry?.trade_id && typeof entry?.note === "string") {
@@ -196,7 +203,6 @@ export function slateView(trades: Json, coins: CoinRef[]) {
     rules: trades?.slate?.rules ?? null,
     ideas: active.map((t) => tradeView(t, coins)),
     no_setup_notes: noSetup,
-    recently_closed: closed.map((t) => tradeView(t, coins)),
     evaluated_utc: trades?.tracked_utc ?? trades?.evaluated_utc ?? null,
   });
 }

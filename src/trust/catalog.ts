@@ -1,6 +1,6 @@
 /**
  * x402 catalog: the CDP Bazaar discovery list ingested into D1, free rotating 402-quote checks of every entry
- * (at least daily, fanned out over a Cloudflare Queue so each invocation stays within Workers Free limits), and
+ * (rotating slices every 30 minutes, fanned out over a Cloudflare Queue so each invocation stays within Workers Free limits), and
  * Lumi's on-chain-confirmed test-buys. Labels are neutral: "catalogued", "quote-verified, low confidence",
  * "purchase-verified". Nothing here rates a seller as good or bad.
  */
@@ -629,7 +629,8 @@ export function catalogView(row: CatalogRow, buys: BuyRow[], dom: DomainRow | un
     method: row.method,
     listed_price_usd: row.price_usd,
     networks: (row.networks ?? "").split(",").filter(Boolean),
-    pay_to: accepts.map((a) => ({ network: a.n, pay_to: a.p })),
+    // One entry per (network, address): Bazaar listings repeat payTo once per accepted asset/scheme.
+    pay_to: [...new Map(accepts.filter((a) => a.p).map((a) => [`${a.n}|${String(a.p).toLowerCase()}`, { network: a.n, pay_to: a.p }])).values()],
     source: "CDP x402 Bazaar discovery",
     bazaar_calls_30d: row.calls_30d,
     tier: tierOf(row, buys, now),

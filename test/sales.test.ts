@@ -66,7 +66,7 @@ describe("sales ledger", () => {
     expect(salesStore.rows).toHaveLength(2);
     const [b, x] = salesStore.rows;
     expect(b).toMatchObject({ route: "brief", routeKey: "brief", rail: "base", network: "eip155:84532", asset: "USDC", amount: "0.03", usd: 0.03, payer: account.address, isTest: false });
-    expect(x).toMatchObject({ route: "signal", routeKey: "signal:XRP", rail: "xrpl", network: "xrpl:1", asset: "XRP", isTest: false, usd: 0.01 });
+    expect(x).toMatchObject({ route: "signal", routeKey: "signal:XRP", rail: "xrpl", network: "xrpl:1", asset: "XRP", isTest: false, usd: 0.0066 }); // 0.005 XRP valued at the fallback 1.32 USD/XRP
     expect(Number(x.amount)).toBeGreaterThan(0);
     expect(x.amount).not.toMatch(/^\d{4,}$/); // XRP, not drops
   });

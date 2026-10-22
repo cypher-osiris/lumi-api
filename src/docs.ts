@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.9.0";
+export const VERSION = "0.9.1";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -35,6 +35,10 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       headers: { challenge: "PAYMENT-REQUIRED", payment: "PAYMENT-SIGNATURE", receipt: "PAYMENT-RESPONSE" },
       explorer: EXPLORERS[cfg.network],
       networks: paymentNetworks(cfg),
+      xrp_pricing:
+        cfg.xrpPricing === "live"
+          ? { mode: "live", ...(cfg.xrpRate ? { xrp_usd: cfg.xrpRate.usd, source: cfg.xrpRate.source, as_of: cfg.xrpRate.as_of } : {}), rule: "XRP amount = USD price / live XRP-USD rate, rounded up to 0.0001 XRP" }
+          : { mode: "fixed" },
     },
     guarantee:
       "You only pay when you get data: inputs are fetched and validated (present, non-empty, fresh) before any 402 quote; " +
@@ -49,7 +53,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
       { method: "GET", path: "/v1/samples", summary: "Free truncated SAMPLE of every paid product (lists cut to 2, up to 10 min old) with USD price and full URL" },
       { method: "GET", path: "/v1/trust/vendors", summary: "Lumi's automated observations of other x402 vendors (402-quote checks every 30 min, paid test-buys with tx evidence, sample sizes)" },
-      { method: "GET", path: "/v1/trust/vendors?url=|domain=|payTo=", summary: "Look up any x402 seller before you pay it: the full CDP Bazaar catalog with a free daily 402-quote check of every listing ('quote-verified, low confidence') and Lumi's on-chain-confirmed test-buys ('purchase-verified')" },
+      { method: "GET", path: "/v1/trust/vendors?url=|domain=|payTo=", summary: "Look up any x402 seller before you pay it: the full CDP Bazaar catalog, with free 402-quote checks on a rotating schedule ('quote-verified, low confidence'; not every listing is checked yet, see catalog.coverage: 'N resources across M domains indexed, X quote-verified, Y purchase-verified') and Lumi's on-chain-confirmed test-buys ('purchase-verified')" },
       { method: "GET", path: "/v1/trust/catalog", summary: "Browse the ingested x402 catalog (?after=&limit=, or ?popular=1&max_usd=0.05), with counts by tier" },
       { method: "GET", path: "/v1/trust/vendors/{id}", summary: "One vendor: observations with evidence, latest probes, verified agent reports, vendor replies" },
       { method: "GET", path: "/v1/trust/vendors/{id}/report", summary: "Paid ($0.02, x402): full observation history for one vendor; listed under paid_endpoints" },
@@ -76,7 +80,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate and history, macro, daily brief, yen carry-trade watch, sentiment, events, daily Institutional & Policy Brief, plus a detailed x402 vendor report from Lumi's trust observations), settled in ${settledIn(cfg)}.`,
+    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade ideas, macro, daily brief, yen carry-trade watch, sentiment, events, daily Institutional & Policy Brief, plus a detailed x402 vendor report from Lumi's trust observations), settled in ${settledIn(cfg)}.`,
     resources: PAID_ENDPOINTS.map((e) => ({
       name: e.name,
       url: `${base}${e.example}`,
@@ -153,20 +157,22 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         parameters: e.template.includes("{coin}")
           ? [coinParam]
           : e.template.includes("{id}")
-          ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "scalpstream", examples: { scalpstream: { value: "scalpstream" } } }]
+          ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab", examples: { printmoneylab: { value: "printmoneylab" } } }]
           : e.route === "brief" || e.route === "institutional"
             ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
             : [],
         ...(e.template.includes("{coin}")
           ? { "x-example-url": `${base}${e.template.replace("{coin}", "xrp")}` }
           : e.template.includes("{id}")
-          ? { "x-example-url": `${base}${e.template.replace("{id}", "scalpstream")}` }
+          ? { "x-example-url": `${base}${e.template.replace("{id}", "printmoneylab")}` }
           : {}),
         "x-payment-info": {
           // x402scan discovery spec: protocols as objects, price in decimal USD (the per-asset terms follow).
           protocols: [{ x402: {} }],
           price: { mode: "fixed", currency: "USD", amount: usdPrice(cfg, e.route) },
-          xrp_price: { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
+          xrp_price: cfg.xrpPricing === "live"
+            ? { mode: "live", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]), ...(cfg.xrpRate ? { xrp_usd: cfg.xrpRate.usd, as_of: cfg.xrpRate.as_of } : {}), note: "XRP amount = USD price / live XRP-USD rate (5-minute cache), rounded up to 0.0001 XRP; the 402 quote is binding" }
+            : { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
           scheme: "exact",
           network: cfg.network,
           asset: "XRP",
@@ -255,7 +261,7 @@ function trustPaths(): Record<string, unknown> {
   const r = (codes: Record<string, string>) => Object.fromEntries(Object.entries(codes).map(([k, v]) => [k, { description: v }]));
   const tag = ["trust"];
   return {
-    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 seller lookup and vendor observations (free)", description: "With url, domain or payTo (case-insensitive): matches across the full CDP x402 Bazaar catalog (ingested daily; every listing gets a free, unpaid 402-quote check at least daily: valid quote, price and payTo vs the listing, latency, domain age) and Lumi's on-chain-confirmed test-buys. Tiers: 'catalogued, not yet checked', 'quote-verified, low confidence', 'quote-checked: no valid x402 quote at the last check', 'purchase-verified'. No match returns {observed:false, note}; that is not a negative signal. Without parameters: the curated XRPL vendor list (allowlist order, not ranked) plus catalog counts. Observations, not ratings.", parameters: [
+    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 seller lookup and vendor observations (free)", description: "With url, domain or payTo (case-insensitive): matches across the full CDP x402 Bazaar catalog (ingested daily; listings get free, unpaid 402-quote checks on a rotating schedule: valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys. Tiers: 'catalogued, not yet checked', 'quote-verified, low confidence', 'quote-checked: no valid x402 quote at the last check', 'purchase-verified'. No match returns {observed:false, note}; that is not a negative signal. Without parameters: the curated XRPL vendor list (allowlist order, not ranked) plus catalog counts. Observations, not ratings.", parameters: [
       { name: "url", in: "query", required: false, description: "Resource URL you are about to pay", schema: { type: "string", maxLength: 500 } },
       { name: "domain", in: "query", required: false, description: "Seller host or registrable domain", schema: { type: "string", maxLength: 253 } },
       { name: "payTo", in: "query", required: false, description: "payTo address from the seller's 402 quote (case-insensitive)", schema: { type: "string", maxLength: 120 } },
@@ -266,7 +272,7 @@ function trustPaths(): Record<string, unknown> {
       { name: "popular", in: "query", required: false, description: "1 = most-used Bazaar listings first", schema: { type: "string", enum: ["1"] } },
       { name: "max_usd", in: "query", required: false, schema: { type: "number" } },
     ], responses: r({ "200": "OK" }) } },
-    "/v1/trust/vendors/{id}": { get: { tags: tag, security: [], summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "scalpstream" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
+    "/v1/trust/vendors/{id}": { get: { tags: tag, security: [], summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
     "/v1/trust/methodology": { get: { tags: tag, security: [], summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
     "/v1/reports": {
       post: {
@@ -613,7 +619,7 @@ Lumi publishes its automated observations of other x402 sellers on the XRP Ledge
 and one small paid test-buy per vendor per day from Lumi's own wallet, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
 Scores are observations with sample sizes, not ratings; few samples are marked low confidence; vendors are listed in allowlist order, not ranked.
 
-- Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free daily quote checks = "quote-verified, low confidence"; on-chain test-buys = "purchase-verified"; no match = \`{observed:false}\`, not a negative signal). Browse: \`GET ${base}/v1/trust/catalog\`.
+- Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free quote checks on a rotating schedule = "quote-verified, low confidence"; not every listing is checked yet, the response's \`coverage\` line says "N resources across M domains indexed, X quote-verified, Y purchase-verified"; on-chain test-buys = "purchase-verified"; no match = \`{observed:false}\`, not a negative signal). Browse: \`GET ${base}/v1/trust/catalog\`.
 - \`GET ${base}/v1/trust/vendors\`, \`GET ${base}/v1/trust/vendors/{id}\`, method: \`GET ${base}/v1/trust/methodology\`. MCP: \`lumi_vendor_scores\`. A2A: \`vendor_trust\`.
 - **Paid detailed report ($0.02 per call, x402 on every rail):** \`GET ${base}/v1/trust/vendors/{id}/report\`: full observation history (every free quote
   check over 90 days, every paid test-buy with tx hash and delivered yes/no), latency min/p50/p90/p95/max and 7-day trend, uptime % for 24h/7d/30d/90d and a
@@ -639,7 +645,7 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 export function indexHtml(cfg: Config, base: string, coins: CoinRef[]): string {
   const title = "Lumi API: pay-per-call crypto signals and x402 vendor trust scores (XRPL + Base)";
   const desc =
-    "Crypto trading signals, support/resistance levels, a daily market brief, an Institutional & Policy Brief and free x402 vendor trust " +
+    "Crypto trading signals, support/resistance levels, a daily market brief, an Institutional and Policy Brief and free x402 vendor trust " +
     "observations for AI agents. No API key: pay $0.01-$0.25 per call with x402 in USDC on Base or XRP/RLUSD/USDC on the XRP Ledger.";
   const rows = priceTable(cfg)
     .map((p) => {
@@ -769,7 +775,7 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 <a href="${esc(base)}/v1/trust/methodology">methodology</a> &middot; <a href="${esc(base)}/v1/coins">coins</a> &middot; <a href="${esc(base)}/v1/samples">free samples</a> &middot;
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
-<strong>Most popular paid read:</strong> <a href="${esc(base)}/v1/brief">the daily market brief</a> ($0.03, returns HTTP 402 with the price until paid).</p></div>
+<strong>Daily market brief:</strong> <a href="${esc(base)}/v1/brief">GET /v1/brief</a> ($0.03, returns HTTP 402 with the price until paid).</p></div>
 <h2>For agents</h2>
 <div class="qls">
 ${quickHtml}

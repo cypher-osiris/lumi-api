@@ -70,6 +70,35 @@ export function lookupQuery(sp: URLSearchParams): LookupQuery | null {
   return q.url || q.domain || q.payTo ? q : null;
 }
 
+const LOOKUP_KEYS = { url: ["url", "resource"], domain: ["domain", "host"], payTo: ["payTo", "payto", "pay_to"] } as const;
+const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
+const PAYTO_RE = /^(?:0x[0-9a-fA-F]{40}|r[1-9A-HJ-NP-Za-km-z]{24,34}|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
+
+/** Validates lookup inputs; returns a 400 body or null. Present-but-empty parameters are errors, not "list everything". */
+export function lookupError(q: Partial<LookupQuery>, present: { url?: boolean; domain?: boolean; payTo?: boolean } = {}): Record<string, unknown> | null {
+  const bad = (param: string, detail: string) => ({ error: `invalid_${param === "payTo" ? "pay_to" : param}`, param, detail, examples: ["?url=https://api.example.com/v1/data", "?domain=example.com", "?payTo=0x... or r..."] });
+  if (present.url && !q.url) return bad("url", "url is empty: pass a full http(s) resource URL.");
+  if (present.domain && !q.domain) return bad("domain", "domain is empty: pass a host name such as example.com.");
+  if (present.payTo && !q.payTo) return bad("payTo", "payTo is empty: pass an EVM (0x...), XRPL (r...) or Solana address.");
+  if (q.url) {
+    let u: URL | null = null;
+    try { u = new URL(q.url); } catch { /* invalid */ }
+    if (!u || !/^https?:$/.test(u.protocol) || !HOST_RE.test(u.hostname)) return bad("url", "url must be an absolute http(s) URL with a public host name.");
+  }
+  if (q.domain) {
+    const host = q.domain.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/:\d+$/, "").toLowerCase();
+    if (!HOST_RE.test(host)) return bad("domain", "domain must be a host name such as example.com (no scheme or path needed).");
+  }
+  if (q.payTo && !PAYTO_RE.test(q.payTo)) return bad("payTo", "payTo must be an EVM (0x + 40 hex), XRPL classic (r...) or Solana (base58) address.");
+  return null;
+}
+
+/** Which lookup parameters are present in the query string (even if empty). */
+export function lookupPresent(sp: URLSearchParams) {
+  const has = (ks: readonly string[]) => ks.some((k) => sp.has(k));
+  return { url: has(LOOKUP_KEYS.url), domain: has(LOOKUP_KEYS.domain), payTo: has(LOOKUP_KEYS.payTo) };
+}
+
 export type VendorReportResult =
   | { ok: true; doc: Record<string, unknown> }
   | { ok: false; reason: "unknown_vendor" }
@@ -268,7 +297,7 @@ export function methodologyDoc(base: string) {
     x402_catalog: {
       source: "CDP x402 Bazaar discovery API (free), ingested daily at 02:00 UTC. x402scan's resource API is paid, so it is not ingested.",
       lookup: `${base}/v1/trust/vendors?url=<resource> | ?domain=<host> | ?payTo=<address> (case-insensitive)`,
-      quote_checks: "Every catalogued http resource gets one free, unpaid request at least once a day (rotating slices every 30 minutes, fanned out over a queue). Recorded: HTTP status, whether a readable x402 quote came back, whether it pays an address in the listing, quoted price vs listed price, latency, and the last 30 results. MCP listings are not probed. The registrable domain's registration date is read from RDAP about monthly (shared hosting hosts such as workers.dev are skipped). TLS certificate age is not measured.",
+      quote_checks: "Catalogued http resources get free, unpaid requests in rotating slices every 30 minutes, fanned out over a queue; not every resource is checked every day (see counts.quote_checked_24h in the catalog summary for live coverage). Recorded: HTTP status, whether a readable x402 quote came back, whether it pays an address in the listing, quoted price vs listed price, latency, and the last 30 results. MCP listings are not probed. The registrable domain's registration date is read from RDAP about monthly (shared hosting hosts such as workers.dev are skipped). TLS certificate age is not measured.",
       tiers: {
         "catalogued, not yet checked": "Listed in the Bazaar; no quote check yet.",
         "quote-verified, low confidence": "A valid x402 quote in the last 48 h. This shows the endpoint is up and asks for payment as listed; it says nothing about what a paid call returns.",
@@ -377,6 +406,18 @@ export function createTrust(deps: TrustDeps): Trust {
     return { probes, obs, reports, replies, score: scoreVendor(probes, obs, reports, now()) };
   }
 
+  /** A vendor is "unreachable" when the last 3 probes of every endpoint got 404/410 or no answer at all. */
+  async function reachability(v: Vendor): Promise<{ status: "live" | "unreachable"; note?: string }> {
+    const hist = await store.probeHistory(v.id, now() - 7 * DAY, 25 * Math.max(1, v.endpoints.length));
+    const dead = (st: number | null) => st === null || st === 404 || st === 410;
+    const perEndpoint = v.endpoints.map((e) => hist.filter((p) => p.endpoint === e.url).slice(0, 3));
+    if (perEndpoint.length && perEndpoint.every((ps) => ps.length >= 3 && ps.every((p) => dead(p.http_status)))) {
+      const codes = [...new Set(perEndpoint.flat().map((p) => (p.http_status === null ? "no answer" : String(p.http_status))))].join("/");
+      return { status: "unreachable", note: `The last 3 checks of every endpoint returned ${codes}. Do not pay this vendor until it answers again.` };
+    }
+    return { status: "live" };
+  }
+
   function header(base: string) {
     return {
       label: LABEL,
@@ -389,12 +430,14 @@ export function createTrust(deps: TrustDeps): Trust {
   async function vendorsDoc(base: string) {
     const rows = await Promise.all(
       VENDORS.map(async (v) => {
-        const g = await gather(v);
+        const [g, reach] = await Promise.all([gather(v), reachability(v)]);
         const last = g.obs[0];
         return {
           id: v.id,
           name: v.name,
           homepage: v.homepage,
+          status: reach.status,
+          ...(reach.note ? { status_note: reach.note } : {}),
           score: g.score.value,
           confidence: g.score.confidence,
           samples: g.score.samples,
@@ -421,13 +464,15 @@ export function createTrust(deps: TrustDeps): Trust {
   async function vendorDoc(id: string, base: string) {
     const v = vendorById(id);
     if (!v) return null;
-    const g = await gather(v);
+    const [g, reach] = await Promise.all([gather(v), reachability(v)]);
     return {
       kind: "trust_vendor",
       ...header(base),
       id: v.id,
       name: v.name,
       homepage: v.homepage,
+      status: reach.status,
+      ...(reach.note ? { status_note: reach.note } : {}),
       pay_to: v.pay_to,
       endpoints: v.endpoints.map((e) => ({ url: e.url, method: e.method, listed_price: e.listed_price, listed_asset: e.listed_asset, daily_test_buy: !!e.test_buy })),
       score: { value: g.score.value, confidence: g.score.confidence, components: g.score.components, samples: g.score.samples },
@@ -958,8 +1003,14 @@ export function createTrust(deps: TrustDeps): Trust {
     if (method === "GET" || method === "HEAD") {
       if (path === "/v1/trust/methodology") return json(200, methodologyDoc(base), { "Cache-Control": "public, max-age=3600" });
       if (path === "/v1/trust/vendors") {
-        const q = lookupQuery(new URL(request.url).searchParams);
-        if (q) return json(200, await lookup(q, base), { "Cache-Control": "public, max-age=300" });
+        const sp = new URL(request.url).searchParams;
+        const q = lookupQuery(sp);
+        const err = lookupError(q ?? {}, lookupPresent(sp));
+        if (err) return json(400, err, { "Cache-Control": "no-store" });
+        if (q) {
+          if (q.domain) q.domain = q.domain.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/:\d+$/, "").toLowerCase();
+          return json(200, await lookup(q, base), { "Cache-Control": "public, max-age=300" });
+        }
         return json(200, await vendorsDoc(base), { "Cache-Control": "public, max-age=120" });
       }
       const m = path.match(/^\/v1\/trust\/vendors\/([a-z0-9-]{1,64})$/);

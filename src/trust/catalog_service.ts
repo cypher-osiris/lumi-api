@@ -80,7 +80,7 @@ export function createCatalog(deps: CatalogDeps) {
 
   /**
    * Every 30 min (cron): the next slice of the Bazaar catalog (the whole list is re-read about once a day),
-   * the next slice of free quote checks (every entry at least daily), and stats every 6 h.
+   * the next slice of free quote checks (rotating slices; coverage depends on catalog size), and stats every 6 h.
    */
   async function cron() {
     const t = now();
@@ -215,8 +215,10 @@ export function createCatalog(deps: CatalogDeps) {
     }
     const tiers: Record<string, number> = {};
     for (const e of entries) tiers[e.tier] = (tiers[e.tier] ?? 0) + 1;
+    const st = await stats();
     return {
       kind: "trust_lookup", query, observed: true, generated_at: iso(t),
+      ...(st ? { coverage: coverageLine(st) } : {}),
       labels: LABEL_NOTES,
       curated,
       catalog: { total_matches: total, shown: entries.length, ordering: "Bazaar 30-day calls, most used first", tiers_shown: tiers, entries },
@@ -233,9 +235,10 @@ export function createCatalog(deps: CatalogDeps) {
       lookup: `${base}/v1/trust/vendors?url=<resource url> | ?domain=<host> | ?payTo=<address>`,
       browse: `${base}/v1/trust/catalog`,
       labels: LABEL_NOTES,
+      coverage: s ? coverageLine(s) : null,
       counts: s ? { catalogued: s.catalogued, active: s.active, quote_checked: s.quote_checked, quote_checked_24h: s.quote_checked_24h, quote_verified: s.quote_verified, purchase_verified: s.purchase_verified, test_buys: s.test_buys, domains: s.domains, as_of: iso(s.computed_at) } : null,
       last_ingest: ing ? (() => { const j = JSON.parse(ing); return { at: iso(j.at), listed_total: j.total }; })() : null,
-      checks: "every catalogued resource gets a free, unpaid 402-quote check at least daily (valid 402, price vs listing, payTo vs listing, latency); registrable-domain age via RDAP monthly",
+      checks: "free, unpaid 402-quote checks rotate through the catalog in slices every 30 minutes (valid 402, price vs listing, payTo vs listing, latency); counts.quote_checked_24h shows how many resources were actually checked in the last 24 h. Registrable-domain age via RDAP monthly",
     };
   }
 
@@ -315,3 +318,10 @@ export function createCatalog(deps: CatalogDeps) {
 
 export type Catalog = ReturnType<typeof createCatalog>;
 export type { D1Like };
+
+const fmt = (n: number) => Number(n ?? 0).toLocaleString("en-US");
+/** Honest one-line coverage: what is indexed vs what Lumi actually checked or bought. */
+export function coverageLine(s: { catalogued: number; domains: number; quote_verified: number; purchase_verified: number; quote_checked_24h?: number }): string {
+  return `${fmt(s.catalogued)} resources across ${fmt(s.domains)} domains indexed, ${fmt(s.quote_verified)} quote-verified, ${fmt(s.purchase_verified)} purchase-verified` +
+    (s.quote_checked_24h != null ? ` (${fmt(s.quote_checked_24h)} quote-checked in the last 24 h)` : "");
+}

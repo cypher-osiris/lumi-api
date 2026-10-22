@@ -72,7 +72,7 @@ export function hasContent(route: string, body: Json): boolean {
     case "levels":
       return (body.support?.length ?? 0) + (body.resistance?.length ?? 0) > 0 || !!body.projection || !!body.commentary;
     case "slate":
-      return Array.isArray(body.ideas) && (body.ideas.length > 0 || Object.keys(body.no_setup_notes ?? {}).length > 0 || body.recently_closed?.length > 0);
+      return Array.isArray(body.ideas) && (body.ideas.length > 0 || Object.keys(body.no_setup_notes ?? {}).length > 0);
     case "market":
       return typeof body.btc_backdrop?.price?.usd === "number";
     case "brief":

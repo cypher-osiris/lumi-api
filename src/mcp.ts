@@ -18,7 +18,7 @@ import { PAID_ENDPOINTS } from "./catalog";
 import { indexDoc, VERSION } from "./docs";
 import { DISCLAIMER, type CoinRef } from "./views";
 import type { Prepared } from "./app";
-import type { Trust } from "./trust";
+import { lookupError, type Trust } from "./trust";
 
 export const MODERN_VERSION = "2026-07-28";
 const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -74,7 +74,7 @@ export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "Refreshed daily; never sold stale. Paid: $0.25 per call (USDC/RLUSD, or the XRP equivalent). Not financial advice.";
 
 export const VENDOR_LOOKUP_DESCRIPTION =
-  "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs a free, unpaid 402-quote check of every listing at least daily (valid quote, price and payTo vs the listing, latency, domain age), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
+  "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
 
 /** Same names and descriptions as mcp/src/index.js (PAID_TOOLS). */
 export const PAID_TOOLS: PaidTool[] = [
@@ -467,7 +467,12 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
       case "lumi_vendor_scores": {
         if (!deps.trust) return text({ error: "trust layer unavailable" }, true);
         const lq = { url: str(args.url), domain: str(args.domain), payTo: str(args.payTo) ?? str(args.pay_to) };
-        if (lq.url || lq.domain || lq.payTo) return text(await deps.trust.lookup(lq, base));
+        if (lq.url || lq.domain || lq.payTo) {
+          // Empty optional args are ignored (MCP clients often send ""); non-empty but malformed ones are errors.
+          const err = lookupError(lq);
+          if (err) return text(err, true);
+          return text(await deps.trust.lookup(lq, base));
+        }
         const id = str(args.vendor_id);
         if (id) {
           const doc = await deps.trust.vendorDoc(id, base);
@@ -536,12 +541,15 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
   ];
   if (cfg.evm) prices.push({ asset: "USDC", amount: cfg.evm.prices[tool.route], network: cfg.evm.network, token: cfg.evm.asset });
   const xrplText = prices.filter((p) => p.network === cfg.network).map((p) => `${p.amount} ${p.asset}`).join(" or ");
-  const priceText = `${xrplText} on the XRP Ledger${cfg.evm ? `, or ${cfg.evm.prices[tool.route]} USDC on ${cfg.evm.networkName}` : ""}`;
+  // Base USDC first (gasless, most agent wallets hold it), the XRP Ledger second.
+  const priceText = cfg.evm
+    ? `${cfg.evm.prices[tool.route]} USDC on ${cfg.evm.networkName}, or ${xrplText} on the XRP Ledger`
+    : `${xrplText} on the XRP Ledger`;
   const summary =
     `${tool.name} is a paid Lumi tool: ${priceText} per call (x402). ` +
     "This remote MCP connection has no wallet, so nothing was charged and no data was returned. " +
     "The data is fresh and available right now. To get it, either pay per call via x402 at the REST endpoint below, " +
-    `or install the ${NPM_PACKAGE} MCP server (npm) with your own XRPL wallet so it can pay automatically within spend caps.`;
+    `or install the ${NPM_PACKAGE} MCP server (npm) with your own wallet (USDC on Base, or the XRP Ledger) so it can pay automatically within spend caps.`;
   return text(
     summary +
       "\n\n" +
@@ -551,7 +559,7 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
           charged: false,
           tool: tool.name,
           what_you_get: endpoint.summary,
-          price: prices,
+          price: cfg.evm ? [prices[prices.length - 1], ...prices.slice(0, -1)] : prices,
           network: cfg.network,
           pay_to: cfg.payTo,
           ...(cfg.evm ? { base: { network: cfg.evm.network, pay_to: cfg.evm.payTo, asset: cfg.evm.asset } } : {}),
@@ -560,12 +568,22 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
               option: "x402 REST call",
               url: restUrl,
               steps:
-                "GET the URL -> HTTP 402 with x402 v2 terms (PAYMENT-REQUIRED); sign an XRPL Payment (or, on Base, an EIP-3009 USDC authorization) for the quoted amount; " +
-                "retry with the PAYMENT-SIGNATURE header -> 200 with the data. The x402-xrpl SDK (npm or PyPI) or @x402/fetch + @x402/evm (Base) does this in one call.",
+                "GET the URL -> HTTP 402 with x402 v2 terms (PAYMENT-REQUIRED); sign an EIP-3009 USDC authorization on Base (or an XRPL Payment) for the quoted amount; " +
+                "retry with the PAYMENT-SIGNATURE header -> 200 with the data. @x402/fetch + @x402/evm (Base) or the x402-xrpl SDK (npm or PyPI) does this in one call.",
               guide: `${base}/skill.md`,
             },
+            ...(cfg.evm
+              ? [
+                  {
+                    option: `npm MCP server (${NPM_PACKAGE}), USDC on ${cfg.evm.networkName} (recommended)`,
+                    install: `npx -y ${NPM_PACKAGE}`,
+                    config: { command: "npx", args: ["-y", NPM_PACKAGE], env: { EVM_PRIVATE_KEY: "<your Base agent wallet key, signed locally; holds USDC, no ETH needed>", LUMI_MAX_USD_PER_CALL: "0.30", LUMI_SESSION_BUDGET: "1" } },
+                    note: "Gasless: pays with an EIP-3009 USDC authorization (the facilitator pays gas). Runs locally over stdio within per-call caps and a session budget.",
+                  },
+                ]
+              : []),
             {
-              option: `npm MCP server (${NPM_PACKAGE})`,
+              option: `npm MCP server (${NPM_PACKAGE}), XRP Ledger`,
               install: `npx -y ${NPM_PACKAGE}`,
               config: { command: "npx", args: ["-y", NPM_PACKAGE], env: { XRPL_SEED: "<your XRPL wallet seed, signed locally>", LUMI_PAY_ASSET: "XRP", LUMI_MAX_XRP_PER_CALL: Number(xrp) > 0.05 ? "0.25" : "0.05", ...(Number(cfg.ious[0]?.prices[tool.route] ?? 0) > 0.05 ? { LUMI_MAX_USD_PER_CALL: "0.3" } : {}), LUMI_SESSION_BUDGET: "1" } },
               note: "Runs locally over stdio and pays from your wallet within per-call caps and a session budget.",

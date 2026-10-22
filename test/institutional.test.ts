@@ -198,7 +198,7 @@ describe("institutional brief over MCP and A2A", () => {
     const { mcp, fac } = setup();
     const pub = await mcp("lumi_institutional_brief");
     expect(pub.isError).toBe(true);
-    expect(pub.content[0].text).toMatch(/0\.19 XRP or 0\.25 RLUSD or 0\.25 USDC on the XRP Ledger, or 0\.25 USDC on Base Sepolia/);
+    expect(pub.content[0].text).toMatch(/0\.25 USDC on Base Sepolia, or 0\.19 XRP or 0\.25 RLUSD or 0\.25 USDC on the XRP Ledger/);
     expect(pub.content[0].text).toContain(`${BASE}/v1/institutional`);
     const own = await mcp("lumi_institutional_brief", {}, { Authorization: `Bearer ${KEY}` });
     expect(own.isError).toBeUndefined();

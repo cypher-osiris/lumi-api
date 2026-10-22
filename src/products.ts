@@ -360,7 +360,10 @@ export function briefView(d: { prices: Json; context: Json; analysis: Json; sign
   const body = compact({
     date: nowIso.slice(0, 10),
     headline: nl?.subject ?? null,
-    lumi_take: nl?.tldr ? { text: nl.tldr, from: `Trade with Lumi newsletter, ${nl.date}` } : null,
+    lumi_take: nl?.tldr ? (() => {
+      const synced = btc ? syncBtcLede(String(nl.tldr), btc.usd, round(btc.change_24h_pct)) : { text: String(nl.tldr), changed: false };
+      return { text: synced.text, from: `Trade with Lumi newsletter, ${nl.date}${synced.changed && btc?.as_of ? `; BTC figures updated to live data as of ${btc.as_of}` : ""}` };
+    })() : null,
     bitcoin: btc
       ? {
           usd: btc.usd,
@@ -394,6 +397,25 @@ export function briefView(d: { prices: Json; context: Json; analysis: Json; sign
   });
   const env = envelope("brief", body as Record<string, unknown>);
   return { ...env, markdown: briefMarkdown(env as Json) };
+}
+
+/**
+ * The newsletter take is written hours earlier; rewrite its Bitcoin price (and the 24h % right after it) with the live
+ * numbers so the lede agrees with the structured bitcoin field and the Market section.
+ */
+export function syncBtcLede(text: string, usd: number | undefined | null, changePct: number | undefined | null): { text: string; changed: boolean } {
+  if (typeof usd !== "number" || !isFinite(usd)) return { text, changed: false };
+  let changed = false;
+  const re = /\b(Bitcoin|BTC)\b([^$.;]{0,40}?)\$\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?([kK])?(\s*\(\s*[+\-\u2212]?\d+(?:\.\d+)?%\s*\))?/;
+  const out = text.replace(re, (_m, coin: string, mid: string, _n: string, _k: string, pctPart: string | undefined) => {
+    changed = true;
+    const price = `$${Math.round(usd).toLocaleString("en-US")}`;
+    // a stale 24h % is dropped when there is no live one to replace it with
+    const p = typeof changePct === "number" && isFinite(changePct) ? ` (${changePct >= 0 ? "+" : ""}${changePct}%)` : "";
+    void pctPart;
+    return `${coin}${mid}${price}${p}`;
+  });
+  return { text: out, changed };
 }
 
 const fmtUsd = (v: number) => (v >= 1000 ? `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : v >= 1 ? `$${v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")}` : `$${Number(v.toPrecision(3))}`);

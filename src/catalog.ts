@@ -64,7 +64,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     template: "/v1/brief",
     summary:
       "Today's market brief, the same read as Lumi's newsletter and Shorts: BTC price/levels/signal, CoinMarketCap Fear & Greed, funding, " +
-      "top/bottom movers, key levels for 13 coins, yen watch, events in the next 48h, paper trades + record, sourced news. JSON with a " +
+      "top/bottom movers, key levels for 13 coins, yen watch, events in the next 48h, Lumi's active paper trades, sourced news. JSON with a " +
       "ready-to-use `markdown` field; add ?format=md (or Accept: text/markdown) for text/markdown.",
     example: "/v1/brief",
   },

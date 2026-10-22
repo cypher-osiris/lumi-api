@@ -161,7 +161,7 @@ describe("paid vendor report: docs, MCP and A2A", () => {
     const { mcp, fac } = setup();
     const pub = await mcp("lumi_vendor_report", { vendor_id: "asksurf" });
     expect(pub.isError).toBe(true);
-    expect(pub.content[0].text).toMatch(/0\.015 XRP or 0\.02 RLUSD or 0\.02 USDC on the XRP Ledger, or 0\.02 USDC on Base Sepolia/);
+    expect(pub.content[0].text).toMatch(/0\.02 USDC on Base Sepolia, or 0\.015 XRP or 0\.02 RLUSD or 0\.02 USDC on the XRP Ledger/);
     expect(pub.content[0].text).toContain(`${BASE}${PATH}`);
     const own = await mcp("lumi_vendor_report", { vendor_id: "asksurf" }, { Authorization: `Bearer ${KEY}` });
     expect(own.isError).toBeUndefined();

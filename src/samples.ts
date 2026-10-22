@@ -65,7 +65,7 @@ export function productSample(route: PaidRoute, body: Record<string, unknown>) {
   return { sample, truncated: { arrays: cut, ...(omitted.length ? { omitted } : {}) } };
 }
 
-export const SAMPLE_ARGS: Partial<Record<PaidRoute, string>> = { signal: "XRP", levels: "XRP", vendor_report: "scalpstream" };
+export const SAMPLE_ARGS: Partial<Record<PaidRoute, string>> = { signal: "XRP", levels: "XRP", vendor_report: "printmoneylab" };
 
 export function sampleEntry(cfg: Config, base: string, route: PaidRoute) {
   const e = PAID_ENDPOINTS.find((x) => x.route === route)!;

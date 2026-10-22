@@ -107,6 +107,14 @@ export interface Env {
   SALES_ALERT_TESTS?: string;
   /** Extra comma-separated wallets whose payments are marked is_test. */
   SALES_TEST_WALLETS?: string;
+  /** "live" prices XRP options from a live XRP/USD rate (cached 5 min, multi-source); anything else = fixed PRICE_<R>_XRP. */
+  XRP_PRICING?: string;
+  /** Static XRP/USD rate used only when every live source and the last-known rate are unavailable. */
+  XRP_USD_FALLBACK?: string;
+  /** Private request log (D1 table `traffic`): "0" turns it off. IPs are stored only as salted daily hashes. */
+  TRAFFIC_LOG?: string;
+  /** Optional key for the private traffic log's IP hash (falls back to INVOICE_SECRET). Secret. */
+  TRAFFIC_SALT?: string;
 }
 
 /** Minimal Cloudflare D1 surface used by the trust store. */
@@ -178,6 +186,13 @@ export interface Config {
   publicBaseUrl?: string;
   /** Base USDC option (x402 `exact`, EIP-3009), offered after every XRPL option. Undefined = off. */
   evm?: EvmOption;
+  /** USD list price per route (the stablecoin price); live XRP pricing targets exactly this. */
+  usdPrices: Record<PaidRoute, string>;
+  /** fixed = PRICE_<R>_XRP; live = usdPrices / live XRP-USD rate (pricesDrops is updated in place per request). */
+  xrpPricing: "fixed" | "live";
+  xrpUsdFallback: number;
+  /** The rate behind the current pricesDrops when xrpPricing is live. */
+  xrpRate?: { usd: number; source: string; as_of: string };
 }
 
 export type EvmNetwork = "eip155:8453" | "eip155:84532";
@@ -385,6 +400,15 @@ export function loadConfig(env: Env): Config {
     invoiceTtlSeconds: Number(env.INVOICE_TTL_SECONDS || 300),
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/+$/, "") || undefined,
     evm: evmConfig(env),
+    usdPrices: Object.fromEntries(
+      PAID_ROUTES.map((r) => {
+        const R = r.toUpperCase();
+        const e = env as Record<string, string | undefined>;
+        return [r, iouValue(e[`PRICE_${R}_BASE_USDC`] || e[`PRICE_${R}_USDC`] || e[`PRICE_${R}_RLUSD`] || DEFAULT_PRICES[r].usd)];
+      }),
+    ) as Record<PaidRoute, string>,
+    xrpPricing: (env.XRP_PRICING || "").trim().toLowerCase() === "live" ? "live" : "fixed",
+    xrpUsdFallback: Number(env.XRP_USD_FALLBACK) > 0 ? Number(env.XRP_USD_FALLBACK) : 1.32,
   };
 }
 

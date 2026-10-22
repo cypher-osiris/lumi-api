@@ -5,7 +5,7 @@ and **Institutional & Policy Brief**, and **crypto signals** (XRP and 12 more co
 and any other MCP client. Paid tools **pay per call via x402 with your own wallet: USDC on Base (gasless) or XRP / RLUSD / USDC on the XRP Ledger**.
 No API key, no account: each paid tool call is one small payment, signed locally on your machine.
 
-> Analytics and education only. Not financial advice. Lumi's trade ideas are public paper trades.
+> Analytics and education only. Not financial advice. Trade ideas are hypothetical paper trades for illustration, not orders or signals to copy.
 
 **No install needed to browse:** the same tools are also served remotely at `https://api.lumitrades.io/mcp` (Streamable HTTP),
 for clients that take a remote MCP server URL. A remote connector has no wallet, so its paid tools return the price and how to pay;
@@ -13,25 +13,27 @@ use this package when you want paid tools to pay automatically from your own wal
 
 ## Tools
 
-| Tool | Paid? | Price (USD / XRP) | What you get |
+| Tool | Paid? | Price (USD) | What you get |
 |---|---|---|---|
 | `lumi_catalog` | free | – | Endpoints, live prices, this server's wallet + spend caps |
 | `lumi_samples` | free | `route?` | Truncated, labelled samples of every paid product with USD price and full URL |
 | `lumi_coins` | free | – | The 13 coins covered (XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI) |
 | `lumi_quote` | free | – | The x402 quote for any paid path, without paying |
 | `lumi_vendor_scores` | free | `url?` `domain?` `payTo?` `vendor_id?` | Look up any x402 seller before paying: tier (catalogued / quote-verified, low confidence / purchase-verified), last free 402-quote check, price and payTo vs its Bazaar listing, on-chain test-buy evidence. No args: Lumi's curated vendor scores |
-| `lumi_brief` | paid | $0.03 / 0.02 | Today's market brief (BTC, CoinMarketCap Fear & Greed, movers, key levels, yen, events, paper trades, news). `format: "md"` for markdown |
-| `lumi_signal` | paid | $0.01 / 0.005 | Buy/sell read for one coin (1h/4h/1d + indicators) |
-| `lumi_levels` | paid | $0.01 / 0.005 | Support/resistance, 7-day projection, commentary for one coin |
-| `lumi_slate` | paid | $0.02 / 0.01 | Current paper-trade ideas |
-| `lumi_market` | paid | $0.02 / 0.01 | BTC + macro backdrop and breadth |
-| `lumi_macro_yen` | paid | $0.015 / 0.01 | USD/JPY, Nikkei, carry-trade risk around 155, Japan events |
-| `lumi_sentiment` | paid | $0.01 / 0.005 | Fear & Greed, funding read, OI, dominance, breadth |
-| `lumi_events` | paid | $0.01 / 0.005 | Sourced upcoming macro/crypto events and catalysts |
-| `lumi_trades` | paid | $0.02 / 0.01 | Paper-trade history as a raw list (entry, stop, targets, status, reasoning) |
-| `lumi_vendor_report` | paid | $0.02 / 0.015 | Full observation history for one x402 vendor on Lumi's trust list: every quote check (90 days) and paid test-buy with tx hash and delivered yes/no, latency stats and trend, uptime %, verified agent reports, vendor replies, confidence labels. `vendor_id` required |
-| `lumi_institutional_brief` | paid | $0.25 / 0.19 | Daily Institutional & Policy Brief: BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR (confirmed vs indirect-alignment links, sourced). `format: "md"` for markdown. Allowed by the default caps (0.30 USD / 0.25 XRP) |
+| `lumi_brief` | paid | $0.03 | Today's market brief (BTC, CoinMarketCap Fear & Greed, movers, key levels, yen, events, paper trades, news). `format: "md"` for markdown |
+| `lumi_signal` | paid | $0.01 | Buy/sell read for one coin (1h/4h/1d + indicators) |
+| `lumi_levels` | paid | $0.01 | Support/resistance, 7-day projection, commentary for one coin |
+| `lumi_slate` | paid | $0.02 | Current paper-trade ideas |
+| `lumi_market` | paid | $0.02 | BTC + macro backdrop and breadth |
+| `lumi_macro_yen` | paid | $0.015 | USD/JPY, Nikkei, carry-trade risk around 155, Japan events |
+| `lumi_sentiment` | paid | $0.01 | Fear & Greed, funding read, OI, dominance, breadth |
+| `lumi_events` | paid | $0.01 | Sourced upcoming macro/crypto events and catalysts |
+| `lumi_trades` | paid | $0.02 | Paper-trade ideas as a raw list (entry, stop, targets, status, reasoning) |
+| `lumi_vendor_report` | paid | $0.02 | Full observation history for one x402 vendor on Lumi's trust list: every quote check (90 days) and paid test-buy with tx hash and delivered yes/no, latency stats and trend, uptime %, verified agent reports, vendor replies, confidence labels. `vendor_id` required |
+| `lumi_institutional_brief` | paid | $0.25 | Daily Institutional & Policy Brief: BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR (confirmed vs indirect-alignment links, sourced). `format: "md"` for markdown. Allowed by the default caps (0.30 USD / 0.25 XRP) |
 
+How to pay, in order of preference: **1. USDC on Base** (gasless, `EVM_PRIVATE_KEY`), **2. the XRP Ledger** (`XRPL_SEED`):
+RLUSD or USDC at the same USD price, or XRP at the live XRP/USD rate (quoted per call, rounded up to 0.0001 XRP).
 Prices are read live from each 402 quote; the table is for orientation. **You only pay when you get data**: the API refuses to quote
 (503, "Not charged.") when its data is missing or stale, so a payment is never settled without data.
 

@@ -9,6 +9,7 @@ export const OWN_WALLETS = [
   "0x7722DfAE6bbed2Fd02Dc07455c2f5BF14bE25E4a", // Base buyer (test-buys, Bazaar refresh)
   "0x5E617bac19912e6d212CB303ae84655E9E203532", // Base main (pay-to)
   "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM", // XRPL main (pay-to)
+  "rpvsTYDZmX1j1ndmEFG6YjjZZwp6VRtQRz", // XRPL demo buyer (test-buys)
 ];
 
 export interface SaleEvent {
@@ -150,7 +151,7 @@ export async function salesSummary(store: SalesStore, now: number, opts: { inclu
       tx: r.tx,
       ...(r.isTest ? { is_test: true } : {}),
     })),
-    note: "usd_list_total sums the route's USD list price per sale (stablecoin quote), so XRP and USDC sales add up on one scale.",
+    note: "usd_list_total sums each sale's USD value: stablecoins at face value, XRP at the XRP actually received times the XRP/USD rate at settlement. Test wallets (Lumi's own wallets and demo buyers) are excluded from revenue.",
   };
 }
 
@@ -218,8 +219,9 @@ export async function sendSaleAlert(cfg: AlertConfig, row: SaleRow, doFetch: typ
       const make = cfg.makeMessage ?? (await loadEmailMessage());
       await cfg.emailBinding.send(make(cfg.emailFrom, cfg.email, mime));
       sent.push("email");
-    } catch {
-      /* best effort */
+    } catch (e) {
+      // Best effort; the recipient is private, so it is redacted from the log line.
+      console.log(JSON.stringify({ event: "sale_alert_email_error", error: String((e as Error)?.message ?? e).split(cfg.email).join("<recipient>").slice(0, 200) }));
     }
   }
   return sent;

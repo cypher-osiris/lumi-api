@@ -258,16 +258,16 @@ describe("openapi scanner hints", () => {
     expect(oa.paths["/v1/trust/observations"].post.security).toEqual([{ bearer: [] }]);
     expect(oa.components.securitySchemes.bearer.scheme).toBe("bearer");
     expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("xrp");
-    expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("scalpstream");
+    expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("printmoneylab");
     expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/xrp");
   });
 
   it("answers a literally probed path template with a helpful 400, never a quote", async () => {
     const { get } = setup();
-    for (const [p, ex] of [["/v1/signal/{coin}", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp"], ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/scalpstream/report"],
+    for (const [p, ex] of [["/v1/signal/{coin}", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp"], ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report"],
       ["/v1/signal/:coin", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/xrp"],
       ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/xrp"],
-      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/scalpstream/report"], ["/v1/trust/vendors/%7BvendorId%7D/report", "/v1/trust/vendors/scalpstream/report"]]) {
+      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report"], ["/v1/trust/vendors/%7BvendorId%7D/report", "/v1/trust/vendors/printmoneylab/report"]]) {
       const r = await get(p);
       expect(r.status).toBe(400);
       expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();

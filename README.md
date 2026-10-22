@@ -357,7 +357,7 @@ answered before they pay it. These are observations with timestamps, tx hashes a
 
 | Endpoint | What |
 |---|---|
-| `GET /v1/trust/vendors?url=…` / `?domain=…` / `?payTo=…` | Look up any x402 seller before paying: the full CDP x402 Bazaar catalog (ingested daily, ~33k resources) with a free unpaid 402-quote check of every listing at least daily (valid quote, price and payTo vs listing, latency, RDAP domain age) labelled **quote-verified, low confidence**, plus Lumi's on-chain-confirmed test-buys labelled **purchase-verified**. No match: `{observed:false, note}` (not a negative signal). Lumi itself: "self, not scored" |
+| `GET /v1/trust/vendors?url=…` / `?domain=…` / `?payTo=…` | Look up any x402 seller before paying: the full CDP x402 Bazaar catalog (ingested daily; live counts at `/v1/trust/catalog`) with free unpaid 402-quote checks on a rotating schedule (valid quote, price and payTo vs listing, latency, RDAP domain age) labelled **quote-verified, low confidence**, plus Lumi's on-chain-confirmed test-buys labelled **purchase-verified**. No match: `{observed:false, note}` (not a negative signal). Lumi itself: "self, not scored" |
 | `GET /v1/trust/catalog` | Browse the catalog (`?after=&limit=`, or `?popular=1&max_usd=0.05`) with counts by tier |
 | `GET /v1/trust/vendors` | Every allowlisted vendor (allowlist order, not ranked): score, confidence, sample sizes, last paid observation with evidence, latest probes |
 | `GET /v1/trust/vendors/{id}` | One vendor: listed endpoints and pay-to addresses, score components, up to 50 observations, latest probe per endpoint, verified agent reports, vendor replies |
@@ -506,7 +506,7 @@ demo/               recorded testnet transcripts
 
 ## Disclaimer
 
-Lumi API provides analytics for information and education only. It is not financial advice. Trade ideas are paper trades tracked publicly on lumitrades.io, not orders or recommendations. Crypto is volatile and leverage can magnify losses. Do your own research.
+Lumi API provides analytics for information and education only. It is not financial advice. Trade ideas are hypothetical paper trades for illustration, not orders or recommendations. Crypto is volatile and leverage can magnify losses. Do your own research.
 
 ## License
 

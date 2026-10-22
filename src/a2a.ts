@@ -16,6 +16,7 @@ import { VERSION, paymentNetworks, settledIn } from "./docs";
 import { DISCLAIMER, type CoinRef } from "./views";
 import type { PaidRoute } from "./config";
 import { VENDORS } from "./vendors";
+import { SERVICE_ICON } from "./bazaar";
 
 const VENDOR_IDS = VENDORS.map((v) => v.id);
 
@@ -44,6 +45,7 @@ const SKILLS: SkillDef[] = [
   { id: "catalog", name: "Catalog: endpoints, prices, payment networks (free)", tags: ["catalog", "pricing", "x402", "free"], examples: ["catalog", "what do you sell and how much?"], match: /\b(catalog|prices?|pricing|endpoints?|help|menu)\b/i },
   { id: "coins", name: "Supported coins (free)", tags: ["coins", "free"], examples: ["list coins"], match: /\b(coins|supported|tickers)\b/i },
   { id: "vendor_trust", name: "x402 seller lookup and observations (free)", tags: ["trust", "x402", "vendors", "observations", "lookup", "bazaar", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"url\":\"https://example.com/api/x402\"}", "{\"skill\":\"vendor_trust\",\"payTo\":\"0x...\"}", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"asksurf\"}"], match: /\b(vendors?|trust)\b/i },
+  { id: "samples", name: "Free samples of every paid product", tags: ["samples", "preview", "free"], examples: ["samples", "show me a free sample"], match: /\b(samples?|preview|try|demo)\b/i },
   { id: "quote", name: "Price quote for a paid call, without paying (free)", tags: ["quote", "x402", "free"], examples: ["quote /v1/brief"], match: /\bquote\b/i },
   {
     id: "institutional",
@@ -77,7 +79,8 @@ const FREE_DESCRIPTIONS: Record<string, string> = {
   catalog: "Lists every Lumi endpoint with live prices on every payment network (XRP Ledger, Base), the MCP and A2A endpoints, and the no-charge-when-stale guarantee.",
   coins: "The 13 coins Lumi covers (tickers and CoinGecko ids).",
   vendor_trust:
-    "Check an x402 seller before paying it: {\"url\":\"...\"}, {\"domain\":\"...\"} or {\"payTo\":\"...\"} (case-insensitive) looks it up in the full CDP x402 Bazaar catalog (free quote check of every listing at least daily: 'quote-verified, low confidence') and Lumi's on-chain-confirmed test-buys ('purchase-verified'). With no arguments: curated XRPL vendor observations; {\"vendor_id\":\"...\"} for one vendor's evidence. Observations, not ratings; no match is not a negative signal.",
+    "Check an x402 seller before paying it: {\"url\":\"...\"}, {\"domain\":\"...\"} or {\"payTo\":\"...\"} (case-insensitive) looks it up in the full CDP x402 Bazaar catalog (free quote checks of listings on a rotating schedule: 'quote-verified, low confidence'; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys ('purchase-verified'). With no arguments: curated XRPL vendor observations; {\"vendor_id\":\"...\"} for one vendor's evidence. Observations, not ratings; no match is not a negative signal.",
+  samples: "Free, clearly labelled SAMPLE previews of every paid product (truncated, up to 10 minutes old), with the USD price of each. Use it to see the output shape before paying.",
   quote: "Live x402 v2 quote (all accepts options) for a paid skill or path, e.g. {\"skill\":\"signal\",\"coin\":\"XRP\"} or \"quote /v1/brief\". A 503 means the data is not fresh right now and would not be sold.",
 };
 
@@ -113,6 +116,7 @@ export function agentCard(cfg: Config, base: string) {
     // A2A 1.0
     supportedInterfaces: A2A_VERSIONS.map((v) => ({ url: a2aUrl, protocolBinding: "JSONRPC", protocolVersion: v })),
     provider: { organization: "Lumi Trades", url: "https://lumitrades.io" },
+    iconUrl: SERVICE_ICON,
     version: VERSION,
     documentationUrl: `${base}/skill.md`,
     capabilities: {
@@ -167,6 +171,8 @@ export interface A2aDeps {
   quote(path: string): Promise<{ status: number; body: any }>;
   /** Trust layer (free vendor observations). */
   trust?: Pick<Trust, "vendorsDoc" | "vendorDoc" | "lookup">;
+  /** Free samples document (same as GET /v1/samples). */
+  samples?(): Promise<Record<string, unknown>>;
   log(event: Record<string, unknown>): void;
 }
 
@@ -341,6 +347,14 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
     const doc = await deps.trust.vendorsDoc(base);
     const list = (doc.vendors as { name: string; score: number | null; confidence: string }[]).map((v) => `${v.name}: ${v.score ?? "n/a"} (${v.confidence})`).join("; ");
     return { skill: "vendor_trust", text: `Lumi's automated observations of x402 vendors (not ratings): ${list}. Methodology: ${base}/v1/trust/methodology`, data: doc };
+  }
+  if (skill.id === "samples") {
+    const doc = deps.samples ? await deps.samples() : null;
+    return {
+      skill: "samples",
+      text: `Free SAMPLE previews of all paid products: ${base}/v1/samples (truncated, up to 10 minutes old; labelled is_sample).`,
+      data: doc ?? { url: `${base}/v1/samples` },
+    };
   }
   if (skill.id === "coins") {
     return { skill: "coins", text: `Lumi covers ${coins.length} coins: ${coins.map((c) => c.symbol).join(", ")}.`, data: { coins } };

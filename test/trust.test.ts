@@ -68,7 +68,7 @@ function setup(opts: { txs?: Record<string, TxFixture>; regularKeys?: Record<str
         headers: { "Content-Type": "application/json", "CF-Connecting-IP": init.ip ?? "203.0.113.7", ...init.headers },
         body: init.body === undefined ? undefined : typeof init.body === "string" ? init.body : JSON.stringify(init.body),
       }),
-      path,
+      path.split("?")[0],
       BASE,
     ) as Promise<Response>;
   return { store, trust, req, logs, fetchCalls };
@@ -117,6 +117,34 @@ describe("trust: public reads", () => {
     const text = JSON.stringify(d);
     expect(text).not.toMatch(/\b(scam|fraud|untrustworthy)\b/i);
     expect(text).not.toMatch(/ip_hash|excerpt/);
+  });
+
+  it("rejects malformed or empty lookup parameters with 400 instead of listing everything", async () => {
+    const { req } = setup();
+    for (const [q, err] of [["?url=not-a-url", "invalid_url"], ["?domain=", "invalid_domain"], ["?url=", "invalid_url"], ["?payTo=hello", "invalid_pay_to"], ["?domain=not a host", "invalid_domain"]] as const) {
+      const r = await req(`/v1/trust/vendors${q}`);
+      expect(r.status, q).toBe(400);
+      expect(((await r.json()) as any).error).toBe(err);
+    }
+    expect((await req("/v1/trust/vendors?domain=https://Example.com/x")).status).toBe(200);
+  });
+
+  it("marks a vendor unreachable after 3 dead checks (404/410/no answer) on every endpoint", async () => {
+    const { req, store } = setup();
+    const before: any = await (await req("/v1/trust/vendors/scalpstream")).json();
+    expect(before.status).toBe("live");
+    const rows = SCALP.endpoints.flatMap((e, i) =>
+      [410, null, 404].map((st, k) => ({
+        vendor_id: SCALP.id, endpoint: e.url, ts: NOW - (k + 1) * 60_000 - i, http_status: st, ok: false, price: null, asset: null, pay_to: null, source_tag: null, latency_ms: null, error: st === null ? "no answer within 15 s" : null,
+      })),
+    );
+    await store.addProbes(rows as any);
+    const d: any = await (await req("/v1/trust/vendors/scalpstream")).json();
+    expect(d.status).toBe("unreachable");
+    expect(d.status_note).toMatch(/last 3 checks/);
+    const list: any = await (await req("/v1/trust/vendors")).json();
+    expect(list.vendors.find((v: any) => v.id === "scalpstream").status).toBe("unreachable");
+    expect(list.vendors.find((v: any) => v.id === "asksurf").status).toBe("live");
   });
 
   it("serves one vendor with evidence, explorer links and components; 404 for unknown", async () => {

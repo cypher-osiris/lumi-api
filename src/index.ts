@@ -48,9 +48,14 @@ export default {
     const cache = request.method === "GET" && !request.headers.has("Authorization") && EDGE_CACHED.test(url.pathname) ? edgeCache() : undefined;
     if (cache) {
       const hit = await cache.match(request).catch(() => undefined);
-      if (hit) return restoreHit(hit);
+      if (hit) {
+        const out = restoreHit(hit);
+        appFor(env).logTraffic(request, out, ctx);
+        return out;
+      }
     }
     const res = await appFor(env).fetch(request, ctx);
+    appFor(env).logTraffic(request, res, ctx);
     if (cache && res.status === 200 && /public, max-age=\d+/.test(res.headers.get("Cache-Control") ?? "")) {
       ctx.waitUntil(cache.put(request, storable(res)).catch(() => {}));
     }

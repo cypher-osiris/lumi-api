@@ -72,6 +72,9 @@ EVM_NETWORK = "eip155:8453"                               # Base mainnet
 EVM_PAY_TO = "0x5E617bac19912e6d212CB303ae84655E9E203532" # Lumi's Base receiving wallet (address only)
 EVM_FACILITATOR_URL = "https://facilitator.payai.network" # keyless fallback; primary is Coinbase CDP when CDP_API_KEY_ID/SECRET secrets are set
 ACCEPT_BASE_USDC = "true"                                 # "false" turns the Base option off; prices follow PRICE_<ROUTE>_USDC
+# XRP options are priced from a live XRP/USD rate (median of several sources, cached 5 min, then last-known, then fixed PRICE_<R>_XRP).
+XRP_PRICING = "live"
+SALES_ALERT_FROM = "hello@lumitrades.io"                  # sender for the private sale alert; the recipient is a secret (SALES_ALERT_EMAIL)
 
 # One-time invoice redemption across all isolates/PoPs (required for correctness:
 # the facilitator does not reject a replayed, already-settled payment).
@@ -83,6 +86,11 @@ class_name = "InvoiceGuard"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["InvoiceGuard"]
+
+# Private sale alerts via Cloudflare Email Routing. No destination here: the recipient is the SALES_ALERT_EMAIL
+# secret and must be a verified Email Routing destination address on the lumitrades.io zone.
+[[send_email]]
+name = "SALES_EMAIL"
 
 # Trust layer v0: vendor observations, probes, verified reports, private tips, replies.
 #   npx wrangler d1 migrations apply lumi_trust --remote

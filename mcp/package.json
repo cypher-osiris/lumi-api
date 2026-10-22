@@ -1,6 +1,6 @@
 {
   "name": "lumi-trades-mcp",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Free x402 vendor trust score lookups and a daily crypto market brief + Institutional & Policy Brief for AI agents, plus crypto signals (XRP and 12 more coins: buy/sell score, support/resistance levels), sentiment, yen carry-trade watch and events. Pay per call via x402 with your own wallet: USDC on Base (gasless) or XRP/RLUSD/USDC on the XRPL. MCP server for Claude, Cursor and any MCP client.",
   "mcpName": "io.github.cypher-osiris/lumi-trades-mcp",
   "type": "module",
@@ -34,7 +34,15 @@
     "market-brief",
     "institutional",
     "agents",
-    "ai-agents"
+    "ai-agents",
+    "bitcoin",
+    "technical-analysis",
+    "sentiment",
+    "fear-and-greed",
+    "stablecoins",
+    "trading",
+    "paper-trading",
+    "market-data"
   ],
   "repository": {
     "type": "git",
