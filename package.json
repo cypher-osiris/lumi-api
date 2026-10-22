@@ -1,6 +1,6 @@
 {
   "name": "lumi-api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pay-per-call crypto market reads from Lumi Trades for AI agents, paid in XRP via x402 on the XRP Ledger.",
   "main": "src/index.ts",
   "scripts": {
@@ -17,7 +17,8 @@
     "client": "tsx examples/agent-client.ts",
     "demo:testnet:stablecoin": "tsx scripts/demo-testnet-stablecoin.ts",
     "demo:buyer:create": "tsx scripts/demo-buyer-create.ts",
-    "demo:mainnet": "tsx scripts/demo-mainnet.ts"
+    "demo:mainnet": "tsx scripts/demo-mainnet.ts",
+    "test:mcp": "npm --prefix mcp test"
   },
   "license": "MIT",
   "type": "module",

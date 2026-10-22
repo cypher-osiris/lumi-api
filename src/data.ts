@@ -4,7 +4,7 @@
  * briefly unreachable, so a paid call is never settled against missing data.
  */
 
-export type DataFile = "coins" | "prices" | "signals" | "analysis" | "trades" | "context";
+export type DataFile = "coins" | "prices" | "signals" | "analysis" | "trades" | "context" | "events" | "brief";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export type Json = any;
@@ -44,9 +44,15 @@ export class DataSource {
     return Object.fromEntries(files.map((f, i) => [f, values[i]])) as Record<K, Json>;
   }
 
+  /** Like getMany, but files that fail to load come back as undefined (for optional inputs). */
+  async getOptional<K extends DataFile>(files: K[]): Promise<Partial<Record<K, Json>>> {
+    const values = await Promise.all(files.map((f) => this.get(f).catch(() => undefined)));
+    return Object.fromEntries(files.map((f, i) => [f, values[i]])) as Partial<Record<K, Json>>;
+  }
+
   private async load(file: DataFile): Promise<Json> {
     const res = await this.fetcher(`${this.baseUrl}/${file}.json`, {
-      headers: { Accept: "application/json", "User-Agent": "lumi-api/0.1 (+https://lumitrades.io)" },
+      headers: { Accept: "application/json", "User-Agent": "lumi-api/0.2 (+https://lumitrades.io)" },
     });
     if (!res.ok) throw new Error(`upstream ${file}.json: HTTP ${res.status}`);
     const data = await res.json();

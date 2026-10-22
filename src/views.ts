@@ -61,9 +61,9 @@ export function envelope(kind: string, data: Record<string, unknown>, extra: Rec
   };
 }
 
-const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+export const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-function priceBlock(prices: Json, id: string) {
+export function priceBlock(prices: Json, id: string) {
   const a = prices?.assets?.[id];
   if (!a) return null;
   return {
@@ -128,7 +128,7 @@ export function signalView(coin: CoinRef, signals: Json, prices: Json) {
   });
 }
 
-function levelsBlock(a: Json) {
+export function levelsBlock(a: Json) {
   if (!a) return null;
   return {
     bias: a.bias ?? null,
@@ -162,15 +162,15 @@ export function levelsView(coin: CoinRef, analysis: Json, prices: Json) {
   });
 }
 
-const TRADE_FIELDS = [
+export const TRADE_FIELDS = [
   "id", "direction", "market", "leverage", "conviction", "leverage_reason", "status",
   "entry", "planned_entry", "entry_zone", "stop", "targets", "targets_hit", "move_stop_to_be",
   "opened_at", "filled_at", "expiry", "fill_by", "expires", "closed_at", "exit_price",
   "pnl_pct", "unrealized_pnl_pct", "mark_price", "timeframe", "timeframe_note",
-  "missed_it", "plan_type", "trigger", "parent_id", "reasoning",
+  "missed_it", "plan_type", "trigger", "parent_id", "reasoning", "cancel_reason",
 ] as const;
 
-function tradeView(t: Json, coins: CoinRef[]) {
+export function tradeView(t: Json, coins: CoinRef[]) {
   const coin = coins.find((c) => c.id === t.coin);
   const out: Record<string, unknown> = { coin: coin ? coin.symbol : t.coin };
   for (const f of TRADE_FIELDS) if (t[f] !== undefined && t[f] !== null) out[f] = t[f];

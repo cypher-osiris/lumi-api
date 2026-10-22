@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { createApp } from "../src/app";
-import { DATA, FACILITATOR, PAY_TO, fakeDurableObjectNamespace, happyFacilitator, jsonResponse, makeFetch, paymentHeaderFor, decodeB64Json, type FakeFacilitator } from "./helpers";
+import { DATA, FACILITATOR, PAY_TO, fakeDurableObjectNamespace, happyFacilitator, jsonResponse, makeFetch, paymentHeaderFor, decodeB64Json, type FakeFacilitator , NOW } from "./helpers";
 
 const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret", PRIVATE_NAMES: "Casey" };
 const BASE = "http://lumi.test";
 
 function setup(fac: FakeFacilitator = happyFacilitator(), opts: { dataDown?: boolean } = {}) {
   const logs: any[] = [];
-  const app = createApp(ENV, { fetch: makeFetch(fac, opts), log: (e) => logs.push(e) });
+  const app = createApp(ENV, { fetch: makeFetch(fac, opts), log: (e) => logs.push(e), now: () => NOW });
   const get = (path: string, headers: Record<string, string> = {}) => app.fetch(new Request(BASE + path, { headers }));
   return { app, get, fac, logs };
 }
@@ -27,14 +27,19 @@ describe("free endpoints", () => {
     const index = await (await get("/")).json();
     expect(index.paid_endpoints.map((p: any) => [p.path, p.price_xrp])).toEqual([
       ["/v1/signal/{coin}", "0.005"], ["/v1/levels/{coin}", "0.005"], ["/v1/slate", "0.01"], ["/v1/market", "0.01"],
+      ["/v1/brief", "0.02"], ["/v1/macro/yen", "0.01"], ["/v1/sentiment", "0.005"], ["/v1/events", "0.005"], ["/v1/trades", "0.01"],
     ]);
+    expect(index.guarantee).toMatch(/only pay when you get data/i);
     expect((await get("/health")).status).toBe(200);
     const skill = await (await get("/skill.md")).text();
     expect(skill).toContain("PAYMENT-SIGNATURE");
     expect(skill).toContain("x402Fetch");
+    expect(skill).toContain("You only pay when you get data");
+    expect(skill).toContain("/v1/brief");
     const wk = await (await get("/.well-known/x402")).json();
     expect(wk).toMatchObject({ x402Version: 2, kind: "resource-server" });
-    expect(wk.resources).toHaveLength(4);
+    expect(wk.resources).toHaveLength(9);
+    expect(wk.resources.map((r: any) => r.url)).toContain(`${BASE}/v1/macro/yen`);
     const oa = await (await get("/openapi.json")).json();
     expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].price).toEqual({ mode: "fixed", currency: "XRP", amount: "0.005" });
     const coins = await (await get("/v1/coins")).json();
@@ -90,7 +95,7 @@ describe("x402 paywall", () => {
   it("blocks replay across isolates via the Durable Object guard (facilitator would re-confirm the same tx)", async () => {
     const ns = fakeDurableObjectNamespace();
     const fac = happyFacilitator(); // like T54: settle of an already-settled blob returns success again
-    const mk = () => createApp({ ...ENV, INVOICE_GUARD: ns }, { fetch: makeFetch(fac), log: () => {} });
+    const mk = () => createApp({ ...ENV, INVOICE_GUARD: ns }, { fetch: makeFetch(fac), log: () => {}, now: () => NOW });
     const isolateA = mk();
     const isolateB = mk();
     const r402 = await isolateA.fetch(new Request(BASE + "/v1/slate"));

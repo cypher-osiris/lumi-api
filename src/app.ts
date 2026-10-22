@@ -12,10 +12,14 @@ import { indexDoc, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
 import {
   coinList, resolveCoin, signalView, levelsView, slateView, marketView, DISCLAIMER, SOURCE, type CoinRef,
 } from "./views";
+import { staleInputs, hasContent } from "./freshness";
+import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
 
 export interface AppOptions {
   fetch?: typeof fetch;
   log?: (event: Record<string, unknown>) => void;
+  /** Clock (ms), injectable for tests. */
+  now?: () => number;
 }
 
 export interface App {
@@ -28,12 +32,34 @@ const NEEDS: Record<PaidRoute, DataFile[]> = {
   levels: ["analysis", "prices"],
   slate: ["trades"],
   market: ["analysis", "signals", "prices", "context"],
+  brief: ["prices", "context", "analysis", "signals", "trades"],
+  yen: ["context", "analysis", "prices"],
+  sentiment: ["context", "prices", "signals"],
+  events: ["analysis"],
+  trades: ["trades"],
+};
+/** Inputs that enrich a product but whose absence does not block it (the field is simply omitted). */
+const OPTIONAL: Partial<Record<PaidRoute, DataFile[]>> = {
+  brief: ["events", "brief"],
+  yen: ["events"],
+  events: ["events"],
+};
+/** Paid paths without a {coin} parameter. */
+const FIXED: Record<string, PaidRoute> = {
+  "/v1/slate": "slate",
+  "/v1/market": "market",
+  "/v1/brief": "brief",
+  "/v1/macro/yen": "yen",
+  "/v1/sentiment": "sentiment",
+  "/v1/events": "events",
+  "/v1/trades": "trades",
 };
 
 export function createApp(env: Env, opts: AppOptions = {}): App {
   const config = loadConfig(env);
   setPrivateNames(env.PRIVATE_NAMES);
   const doFetch = opts.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
+  const now = opts.now ?? (() => Date.now());
   const data = new DataSource(config.dataBaseUrl, config.dataTtlMs, doFetch);
   const deps: PaywallDeps = {
     fetch: doFetch,
@@ -110,7 +136,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
 
     // ---------------- paid
-    const m = path.match(/^\/v1\/(signal|levels)\/([^/]+)$/) ?? path.match(/^\/v1\/(slate|market)$/);
+    const m = path.match(/^\/v1\/(signal|levels)\/([^/]+)$/) ?? (FIXED[path] ? [path, FIXED[path]] : null);
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
@@ -131,13 +157,29 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     // settled when the upstream data is unavailable.
     let loaded: Record<string, unknown>;
     try {
-      loaded = await data.getMany(NEEDS[route]);
+      loaded = { ...(await data.getOptional(OPTIONAL[route] ?? [])), ...(await data.getMany(NEEDS[route])) };
     } catch (err) {
       return json(503, { error: "data_unavailable", detail: String((err as Error).message), retryable: true, note: "Not charged." }, { "Retry-After": "30" });
     }
+    const t = now();
+    const stale = staleInputs(loaded, NEEDS[route], t, config.dataMaxAgeHours);
+    if (stale.length) {
+      return json(503, { error: "data_stale", detail: "Lumi's published data is missing or out of date, so this call is not for sale right now.", inputs: stale, retryable: true, note: "Not charged." }, { "Retry-After": "300" });
+    }
+    // Optional inputs that are stale are dropped (their fields are omitted), never served as current.
+    for (const f of OPTIONAL[route] ?? []) if (staleInputs(loaded, [f], t, config.dataMaxAgeHours).length) delete loaded[f];
     const list = await coins();
-    const body = buildBody(route, coin, loaded, list);
-    if (!body) return json(404, { error: "no_data_for_coin", coin: coin?.symbol, note: "Not charged." });
+    const body = buildBody(route, coin, loaded, list, t);
+    if (body && !hasContent(route, body)) {
+      return json(503, { error: "data_unavailable", detail: `the ${route} data is empty right now`, retryable: true, note: "Not charged." }, { "Retry-After": "300" });
+    }
+    if (!body) {
+      return coin
+        ? json(404, { error: "no_data_for_coin", coin: coin.symbol, note: "Not charged." })
+        : json(503, { error: "data_unavailable", detail: `no ${route} data published right now`, retryable: true, note: "Not charged." }, { "Retry-After": "300" });
+    }
+    const wantsMarkdown =
+      route === "brief" && (/^(md|markdown|text)$/i.test(url.searchParams.get("format") ?? "") || /text\/markdown/i.test(request.headers.get("Accept") ?? ""));
 
     const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
     const quote: Quote = {
@@ -148,20 +190,25 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       resourceUrl: `${base}${path}`,
     };
 
-    return requirePayment(request, config, deps, quote, (s: Settlement, paid: PaymentRequirements) =>
-      json(200, {
-        ...body,
-        payment: {
-          transaction: s.transaction,
-          network: s.network,
-          payer: s.payer ?? null,
-          asset: assetLabel(paid),
-          amount: paid.asset === "XRP" ? dropsToXrp(paid.amount) : paid.amount,
-          ...(paid.asset === "XRP" ? { amount_drops: paid.amount } : { issuer: paid.extra?.issuer }),
-          explorer: s.transaction ? `${EXPLORERS[config.network]}${s.transaction}` : null,
-        },
-      }),
-    );
+    return requirePayment(request, config, deps, quote, (s: Settlement, paid: PaymentRequirements) => {
+      const payment = {
+        transaction: s.transaction,
+        network: s.network,
+        payer: s.payer ?? null,
+        asset: assetLabel(paid),
+        amount: paid.asset === "XRP" ? dropsToXrp(paid.amount) : paid.amount,
+        ...(paid.asset === "XRP" ? { amount_drops: paid.amount } : { issuer: paid.extra?.issuer }),
+        explorer: s.transaction ? `${EXPLORERS[config.network]}${s.transaction}` : null,
+      };
+      if (wantsMarkdown) {
+        const md = String((body as { markdown?: string }).markdown ?? "");
+        return new Response(`${md}\n_Paid: ${payment.amount} ${payment.asset}, tx ${payment.explorer ?? payment.transaction}_\n`, {
+          status: 200,
+          headers: { "Content-Type": "text/markdown; charset=utf-8", "Access-Control-Allow-Origin": "*", "Access-Control-Expose-Headers": "PAYMENT-RESPONSE" },
+        });
+      }
+      return json(200, { ...body, payment });
+    });
   }
 
   return {
@@ -177,7 +224,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   };
 }
 
-function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string, any>, coins: CoinRef[]) {
+function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string, any>, coins: CoinRef[], now: number) {
   switch (route) {
     case "signal":
       return signalView(coin!, d.signals, d.prices);
@@ -187,5 +234,15 @@ function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string
       return slateView(d.trades, coins);
     case "market":
       return marketView(d.analysis, d.signals, d.prices, d.context, coins);
+    case "brief":
+      return briefView(d as any, coins, now);
+    case "yen":
+      return yenView(d.context, d.analysis, d.events, d.prices, now);
+    case "sentiment":
+      return sentimentView(d.context, d.prices, d.signals, coins);
+    case "events":
+      return eventsView(d.events, d.analysis, coins, now);
+    case "trades":
+      return tradesView(d.trades, coins);
   }
 }

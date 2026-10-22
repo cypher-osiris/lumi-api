@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -15,7 +15,8 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       "Pay-per-call crypto market reads from Lumi Trades (lumitrades.io) for AI agents. " +
       `No API keys or accounts: each paid call is settled in XRP${orIous(cfg)} on the XRP Ledger via the x402 protocol (HTTP 402, exact scheme).`,
     human_summary:
-      "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins. " +
+      "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins, plus a daily " +
+      "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its full paper-trade track record. " +
       `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}, sign a small XRPL Payment, retry, and get JSON back.`,
     source: SOURCE,
     payment: {
@@ -32,6 +33,9 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       headers: { challenge: "PAYMENT-REQUIRED", payment: "PAYMENT-SIGNATURE", receipt: "PAYMENT-RESPONSE" },
       explorer: EXPLORERS[cfg.network],
     },
+    guarantee:
+      "You only pay when you get data: inputs are fetched and validated (present, non-empty, fresh) before any 402 quote; " +
+      "otherwise 503 'Not charged.' and no payment can be settled. The paid body is built before settlement.",
     free_endpoints: [
       { method: "GET", path: "/", summary: "This index" },
       { method: "GET", path: "/health", summary: "Liveness + config summary" },
@@ -54,10 +58,12 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: `Pay-per-call crypto market reads (signals, levels, paper-trade slate, macro) from lumitrades.io, settled in XRP${orIous(cfg)} on the XRP Ledger.`,
+    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate + track record, macro, daily brief, yen carry-trade watch, sentiment, events), settled in XRP${orIous(cfg)} on the XRP Ledger.`,
     resources: PAID_ENDPOINTS.map((e) => ({
+      name: e.name,
       url: `${base}${e.example}`,
       template: `${base}${e.template}`,
+      mimeType: "application/json",
       method: e.method,
       description: e.summary,
       accepts: [
@@ -105,8 +111,13 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     paths[e.template] = {
       get: {
         operationId: e.route,
-        summary: e.summary,
-        parameters: e.template.includes("{coin}") ? [coinParam] : [],
+        summary: e.name,
+        description: e.summary,
+        parameters: e.template.includes("{coin}")
+          ? [coinParam]
+          : e.route === "brief"
+            ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
+            : [],
         "x-payment-info": {
           protocols: ["x402"],
           price: { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
@@ -144,7 +155,9 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
         "GET /v1/coins (free) lists supported coins. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
-        "GET /v1/market gives the BTC and macro backdrop. Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
+        "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
+        "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives CoinMarketCap Fear & Greed, funding and breadth; " +
+        "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the full paper-trade history and track record. Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
         (cfg.ious.length
           ? "in XRP (accepts[0])" + cfg.ious.map((o, i) => ` or ${o.symbol} (accepts[${i + 1}], issuer ${o.issuer})`).join("") + " "
           : "in XRP ") +
@@ -201,7 +214,7 @@ export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const maxDrops = Math.max(...Object.values(cfg.pricesDrops).map(Number));
   return `---
 name: lumi-api
-description: Pay-per-call crypto market reads from Lumi Trades (signals, support/resistance levels, paper-trade ideas, BTC + macro backdrop) for ${coins.length} coins, paid in XRP${orIous(cfg)} on the XRP Ledger via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
+description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas + track record, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar) for ${coins.length} coins, paid in XRP${orIous(cfg)} on the XRP Ledger via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
 ---
 
 # Lumi API (agent guide)
@@ -219,6 +232,20 @@ ${rows}
 
 \`{coin}\` is a ticker or CoinGecko id, case-insensitive: ${coins.map((c) => c.symbol).join(", ")}.
 Unknown coins return 404 **before** any payment is requested.
+
+Which one to call:
+- Need "what's going on in crypto today" in one call? \`GET /v1/brief\` (add \`?format=md\` for ready-to-post markdown).
+- Macro risk from Japan / the yen carry trade? \`GET /v1/macro/yen\`.
+- Mood/positioning only? \`GET /v1/sentiment\`. What's scheduled? \`GET /v1/events\`.
+- Is Lumi any good? \`GET /v1/trades\` (every paper trade, wins and losses). Current ideas only? \`GET /v1/slate\`.
+- One coin? \`GET /v1/signal/{coin}\` + \`GET /v1/levels/{coin}\`.
+
+Fields that are not available at request time are omitted, never filled with guesses.
+
+**You only pay when you get data.** Before a price is even quoted, the API loads and checks every input the endpoint needs
+(present, non-empty, recently refreshed). If anything is missing, empty or stale you get \`503\` with \`"note": "Not charged."\`
+and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
+served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
 Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /openapi.json\`.
 

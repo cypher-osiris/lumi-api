@@ -8,10 +8,11 @@
   "eth_dominance_pct": 10.705307686344295
  },
  "fear_greed": {
-  "value": 68,
-  "classification": "Greed",
-  "previous": 63,
-  "timestamp": "2026-10-22T00:00:00Z"
+  "value": 49,
+  "classification": "Neutral",
+  "previous": 54,
+  "timestamp": "2026-10-22T10:43:10Z",
+  "source": "CoinMarketCap"
  },
  "derivatives": {
   "instrument": "BTC-USDT-SWAP (OKX)",
@@ -19,5 +20,45 @@
   "next_funding_time": "2026-10-22T16:00:00Z",
   "open_interest_btc": 30039.461600000104,
   "open_interest_usd": 2462680121.1604085
+ },
+ "yen": {
+  "usd_jpy": {
+   "name": "USD/JPY",
+   "symbol": "JPY=X",
+   "price": 157.084,
+   "change_pct": -0.6187,
+   "day_high": 158.254,
+   "day_low": 156.681,
+   "week52_high": 163.979,
+   "week52_low": 151.549,
+   "closes_5d": [
+    158.143,
+    157.806,
+    158.523,
+    158.268,
+    157.084
+   ],
+   "as_of": "2026-10-22T12:56:03Z",
+   "source": "Yahoo Finance"
+  },
+  "nikkei": {
+   "name": "Nikkei 225",
+   "symbol": "^N225",
+   "price": 62907.84,
+   "change_pct": -2.651,
+   "day_high": 64866.44,
+   "day_low": 62907.84,
+   "week52_high": 72831.73,
+   "week52_low": 48235.3,
+   "closes_5d": [
+    65324.2891,
+    64916.6992,
+    64075.4219,
+    64621.2383,
+    62907.8398
+   ],
+   "as_of": "2026-10-22T06:45:03Z",
+   "source": "Yahoo Finance"
+  }
  }
 }

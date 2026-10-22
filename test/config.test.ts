@@ -19,7 +19,11 @@ describe("config", () => {
     const cfg = loadConfig({ XRPL_NETWORK: "xrpl:0", INVOICE_SECRET: "x".repeat(32) });
     expect(cfg.payTo).toBe(MAINNET_PAY_TO);
     expect(cfg.facilitatorUrl).toBe("https://xrpl-facilitator-mainnet.t54.ai");
-    expect(cfg.pricesDrops).toEqual({ signal: "5000", levels: "5000", slate: "10000", market: "10000" });
+    expect(cfg.pricesDrops).toEqual({
+      signal: "5000", levels: "5000", slate: "10000", market: "10000",
+      brief: "20000", yen: "10000", sentiment: "5000", events: "5000", trades: "10000",
+    });
+    expect(loadConfig({ XRPL_NETWORK: "xrpl:1", PAY_TO: MAINNET_PAY_TO, PRICE_YEN_XRP: "0.02" }).pricesDrops.yen).toBe("20000");
   });
 
   it("requires an explicit PAY_TO off mainnet and validates it", () => {

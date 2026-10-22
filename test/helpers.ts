@@ -9,6 +9,8 @@ export const PAY_TO = "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5";
 export const PAYER = "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV";
 export const FACILITATOR = "https://facilitator.test";
 export const DATA = "https://data.test/data";
+/** Fixed clock matching the fixtures (published Oct 22 2026 ~11:00-13:00 UTC). */
+export const NOW = Date.parse("2026-10-22T13:00:00Z");
 
 export interface FakeFacilitator {
   verify: (body: any) => Response | Promise<Response>;
@@ -21,12 +23,16 @@ export function jsonResponse(status: number, body: unknown, headers: Record<stri
 }
 
 /** A fetch stub serving fixture data and a scriptable facilitator. */
-export function makeFetch(fac: FakeFacilitator, opts: { dataDown?: boolean } = {}): typeof fetch {
+export function makeFetch(fac: FakeFacilitator, opts: { dataDown?: boolean; override?: Record<string, unknown> } = {}): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.startsWith(DATA)) {
       if (opts.dataDown) return new Response("down", { status: 503 });
       const name = url.slice(DATA.length + 1).replace(/\.json$/, "");
+      if (opts.override && name in opts.override) {
+        const o = opts.override[name];
+        return o === null ? new Response("missing", { status: 404 }) : jsonResponse(200, o);
+      }
       return jsonResponse(200, fixture(name));
     }
     if (url.startsWith(FACILITATOR)) {

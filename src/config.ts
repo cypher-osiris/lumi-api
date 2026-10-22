@@ -22,6 +22,13 @@ export interface Env {
   PRICE_LEVELS_XRP?: string;
   PRICE_SLATE_XRP?: string;
   PRICE_MARKET_XRP?: string;
+  PRICE_BRIEF_XRP?: string;
+  PRICE_YEN_XRP?: string;
+  PRICE_SENTIMENT_XRP?: string;
+  PRICE_EVENTS_XRP?: string;
+  PRICE_TRADES_XRP?: string;
+  /** Any PRICE_<ROUTE>_<XRP|RLUSD|USDC> override. */
+  [price: `PRICE_${string}`]: string | undefined;
   /** Accept RLUSD (Ripple USD, XRPL issued token) as a second asset. "false" disables. Default on. */
   ACCEPT_RLUSD?: string;
   /** RLUSD issuer override. Defaults to Ripple's official issuer for the network (docs.ripple.com). */
@@ -44,6 +51,8 @@ export interface Env {
   DATA_BASE_URL?: string;
   /** Cache TTL for upstream data, seconds. */
   DATA_TTL_SECONDS?: string;
+  /** Max age (hours) of market data before paid calls are refused with 503 (analysis/events get 4x). Default 12. */
+  DATA_MAX_AGE_HOURS?: string;
   /** Seconds a 402 quote (invoice) stays payable. */
   INVOICE_TTL_SECONDS?: string;
   /** Comma-separated private names to scrub from paid responses. Set with `wrangler secret put PRIVATE_NAMES`. */
@@ -68,7 +77,25 @@ export interface KVLike {
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
 }
 
-export type PaidRoute = "signal" | "levels" | "slate" | "market";
+export type PaidRoute = "signal" | "levels" | "slate" | "market" | "brief" | "yen" | "sentiment" | "events" | "trades";
+
+/**
+ * Default prices per route: XRP and USD-stablecoin (RLUSD/USDC). Override with PRICE_<ROUTE>_XRP / _RLUSD / _USDC
+ * (e.g. PRICE_YEN_XRP). Benchmarks on the XRPL AI Hub (Oct 2026): single data feeds 0.001-0.012 RLUSD (AskSurf, Heurist,
+ * printmoneylab), composite reads ~0.02-0.025 (Strale Fear & Greed, invinoveritas signals). XRP ~= $1.33.
+ */
+export const DEFAULT_PRICES: Record<PaidRoute, { xrp: string; usd: string }> = {
+  signal: { xrp: "0.005", usd: "0.01" },
+  levels: { xrp: "0.005", usd: "0.01" },
+  slate: { xrp: "0.01", usd: "0.02" },
+  market: { xrp: "0.01", usd: "0.02" },
+  brief: { xrp: "0.02", usd: "0.03" },
+  yen: { xrp: "0.01", usd: "0.015" },
+  sentiment: { xrp: "0.005", usd: "0.01" },
+  events: { xrp: "0.005", usd: "0.01" },
+  trades: { xrp: "0.01", usd: "0.02" },
+};
+export const PAID_ROUTES = Object.keys(DEFAULT_PRICES) as PaidRoute[];
 
 export interface Config {
   network: XrplNetwork;
@@ -83,6 +110,7 @@ export interface Config {
   ious: IouOption[];
   dataBaseUrl: string;
   dataTtlMs: number;
+  dataMaxAgeHours: number;
   invoiceTtlSeconds: number;
   publicBaseUrl?: string;
 }
@@ -193,25 +221,20 @@ export function loadConfig(env: Env): Config {
     invoiceSecret,
     invoiceSecretIsDevDefault,
     sourceTag,
-    pricesDrops: {
-      signal: xrpToDrops(env.PRICE_SIGNAL_XRP || "0.005"),
-      levels: xrpToDrops(env.PRICE_LEVELS_XRP || "0.005"),
-      slate: xrpToDrops(env.PRICE_SLATE_XRP || "0.01"),
-      market: xrpToDrops(env.PRICE_MARKET_XRP || "0.01"),
-    },
+    pricesDrops: Object.fromEntries(
+      PAID_ROUTES.map((r) => [r, xrpToDrops((env as Record<string, string | undefined>)[`PRICE_${r.toUpperCase()}_XRP`] || DEFAULT_PRICES[r].xrp)]),
+    ) as Record<PaidRoute, string>,
     ious: [
       iouConfig(env, network, "RLUSD", RLUSD_CURRENCY, RLUSD_ISSUERS),
       iouConfig(env, network, "USDC", USDC_CURRENCY, USDC_ISSUERS),
     ].filter((x): x is IouOption => x !== null),
     dataBaseUrl: (env.DATA_BASE_URL || "https://lumitrades.io/data").replace(/\/+$/, ""),
     dataTtlMs: Number(env.DATA_TTL_SECONDS || 60) * 1000,
+    dataMaxAgeHours: Number(env.DATA_MAX_AGE_HOURS || 12) > 0 ? Number(env.DATA_MAX_AGE_HOURS || 12) : 12,
     invoiceTtlSeconds: Number(env.INVOICE_TTL_SECONDS || 300),
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/+$/, "") || undefined,
   };
 }
-
-/** USD-stablecoin defaults: 1 cent for per-coin reads, 2 cents for slate/market. */
-const IOU_DEFAULT_PRICES: Record<PaidRoute, string> = { signal: "0.01", levels: "0.01", slate: "0.02", market: "0.02" };
 
 function iouConfig(
   env: Env,
@@ -226,8 +249,8 @@ function iouConfig(
   if (!issuer) return null;
   if (!CLASSIC_ADDRESS.test(issuer)) throw new Error(`${symbol}_ISSUER must be an XRPL classic address`);
   const prices = {} as Record<PaidRoute, string>;
-  for (const r of ["signal", "levels", "slate", "market"] as PaidRoute[]) {
-    prices[r] = iouValue(e[`PRICE_${r.toUpperCase()}_${symbol}`] || IOU_DEFAULT_PRICES[r]);
+  for (const r of PAID_ROUTES) {
+    prices[r] = iouValue(e[`PRICE_${r.toUpperCase()}_${symbol}`] || DEFAULT_PRICES[r].usd);
   }
   return { symbol, currency, issuer, prices };
 }
