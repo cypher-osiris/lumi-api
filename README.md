@@ -1,6 +1,6 @@
 # Lumi API
 
-**Pay-per-call crypto market reads for AI agents, settled in XRP on the XRP Ledger via [x402](https://xrpl.org/docs/agents/agentic-payments-x402).**
+**Pay-per-call crypto market reads for AI agents, settled in XRP, RLUSD or USDC on the XRP Ledger via [x402](https://xrpl.org/docs/agents/agentic-payments-x402).**
 
 Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals, support/resistance levels, a public paper-trade slate and a BTC/macro backdrop for 13 coins. Lumi API puts those reads behind HTTP 402. An agent calls an endpoint, gets a price in XRP, signs one small XRP `Payment`, retries, and receives JSON. There are no API keys, accounts or invoices to reconcile. The payment *is* the authentication, and every call leaves an auditable on-ledger record.
 
@@ -18,13 +18,27 @@ Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals
 | free | `GET /.well-known/x402` | – | x402 discovery manifest ([draft-hawkins-x402-dns-discovery](https://datatracker.ietf.org/doc/draft-hawkins-x402-dns-discovery/) shape) |
 | free | `GET /openapi.json` | – | OpenAPI 3.1 with `x-payment-info` per paid route (x402scan-style discovery) |
 | free | `GET /v1/coins` | – | Supported coins |
-| **paid** | `GET /v1/signal/{coin}` | **0.005 XRP** | Buy/sell label + score, 1h/4h/1d labels, indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) |
-| **paid** | `GET /v1/levels/{coin}` | **0.005 XRP** | Support/resistance, bias, 7-day bull/base/bear projection, commentary, catalysts, sources |
-| **paid** | `GET /v1/slate` | **0.01 XRP** | Active paper-trade ideas (entry/zone, stop, targets, leverage, conviction, status), "no setup" notes, track record |
-| **paid** | `GET /v1/market` | **0.01 XRP** | BTC backdrop (levels, projection, signal), macro (yen/USDJPY note, total cap, dominance, fear & greed, BTC perp funding/OI), breadth |
+| **paid** | `GET /v1/signal/{coin}` | **0.005 XRP** or **0.01 RLUSD / USDC** | Buy/sell label + score, 1h/4h/1d labels, indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) |
+| **paid** | `GET /v1/levels/{coin}` | **0.005 XRP** or **0.01 RLUSD / USDC** | Support/resistance, bias, 7-day bull/base/bear projection, commentary, catalysts, sources |
+| **paid** | `GET /v1/slate` | **0.01 XRP** or **0.02 RLUSD / USDC** | Active paper-trade ideas (entry/zone, stop, targets, leverage, conviction, status), "no setup" notes, track record |
+| **paid** | `GET /v1/market` | **0.01 XRP** or **0.02 RLUSD / USDC** | BTC backdrop (levels, projection, signal), macro (yen/USDJPY note, total cap, dominance, fear & greed, BTC perp funding/OI), breadth |
 
 `{coin}`: `XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI`. Tickers or CoinGecko ids work, case-insensitive.
-Prices are configurable (`PRICE_*_XRP` in `wrangler.toml`).
+Prices are configurable (`PRICE_*_XRP`, `PRICE_*_RLUSD`, `PRICE_*_USDC` in `wrangler.toml`).
+
+### Accepted assets
+
+Every 402 offers the same quote in three assets, all sharing one invoice id (one payment per invoice):
+
+| `accepts[]` | Asset | `asset` field | Issuer (`extra.issuer`) | `amount` unit |
+|---|---|---|---|---|
+| 0 | XRP | `XRP` | – | drops |
+| 1 | RLUSD (Ripple USD) | `524C555344000000000000000000000000000000` | `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De` ([docs.ripple.com](https://docs.ripple.com/products/stablecoin/developer-resources/rlusd-on-the-xrpl)) | IOU value, e.g. `"0.01"` |
+| 2 | USDC (Circle) | `5553444300000000000000000000000000000000` | `rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE` ([developers.circle.com](https://developers.circle.com/stablecoins/usdc-contract-addresses)) | IOU value, e.g. `"0.01"` |
+
+XRP stays first, so clients that take `accepts[0]` keep paying in XRP. Stablecoin prices are fixed in USD cents. At XRP ≈ $1.33 (Oct 22 2026), 0.01 USD ≈ 0.0075 XRP and 0.02 USD ≈ 0.015 XRP, so the XRP prices are slightly cheaper. Payers need a trust line to the issuer and a balance. The Payment is same-asset (`SendMax` = `Amount`, no path or conversion). Turn off either stablecoin with `ACCEPT_RLUSD=false` / `ACCEPT_USDC=false`. Testnet uses the official testnet issuers (`rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV`, `rHuGNhqTG32mfmAvWA8hUyWRLV3tCSwKQt`), and `RLUSD_ISSUER` / `USDC_ISSUER` override them.
+
+To pay in a stablecoin with `x402Fetch`, pass a `paymentRequirementsSelector` that picks the option by `asset` and `extra.issuer`. The SDK's numeric `maxValue` compares raw `amount` strings across assets, so it is not a meaningful cap for IOUs. See `/skill.md`.
 
 Every paid response includes `timestamp`, `source: "lumitrades.io"`, a `payment` block (tx hash, payer, explorer link) and a `disclaimer`.
 
@@ -145,7 +159,26 @@ Recorded runs (Oct 22 2026), all validated `tesSUCCESS` on XRPL Testnet (the fir
 | Node (current prices) | `/v1/signal/XRP` | 0.005 XRP | [70B12A01…FB2A6E](https://testnet.xrpl.org/transactions/70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E) |
 | Node (current prices) | `/v1/market` (x402Fetch) | 0.01 XRP | [4510B9AE…2E7C97](https://testnet.xrpl.org/transactions/4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97) |
 
+Stablecoin runs (`npm run demo:testnet:stablecoin`, `DEMO_ASSET=RLUSD|USDC`), Oct 22 2026, through the T54 testnet facilitator. Both validated `tesSUCCESS`, and replay was refused:
+
+| Asset | Endpoint | Price | Tx |
+|---|---|---|---|
+| RLUSD (`524C55…`) | `/v1/slate` | 0.02 | [336D4368…7016D8](https://testnet.xrpl.org/transactions/336D4368F784BC8454A01DCEBBF66F29D8D64878D1C31A712AA865A1BD7016D8) |
+| USDC (`555344…`) | `/v1/slate` | 0.02 | [E6C88B93…011F10](https://testnet.xrpl.org/transactions/E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10) |
+
+The official testnet faucets for RLUSD (tryrlusd.com, login) and USDC (faucet.circle.com, reCAPTCHA) cannot be scripted. These runs therefore use a **stand-in testnet issuer** (`rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu`) that issues the same 40-hex currency codes, with the API pointed at it through `RLUSD_ISSUER` / `USDC_ISSUER`. The API, SDK and facilitator run the same IOU code path. `STANDIN=0` uses the official testnet issuer once the payer has been funded from a faucet.
+
 Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full transcripts are in `demo/`.
+
+### Mainnet demo (labeled, self-payment)
+
+> **DEMO:** both wallets belong to Lumi. This shows the live flow working and is **not** organic usage. Exclude it from usage metrics.
+
+`npm run demo:buyer:create` generates a demo-buyer wallet. The seed goes to a mode-600 file outside the repo and the script prints only the address. `DEMO_CONFIRM=yes npm run demo:mainnet` makes one capped XRP x402 call to `api.lumitrades.io` and logs the transaction.
+
+| Date | From (demo buyer) | Endpoint | Amount | Tx |
+|---|---|---|---|---|
+| 2026-10-22 | `rpvsTYDZmX1j1ndmEFG6YjjZZwp6VRtQRz` | `/v1/signal/XRP` | 0.005 XRP | [356E5C91…4C37E5](https://livenet.xrpl.org/transactions/356E5C9147B4B5D6C1F275C172EF8652E9C082458BAEC4204B569986714C37E5) (`tesSUCCESS`, SourceTag 804681468, 7.4 s) |
 
 ## Deploy to `api.lumitrades.io` (Cloudflare Workers)
 
@@ -170,7 +203,7 @@ Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full
 | `INVOICE_SECRET` | secret, required on mainnet (startup refuses without it) |
 | `PRIVATE_NAMES` | optional secret: comma-separated names scrubbed from paid responses (`npx wrangler secret put PRIVATE_NAMES`) |
 
-The server never holds a private key. The payer signs, the facilitator submits, and XRP lands in `PAY_TO`.
+The server never holds a private key. The payer signs, the facilitator submits, and XRP (or RLUSD/USDC) lands in `PAY_TO`. `PAY_TO` needs RLUSD and USDC trust lines to receive stablecoins. Lumi's mainnet wallet has both (limit 1,000,000 each).
 
 ## Project layout
 
@@ -196,7 +229,7 @@ demo/               recorded testnet transcripts
 ## Roadmap (XRPL Grants milestones)
 
 1. **Mainnet launch** on `api.lumitrades.io`, listed in x402 discovery indexes (OpenAPI and `/.well-known/x402`) and in the XRPL agent ecosystem.
-2. **RLUSD pricing.** Add an RLUSD option to `accepts[]` (asset `524C555344000000000000000000000000000000` plus issuer) for dollar-stable prices. The facilitator and SDKs already support IOUs.
+2. **Stablecoin pricing.** Done: RLUSD and Circle USDC are in `accepts[]` next to XRP, priced in USD cents (see *Accepted assets*).
 3. **Prepaid credits through payment channels.** Agents that call often open an XRPL PayChannel once and stream signed claims, which brings per-call cost and latency well below one on-ledger Payment per call. Candidates are the `upto`/`paychan` x402 schemes.
 4. **Usage metrics dashboard.** Public stats from on-ledger data (payments to `PAY_TO` with `SourceTag 804681468`: calls, unique payer agents, XRP volume per endpoint) plus Workers Analytics Engine. These metrics become the grant KPIs.
 5. **More products.** Historical signal series, a backtest API, webhook/stream subscriptions, and an MCP server wrapper so LLM agents can discover and call Lumi as a tool.

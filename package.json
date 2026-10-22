@@ -14,7 +14,10 @@
     "deploy": "wrangler deploy",
     "build:check": "wrangler deploy --dry-run --outdir .wrangler/dist",
     "probe:replay": "tsx scripts/replay-probe.ts",
-    "client": "tsx examples/agent-client.ts"
+    "client": "tsx examples/agent-client.ts",
+    "demo:testnet:stablecoin": "tsx scripts/demo-testnet-stablecoin.ts",
+    "demo:buyer:create": "tsx scripts/demo-buyer-create.ts",
+    "demo:mainnet": "tsx scripts/demo-mainnet.ts"
   },
   "license": "MIT",
   "type": "module",

@@ -4,9 +4,9 @@
  */
 
 import { setPrivateNames } from "./sanitize";
-import { loadConfig, EXPLORERS, type Config, type Env, type PaidRoute } from "./config";
+import { loadConfig, EXPLORERS, dropsToXrp, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
-import { makeReplayGuard, json, requirePayment, type PaywallDeps, type Quote, type Settlement } from "./x402";
+import { makeReplayGuard, json, requirePayment, assetLabel, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { indexDoc, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
 import {
@@ -143,18 +143,21 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const quote: Quote = {
       routeKey: coin ? `${route}:${coin.symbol}` : route,
       amountDrops: config.pricesDrops[route],
+      amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
       description: `Lumi API ${endpoint.template.replace("{coin}", coin?.symbol ?? "")}: ${endpoint.summary}`,
       resourceUrl: `${base}${path}`,
     };
 
-    return requirePayment(request, config, deps, quote, (s: Settlement) =>
+    return requirePayment(request, config, deps, quote, (s: Settlement, paid: PaymentRequirements) =>
       json(200, {
         ...body,
         payment: {
           transaction: s.transaction,
           network: s.network,
           payer: s.payer ?? null,
-          amount_drops: quote.amountDrops,
+          asset: assetLabel(paid),
+          amount: paid.asset === "XRP" ? dropsToXrp(paid.amount) : paid.amount,
+          ...(paid.asset === "XRP" ? { amount_drops: paid.amount } : { issuer: paid.extra?.issuer }),
           explorer: s.transaction ? `${EXPLORERS[config.network]}${s.transaction}` : null,
         },
       }),

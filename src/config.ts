@@ -22,6 +22,24 @@ export interface Env {
   PRICE_LEVELS_XRP?: string;
   PRICE_SLATE_XRP?: string;
   PRICE_MARKET_XRP?: string;
+  /** Accept RLUSD (Ripple USD, XRPL issued token) as a second asset. "false" disables. Default on. */
+  ACCEPT_RLUSD?: string;
+  /** RLUSD issuer override. Defaults to Ripple's official issuer for the network (docs.ripple.com). */
+  RLUSD_ISSUER?: string;
+  /** Prices in RLUSD (decimal strings, USD-equivalent). */
+  PRICE_SIGNAL_RLUSD?: string;
+  PRICE_LEVELS_RLUSD?: string;
+  PRICE_SLATE_RLUSD?: string;
+  PRICE_MARKET_RLUSD?: string;
+  /** Accept Circle USDC (XRPL issued token) as a third asset. "false" disables. Default on. */
+  ACCEPT_USDC?: string;
+  /** USDC issuer override. Defaults to Circle's official issuer for the network (developers.circle.com). */
+  USDC_ISSUER?: string;
+  /** Prices in USDC (decimal strings). */
+  PRICE_SIGNAL_USDC?: string;
+  PRICE_LEVELS_USDC?: string;
+  PRICE_SLATE_USDC?: string;
+  PRICE_MARKET_USDC?: string;
   /** Where Lumi's published JSON lives. */
   DATA_BASE_URL?: string;
   /** Cache TTL for upstream data, seconds. */
@@ -61,10 +79,22 @@ export interface Config {
   invoiceSecretIsDevDefault: boolean;
   sourceTag: number;
   pricesDrops: Record<PaidRoute, string>;
+  /** Accepted XRPL issued-token (IOU) stablecoins, offered after XRP in every 402. */
+  ious: IouOption[];
   dataBaseUrl: string;
   dataTtlMs: number;
   invoiceTtlSeconds: number;
   publicBaseUrl?: string;
+}
+
+export type IouSymbol = "RLUSD" | "USDC";
+export interface IouOption {
+  symbol: IouSymbol;
+  /** Canonical XRPL currency code (40-hex for these). */
+  currency: string;
+  issuer: string;
+  /** IOU value strings per route. */
+  prices: Record<PaidRoute, string>;
 }
 
 export const MAINNET_PAY_TO = "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM";
@@ -79,6 +109,35 @@ export const EXPLORERS: Record<XrplNetwork, string> = {
   "xrpl:1": "https://testnet.xrpl.org/transactions/",
   "xrpl:2": "https://devnet.xrpl.org/transactions/",
 };
+
+/** RLUSD currency code: 40-hex form of "RLUSD". */
+export const RLUSD_CURRENCY = "524C555344000000000000000000000000000000";
+/** Official RLUSD issuers (https://docs.ripple.com/products/stablecoin/developer-resources/rlusd-on-the-xrpl). */
+export const RLUSD_ISSUERS: Record<XrplNetwork, string | undefined> = {
+  "xrpl:0": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+  "xrpl:1": "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV",
+  "xrpl:2": undefined,
+};
+
+/** Circle USDC currency code: 40-hex form of "USDC". */
+export const USDC_CURRENCY = "5553444300000000000000000000000000000000";
+/** Official USDC issuers (https://developers.circle.com/stablecoins/usdc-contract-addresses). */
+export const USDC_ISSUERS: Record<XrplNetwork, string | undefined> = {
+  "xrpl:0": "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE",
+  "xrpl:1": "rHuGNhqTG32mfmAvWA8hUyWRLV3tCSwKQt",
+  "xrpl:2": undefined,
+};
+
+/** Normalise an IOU value ("0.010" -> "0.01"); positive, ≤ 6 decimals, no floats. */
+export function iouValue(v: string): string {
+  const s = v.trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(s)) throw new Error(`invalid RLUSD amount: ${v}`);
+  let [whole, frac = ""] = s.split(".");
+  whole = whole.replace(/^0+(?=\d)/, "");
+  frac = frac.replace(/0+$/, "");
+  if (/^0*$/.test(whole + frac)) throw new Error(`price must be positive: ${v}`);
+  return frac ? `${whole}.${frac}` : whole;
+}
 
 /** Dev-only fallback; refused on mainnet. */
 const DEV_INVOICE_SECRET = "lumi-api-dev-only-invoice-secret-do-not-use-on-mainnet";
@@ -140,9 +199,35 @@ export function loadConfig(env: Env): Config {
       slate: xrpToDrops(env.PRICE_SLATE_XRP || "0.01"),
       market: xrpToDrops(env.PRICE_MARKET_XRP || "0.01"),
     },
+    ious: [
+      iouConfig(env, network, "RLUSD", RLUSD_CURRENCY, RLUSD_ISSUERS),
+      iouConfig(env, network, "USDC", USDC_CURRENCY, USDC_ISSUERS),
+    ].filter((x): x is IouOption => x !== null),
     dataBaseUrl: (env.DATA_BASE_URL || "https://lumitrades.io/data").replace(/\/+$/, ""),
     dataTtlMs: Number(env.DATA_TTL_SECONDS || 60) * 1000,
     invoiceTtlSeconds: Number(env.INVOICE_TTL_SECONDS || 300),
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/+$/, "") || undefined,
   };
+}
+
+/** USD-stablecoin defaults: 1 cent for per-coin reads, 2 cents for slate/market. */
+const IOU_DEFAULT_PRICES: Record<PaidRoute, string> = { signal: "0.01", levels: "0.01", slate: "0.02", market: "0.02" };
+
+function iouConfig(
+  env: Env,
+  network: XrplNetwork,
+  symbol: IouSymbol,
+  currency: string,
+  issuers: Record<XrplNetwork, string | undefined>,
+): IouOption | null {
+  const e = env as Record<string, string | undefined>;
+  if ((e[`ACCEPT_${symbol}`] ?? "true").trim().toLowerCase() === "false") return null;
+  const issuer = (e[`${symbol}_ISSUER`] || issuers[network] || "").trim();
+  if (!issuer) return null;
+  if (!CLASSIC_ADDRESS.test(issuer)) throw new Error(`${symbol}_ISSUER must be an XRPL classic address`);
+  const prices = {} as Record<PaidRoute, string>;
+  for (const r of ["signal", "levels", "slate", "market"] as PaidRoute[]) {
+    prices[r] = iouValue(e[`PRICE_${r.toUpperCase()}_${symbol}`] || IOU_DEFAULT_PRICES[r]);
+  }
+  return { symbol, currency, issuer, prices };
 }

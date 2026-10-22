@@ -1,0 +1,182 @@
+{
+  "started": "2026-10-22T12:41:14.074Z",
+  "network": "xrpl:1",
+  "asset": "USDC",
+  "currency": "5553444300000000000000000000000000000000",
+  "issuer": "rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu",
+  "issuer_kind": "stand-in testnet issuer (official testnet faucets are login/captcha gated)",
+  "step1_payment_required": {
+    "x402Version": 2,
+    "resource": {
+      "url": "http://127.0.0.1:37799/v1/slate",
+      "description": "Lumi API /v1/slate: Current paper-trade ideas: direction, entry/entry zone, stop, targets, leverage, conviction, status, plus 'no setup' notes and the public track record.",
+      "mimeType": "application/json"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "xrpl:1",
+        "amount": "10000",
+        "asset": "XRP",
+        "payTo": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "invoiceId": "lumi1.slate.tnb7hg.KzG7SmgOrKnF.YJStPfKhPswrBhsgRO4jrg",
+          "sourceTag": 5864
+        }
+      },
+      {
+        "scheme": "exact",
+        "network": "xrpl:1",
+        "amount": "0.02",
+        "asset": "524C555344000000000000000000000000000000",
+        "payTo": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "invoiceId": "lumi1.slate.tnb7hg.KzG7SmgOrKnF.YJStPfKhPswrBhsgRO4jrg",
+          "issuer": "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV",
+          "sourceTag": 5864,
+          "symbol": "RLUSD"
+        }
+      },
+      {
+        "scheme": "exact",
+        "network": "xrpl:1",
+        "amount": "0.02",
+        "asset": "5553444300000000000000000000000000000000",
+        "payTo": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "invoiceId": "lumi1.slate.tnb7hg.KzG7SmgOrKnF.YJStPfKhPswrBhsgRO4jrg",
+          "issuer": "rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu",
+          "sourceTag": 5864,
+          "symbol": "USDC"
+        }
+      }
+    ],
+    "error": "PAYMENT-SIGNATURE header is required",
+    "extensions": {
+      "bazaar": {
+        "info": {
+          "input": {
+            "method": "GET",
+            "type": "http"
+          },
+          "output": {
+            "type": "json"
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "input": {
+              "properties": {
+                "method": {
+                  "enum": [
+                    "GET"
+                  ],
+                  "type": "string"
+                },
+                "type": {
+                  "const": "http",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "type": "object"
+            },
+            "output": {
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "input"
+          ],
+          "type": "object"
+        }
+      }
+    }
+  },
+  "step2": {
+    "status": 200,
+    "latency_ms": 5858,
+    "receipt": {
+      "success": true,
+      "transaction": "E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10",
+      "network": "xrpl:1",
+      "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+      "extensions": {
+        "t54Attestation": {
+          "attestationNetwork": "xrpl:1",
+          "attestor": "r4tVmgGoDcykMcuJQKD7SgB5kXFvhSS5Ax",
+          "environment": "rewards-testnet",
+          "memoType": "urn:t54:xrpl:attestation:v2",
+          "nonProduction": true,
+          "paymentNetwork": "xrpl:1",
+          "paymentTxHash": "E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10",
+          "status": "ready",
+          "v": 2
+        }
+      }
+    },
+    "payment": {
+      "transaction": "E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10",
+      "network": "xrpl:1",
+      "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+      "asset": "USDC",
+      "amount": "0.02",
+      "issuer": "rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu",
+      "explorer": "https://testnet.xrpl.org/transactions/E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10"
+    },
+    "kind": "slate",
+    "ideas": 4
+  },
+  "step3_replay": {
+    "status": 402,
+    "error": "invoice_already_used"
+  },
+  "ledger": {
+    "hash": "E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10",
+    "validated": true,
+    "result": "tesSUCCESS",
+    "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+    "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+    "amount": {
+      "currency": "5553444300000000000000000000000000000000",
+      "issuer": "rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu",
+      "value": "0.02"
+    },
+    "send_max": {
+      "currency": "5553444300000000000000000000000000000000",
+      "issuer": "rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu",
+      "value": "0.02"
+    },
+    "delivered": {
+      "currency": "5553444300000000000000000000000000000000",
+      "issuer": "rhkAVriskfs45BnuJ49jx2GVa9M7Szh9nu",
+      "value": "0.02"
+    },
+    "source_tag": 5864,
+    "explorer": "https://testnet.xrpl.org/transactions/E6C88B93493DFC6E3450753066008345AC9587FA303EA953276D07E5E0011F10"
+  },
+  "balances": {
+    "before": {
+      "payer": 10,
+      "receiver": 0
+    },
+    "after": {
+      "payer": 9.98,
+      "receiver": 0.02
+    }
+  },
+  "ok": true,
+  "finished": "2026-10-22T12:41:35.970Z"
+}

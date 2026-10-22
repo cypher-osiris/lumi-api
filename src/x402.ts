@@ -16,7 +16,7 @@
  * (Durable Object in production; memory for a single Node process).
  */
 
-import type { Config, DurableObjectNamespaceLike, KVLike } from "./config";
+import type { Config, DurableObjectNamespaceLike, IouOption, KVLike } from "./config";
 
 export const HEADER_PAYMENT_REQUIRED = "PAYMENT-REQUIRED";
 export const HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE";
@@ -68,6 +68,8 @@ export interface Quote {
   /** Route + parameters this quote is for, e.g. "signal:XRP". Bound into the invoice. */
   routeKey: string;
   amountDrops: string;
+  /** Optional stablecoin prices keyed by symbol (IOU value strings); offered for each matching cfg.ious entry. */
+  amountsIou?: Partial<Record<string, string>>;
   description: string;
   resourceUrl: string;
 }
@@ -132,10 +134,23 @@ function macInput(cfg: Config, routeKey: string, amount: string, exp: string, no
 }
 
 /** invoiceId = lumi1.<routeKey>.<expiry base36>.<nonce>.<mac> */
+/** Every price offered in the quote is bound into the invoice MAC (one invoice covers all accepted assets). */
+function quoteAmounts(cfg: Config, quote: Quote): string {
+  const ious = offeredIous(cfg, quote).map(([o, amt]) => `,${o.symbol}:${o.currency}:${o.issuer}:${amt}`).join("");
+  return `XRP:${quote.amountDrops}${ious}`;
+}
+
+function offeredIous(cfg: Config, quote: Quote): [IouOption, string][] {
+  return cfg.ious.flatMap((o) => {
+    const amt = quote.amountsIou?.[o.symbol];
+    return amt ? [[o, amt] as [IouOption, string]] : [];
+  });
+}
+
 export async function issueInvoiceId(cfg: Config, quote: Quote, nowMs = Date.now()): Promise<string> {
   const exp = Math.floor(nowMs / 1000 + cfg.invoiceTtlSeconds).toString(36);
   const nonce = b64url(crypto.getRandomValues(new Uint8Array(9)));
-  const mac = await hmac(cfg.invoiceSecret, macInput(cfg, quote.routeKey, quote.amountDrops, exp, nonce));
+  const mac = await hmac(cfg.invoiceSecret, macInput(cfg, quote.routeKey, quoteAmounts(cfg, quote), exp, nonce));
   return [INVOICE_PREFIX, quote.routeKey, exp, nonce, mac].join(".");
 }
 
@@ -152,7 +167,7 @@ export async function checkInvoiceId(
   const parts = invoiceId.split(".");
   if (parts.length !== 5 || parts[0] !== INVOICE_PREFIX) return { ok: false, reason: "malformed_invoice" };
   const [, routeKey, exp, nonce, mac] = parts;
-  const expected = await hmac(cfg.invoiceSecret, macInput(cfg, routeKey, quote.amountDrops, exp, nonce));
+  const expected = await hmac(cfg.invoiceSecret, macInput(cfg, routeKey, quoteAmounts(cfg, quote), exp, nonce));
   if (!timingSafeEqual(mac, expected)) return { ok: false, reason: "invalid_invoice" };
   if (routeKey !== quote.routeKey) return { ok: false, reason: "invoice_route_mismatch" };
   const expiresAt = parseInt(exp, 36) * 1000;
@@ -246,6 +261,7 @@ export function makeReplayGuard(opts: { durableObject?: DurableObjectNamespaceLi
 
 // ---------------------------------------------------------------- requirements
 
+/** XRP requirement (accepts[0], so clients that just take the first option keep paying in XRP). */
 export function buildRequirements(cfg: Config, quote: Quote, invoiceId: string): PaymentRequirements {
   return {
     scheme: "exact",
@@ -258,13 +274,38 @@ export function buildRequirements(cfg: Config, quote: Quote, invoiceId: string):
   };
 }
 
+/**
+ * All accepted options for a quote: XRP first, then each stablecoin (RLUSD, USDC: XRPL issued tokens, 40-hex currency code,
+ * issuer in extra.issuer, amount as the IOU value string), matching the x402-xrpl SDK's IOU wire format.
+ */
+export function buildAccepts(cfg: Config, quote: Quote, invoiceId: string): PaymentRequirements[] {
+  const out = [buildRequirements(cfg, quote, invoiceId)];
+  for (const [o, amount] of offeredIous(cfg, quote)) {
+    out.push({
+      scheme: "exact",
+      network: cfg.network,
+      amount,
+      asset: o.currency,
+      payTo: cfg.payTo,
+      maxTimeoutSeconds: cfg.invoiceTtlSeconds,
+      extra: { invoiceId, sourceTag: cfg.sourceTag, issuer: o.issuer, symbol: o.symbol },
+    });
+  }
+  return out;
+}
+
+/** Human label for a requirement's asset. */
+export function assetLabel(req: PaymentRequirements): string {
+  return req.asset === "XRP" ? "XRP" : String(req.extra?.symbol ?? req.asset);
+}
+
 export async function buildPaymentRequired(cfg: Config, quote: Quote, error: string): Promise<PaymentRequired> {
   const invoiceId = await issueInvoiceId(cfg, quote);
   return {
     x402Version: 2,
     error,
     resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json" },
-    accepts: [buildRequirements(cfg, quote, invoiceId)],
+    accepts: buildAccepts(cfg, quote, invoiceId),
     extensions: { bazaar: BAZAAR_GET_JSON },
   };
 }
@@ -325,7 +366,8 @@ function sameRequirements(a: PaymentRequirements, b: PaymentRequirements): boole
     a.asset === b.asset &&
     a.payTo === b.payTo &&
     Number(a.maxTimeoutSeconds) === Number(b.maxTimeoutSeconds) &&
-    a.extra?.invoiceId === b.extra?.invoiceId
+    a.extra?.invoiceId === b.extra?.invoiceId &&
+    (a.asset === "XRP" || a.extra?.issuer === b.extra?.issuer)
   );
 }
 
@@ -346,7 +388,7 @@ export async function requirePayment(
   cfg: Config,
   deps: PaywallDeps,
   quote: Quote,
-  serve: (settlement: Settlement) => Promise<Response> | Response,
+  serve: (settlement: Settlement, paid: PaymentRequirements) => Promise<Response> | Response,
 ): Promise<Response> {
   const header = request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT);
   if (!header) return paymentRequiredResponse(cfg, quote, "PAYMENT-SIGNATURE header is required");
@@ -364,8 +406,8 @@ export async function requirePayment(
   const check = await checkInvoiceId(cfg, invoiceId, quote);
   if (!check.ok) return paymentRequiredResponse(cfg, quote, check.reason);
 
-  const expected = buildRequirements(cfg, quote, invoiceId);
-  if (!sameRequirements(expected, payload.accepted)) {
+  const expected = buildAccepts(cfg, quote, invoiceId).find((r) => sameRequirements(r, payload.accepted));
+  if (!expected) {
     return paymentRequiredResponse(cfg, quote, "payment_requirements_mismatch");
   }
   if (await deps.replay.isUsed(invoiceId)) {
@@ -446,13 +488,15 @@ export async function requirePayment(
   deps.log?.({
     event: "x402_settled",
     route: quote.routeKey,
-    amountDrops: quote.amountDrops,
+    asset: assetLabel(expected),
+    amount: expected.amount,
+    amountDrops: expected.asset === "XRP" ? quote.amountDrops : undefined,
     network: settlement.network,
     tx: settlement.transaction,
     payer: settlement.payer,
   });
 
-  const resp = await serve(settlement);
+  const resp = await serve(settlement, expected);
   const out = new Response(resp.body, resp);
   out.headers.set(HEADER_PAYMENT_RESPONSE, settleResp.headers.get(HEADER_PAYMENT_RESPONSE) || encodeHeader(settlement));
   out.headers.set("Cache-Control", "no-store");

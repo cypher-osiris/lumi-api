@@ -13,10 +13,10 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
     version: VERSION,
     description:
       "Pay-per-call crypto market reads from Lumi Trades (lumitrades.io) for AI agents. " +
-      "No API keys or accounts: each paid call is settled in XRP on the XRP Ledger via the x402 protocol (HTTP 402, exact scheme).",
+      `No API keys or accounts: each paid call is settled in XRP${orIous(cfg)} on the XRP Ledger via the x402 protocol (HTTP 402, exact scheme).`,
     human_summary:
       "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins. " +
-      "Agents call an endpoint, receive HTTP 402 with a price in XRP, sign a small XRP Payment, retry, and get JSON back.",
+      `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}, sign a small XRPL Payment, retry, and get JSON back.`,
     source: SOURCE,
     payment: {
       protocol: "x402",
@@ -25,6 +25,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       network: cfg.network,
       network_name: cfg.networkName,
       asset: "XRP",
+      assets: assetsInfo(cfg),
       pay_to: cfg.payTo,
       facilitator: cfg.facilitatorUrl,
       source_tag: cfg.sourceTag,
@@ -53,7 +54,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: "Pay-per-call crypto market reads (signals, levels, paper-trade slate, macro) from lumitrades.io, settled in XRP on the XRP Ledger.",
+    description: `Pay-per-call crypto market reads (signals, levels, paper-trade slate, macro) from lumitrades.io, settled in XRP${orIous(cfg)} on the XRP Ledger.`,
     resources: PAID_ENDPOINTS.map((e) => ({
       url: `${base}${e.example}`,
       template: `${base}${e.template}`,
@@ -68,6 +69,15 @@ export function wellKnownX402(cfg: Config, base: string) {
           amount_xrp: dropsToXrp(cfg.pricesDrops[e.route]),
           payTo: cfg.payTo,
         },
+        ...cfg.ious.map((o) => ({
+          scheme: "exact",
+          network: cfg.network,
+          asset: o.currency,
+          asset_symbol: o.symbol,
+          issuer: o.issuer,
+          amount: o.prices[e.route],
+          payTo: cfg.payTo,
+        })),
       ],
     })),
     facilitators: [cfg.facilitatorUrl],
@@ -105,6 +115,16 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           asset: "XRP",
           amount_drops: cfg.pricesDrops[e.route],
           payTo: cfg.payTo,
+          ...(cfg.ious.length
+            ? {
+                alternatives: cfg.ious.map((o) => ({
+                  price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
+                  asset: o.currency,
+                  issuer: o.issuer,
+                  amount: o.prices[e.route],
+                })),
+              }
+            : {}),
         },
         responses: {
           "200": { description: "Paid data (JSON). Settlement receipt in the PAYMENT-RESPONSE header." },
@@ -119,12 +139,15 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     info: {
       title: "Lumi API",
       version: VERSION,
-      description: "Pay-per-call crypto market reads from lumitrades.io, paid in XRP via x402.",
+      description: `Pay-per-call crypto market reads from lumitrades.io, paid in XRP${orIous(cfg)} via x402.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
         "GET /v1/coins (free) lists supported coins. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
-        "GET /v1/market gives the BTC and macro backdrop. Each paid call is one x402 v2 'exact' XRP payment on the XRP Ledger " +
+        "GET /v1/market gives the BTC and macro backdrop. Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
+        (cfg.ious.length
+          ? "in XRP (accepts[0])" + cfg.ious.map((o, i) => ` or ${o.symbol} (accepts[${i + 1}], issuer ${o.issuer})`).join("") + " "
+          : "in XRP ") +
         `(${cfg.network}); unknown coins return 404 before any payment is requested. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
     },
     servers: [{ url: base }],
@@ -132,9 +155,45 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   };
 }
 
+const IOU_NAMES: Record<string, string> = { RLUSD: "Ripple USD", USDC: "Circle USDC" };
+
+function orIous(cfg: Config): string {
+  return cfg.ious.map((o) => ` or ${o.symbol}`).join("");
+}
+
+function assetsInfo(cfg: Config) {
+  const out: Record<string, unknown>[] = [{ symbol: "XRP", asset: "XRP", unit: "drops in accepts[].amount", accepts_index: 0 }];
+  cfg.ious.forEach((o, i) =>
+    out.push({
+      symbol: o.symbol,
+      name: IOU_NAMES[o.symbol],
+      asset: o.currency,
+      issuer: o.issuer,
+      unit: 'IOU value string in accepts[].amount (e.g. "0.01" = 1 US cent)',
+      accepts_index: i + 1,
+      note: `Payer needs a ${o.symbol} trust line to ${o.issuer} and a balance.`,
+    }),
+  );
+  return out;
+}
+
+function iouNote(cfg: Config): string {
+  if (!cfg.ious.length) return "";
+  const lines = cfg.ious
+    .map(
+      (o, i) =>
+        `   \`accepts[${i + 1}]\` is the same quote in **${o.symbol}** (${IOU_NAMES[o.symbol]}): \`{ asset: "${o.currency}", amount: "<value, e.g. 0.01>", extra: { issuer: "${o.issuer}", invoiceId, sourceTag, symbol: "${o.symbol}" } }\`.`,
+    )
+    .join("\n");
+  return `${lines}
+   Pick one option and echo it back unchanged as \`accepted\` (all options share one invoice; it can be paid once). To pay in a stablecoin your wallet needs a
+   trust line to that issuer and a balance; the Payment's \`Amount\` is \`{ currency, issuer, value }\` and \`SendMax\` equals \`Amount\` (no conversion).
+`;
+}
+
 export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const rows = priceTable(cfg)
-    .map((p) => `| \`${p.method} ${p.path}\` | ${p.price_xrp} XRP (${p.price_drops} drops) | ${p.summary} |`)
+    .map((p) => `| \`${p.method} ${p.path}\` | ${p.price_xrp} XRP (${p.price_drops} drops)${p.prices.slice(1).map((x) => ` or ${x.amount} ${x.asset}`).join("")} | ${p.summary} |`)
     .join("\n");
   const net = cfg.network;
   const wsUrl = net === "xrpl:0" ? "wss://xrplcluster.com" : "wss://s.altnet.rippletest.net:51233";
@@ -142,13 +201,13 @@ export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const maxDrops = Math.max(...Object.values(cfg.pricesDrops).map(Number));
   return `---
 name: lumi-api
-description: Pay-per-call crypto market reads from Lumi Trades (signals, support/resistance levels, paper-trade ideas, BTC + macro backdrop) for ${coins.length} coins, paid in XRP on the XRP Ledger via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
+description: Pay-per-call crypto market reads from Lumi Trades (signals, support/resistance levels, paper-trade ideas, BTC + macro backdrop) for ${coins.length} coins, paid in XRP${orIous(cfg)} on the XRP Ledger via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
 ---
 
 # Lumi API (agent guide)
 
 Base URL: ${base}
-Network: \`${net}\` (${cfg.networkName}). Asset: XRP. Pay to: \`${cfg.payTo}\`.
+Network: \`${net}\` (${cfg.networkName}). Assets: XRP${cfg.ious.map((o) => ` or ${o.symbol} (${IOU_NAMES[o.symbol]}, issuer \`${o.issuer}\`, currency \`${o.currency}\`)`).join("")}. Pay to: \`${cfg.payTo}\`.
 Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call).
 No API key, no account, no sign-up.
 
@@ -170,7 +229,7 @@ Data is refreshed from lumitrades.io roughly every minute; analysis text is upda
 
 1. \`GET ${base}/v1/signal/XRP\` with no payment -> **HTTP 402**. The body (and the base64 \`PAYMENT-REQUIRED\` header) is an x402 v2 \`PaymentRequired\`:
    \`accepts[0] = { scheme: "exact", network: "${net}", asset: "XRP", amount: "<drops>", payTo: "${cfg.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { invoiceId, sourceTag: ${cfg.sourceTag} } }\`
-2. Sign (do not submit) an XRPL \`Payment\` for exactly \`amount\` drops to \`payTo\`, with \`SourceTag\`, a \`LastLedgerSequence\`,
+${iouNote(cfg)}2. Sign (do not submit) an XRPL \`Payment\` for exactly \`amount\` drops to \`payTo\`, with \`SourceTag\`, a \`LastLedgerSequence\`,
    and the invoice bound via a Memo (\`MemoData = hex(utf8(invoiceId))\`) and/or \`InvoiceID = SHA-256(invoiceId)\`.
 3. Retry the same request with header \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <accepts[0]>, payload: { signedTxBlob, invoiceId } })\`.
 4. The server has the facilitator (${cfg.facilitatorUrl}) verify and submit your payment. On a validated \`tesSUCCESS\` you get **200**
@@ -199,6 +258,26 @@ console.log(res.status, await res.json());
 const receipt = res.headers.get("PAYMENT-RESPONSE");
 if (receipt) console.log(decodePaymentResponseHeader(receipt)); // { success, transaction, ... }
 \`\`\`
+${cfg.ious.length ? `
+Pay in a stablecoin instead (wallet must hold it on a trust line to the issuer):
+
+\`\`\`ts
+const STABLE = { ${cfg.ious.map((o) => `${o.symbol}: { currency: "${o.currency}", issuer: "${o.issuer}" }`).join(", ")} };
+const want = STABLE.${cfg.ious[0].symbol};
+const fetchStable = x402Fetch({
+  wallet: Wallet.fromSeed(process.env.XRPL_SEED!),
+  network: "${net}",
+  wsUrl: "${wsUrl}",
+  // pick the stablecoin option and cap it at 0.05 per call
+  paymentRequirementsSelector: (accepts) => {
+    const r = accepts.find((a: any) => a.asset === want.currency && a.extra?.issuer === want.issuer);
+    if (!r || Number(r.amount) > 0.05) throw new Error("no acceptable stablecoin quote");
+    return r;
+  },
+});
+\`\`\`
+Note: the SDK's numeric \`maxValue\` compares raw \`amount\` strings across assets (drops for XRP, a decimal value for stablecoins), so use a selector like the one above when paying in a stablecoin.
+` : ""}
 
 ## Example: Python (PyPI \`x402-xrpl\`)
 

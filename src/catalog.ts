@@ -58,6 +58,12 @@ export function priceTable(cfg: Config) {
     path: e.path,
     price_xrp: dropsToXrp(cfg.pricesDrops[e.route]),
     price_drops: cfg.pricesDrops[e.route],
+    price_rlusd: cfg.ious.find((o) => o.symbol === "RLUSD")?.prices[e.route] ?? null,
+    price_usdc: cfg.ious.find((o) => o.symbol === "USDC")?.prices[e.route] ?? null,
+    prices: [
+      { asset: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
+      ...cfg.ious.map((o) => ({ asset: o.symbol, amount: o.prices[e.route], currency: o.currency, issuer: o.issuer })),
+    ],
     summary: e.summary,
     example: e.example,
   }));
