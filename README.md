@@ -55,7 +55,7 @@ Agent                          Lumi API (Worker)                 T54 facilitator
    ```json
    { "scheme": "exact", "network": "xrpl:0", "asset": "XRP", "amount": "20000",
      "payTo": "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM", "maxTimeoutSeconds": 300,
-     "extra": { "invoiceId": "lumi1.signal:XRP.<exp>.<nonce>.<mac>", "sourceTag": 5864 } }
+     "extra": { "invoiceId": "lumi1.signal:XRP.<exp>.<nonce>.<mac>", "sourceTag": 804681468 } }
    ```
 2. **Pay.** The agent signs (but does not submit) an XRPL `Payment` for exactly `amount` drops to `payTo`, bound to the invoice (Memo + `InvoiceID`), and retries with `PAYMENT-SIGNATURE`.
 3. **Settle.** Lumi API checks the invoice, then has the facilitator verify and submit the blob. On a validated `tesSUCCESS` it returns the data and a `PAYMENT-RESPONSE` receipt `{ success, transaction, network, payer }`.
@@ -97,7 +97,7 @@ See `examples/agent-client.ts`, `examples/agent_client.py` and the live `/skill.
 - **One-time redemption via a Durable Object** (`src/invoice-guard.ts`). This is required. On testnet, the T54 facilitator returns `success: true` again when an already-settled blob is resubmitted, because XRPL submission is idempotent on the tx hash. `npm run probe:replay` reproduces this. Without a resource-server guard, one payment could be replayed for unlimited data. The guard atomically claims each invoice id before `/settle`. It is sharded 16 ways and expires entries with alarms. SQLite-backed DOs are on the Workers Free plan.
 - **Privacy filter** (`src/sanitize.ts`). Every field is whitelisted per endpoint (`src/views.ts`). Free text is then filtered sentence by sentence to drop anything mentioning a configured private name (`PRIVATE_NAMES` secret) or personal holdings/positions, and sensitive keys are dropped recursively. Tests inject canaries to prove it.
 - **Short cache.** Upstream `lumitrades.io/data/*.json` is cached for 60s per isolate (`DATA_TTL_SECONDS`), with up to 15 minutes of stale fallback.
-- **On-ledger metrics.** Every payment carries `SourceTag 5864` and is sent to Lumi's wallet, so usage can be counted from public ledger data. Each settlement also logs an `x402_settled` JSON line in Workers Logs.
+- **On-ledger metrics.** Every payment carries `SourceTag 804681468 (the T54 facilitator tag that the XRPL AI Hub counts)` and is sent to Lumi's wallet, so usage can be counted from public ledger data. Each settlement also logs an `x402_settled` JSON line in Workers Logs.
 
 ## Run locally
 
@@ -129,7 +129,7 @@ The demo does the following:
 4. signs the Payment with the `x402-xrpl` SDK, retries, and gets **200** with data and a `PAYMENT-RESPONSE` receipt
 5. replays the same `PAYMENT-SIGNATURE` and gets **402 `invoice_already_used`**
 6. runs the one-line agent flow `x402Fetch(/v1/market)` and gets **200**
-7. checks both transactions on the ledger (validated, `tesSUCCESS`, destination, amount, SourceTag 5864, invoice memo) and writes a transcript to `demo/`
+7. checks both transactions on the ledger (validated, `tesSUCCESS`, destination, amount, the SourceTag, invoice memo) and writes a transcript to `demo/`
 
 To run it against the Workers runtime instead: `npm run dev` in one shell, then `LUMI_API_URL=http://127.0.0.1:8787 npm run demo:testnet`.
 
@@ -166,7 +166,7 @@ Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full
 | `XRPL_NETWORK` | `xrpl:0` |
 | `PAY_TO` | `rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM` (Lumi's receiving wallet; the server only needs the address) |
 | `FACILITATOR_URL` | `https://xrpl-facilitator-mainnet.t54.ai` |
-| `SOURCE_TAG` | `5864` |
+| `SOURCE_TAG` | `804681468` (T54 facilitator tag, counted by the XRPL AI Hub) |
 | `INVOICE_SECRET` | secret, required on mainnet (startup refuses without it) |
 | `PRIVATE_NAMES` | optional secret: comma-separated names scrubbed from paid responses (`npx wrangler secret put PRIVATE_NAMES`) |
 
@@ -198,7 +198,7 @@ demo/               recorded testnet transcripts
 1. **Mainnet launch** on `api.lumitrades.io`, listed in x402 discovery indexes (OpenAPI and `/.well-known/x402`) and in the XRPL agent ecosystem.
 2. **RLUSD pricing.** Add an RLUSD option to `accepts[]` (asset `524C555344000000000000000000000000000000` plus issuer) for dollar-stable prices. The facilitator and SDKs already support IOUs.
 3. **Prepaid credits through payment channels.** Agents that call often open an XRPL PayChannel once and stream signed claims, which brings per-call cost and latency well below one on-ledger Payment per call. Candidates are the `upto`/`paychan` x402 schemes.
-4. **Usage metrics dashboard.** Public stats from on-ledger data (payments to `PAY_TO` with `SourceTag 5864`: calls, unique payer agents, XRP volume per endpoint) plus Workers Analytics Engine. These metrics become the grant KPIs.
+4. **Usage metrics dashboard.** Public stats from on-ledger data (payments to `PAY_TO` with `SourceTag 804681468`: calls, unique payer agents, XRP volume per endpoint) plus Workers Analytics Engine. These metrics become the grant KPIs.
 5. **More products.** Historical signal series, a backtest API, webhook/stream subscriptions, and an MCP server wrapper so LLM agents can discover and call Lumi as a tool.
 6. **Hardening.** Facilitator failover or self-hosted verification, rate limits, and a Bazaar `extensions` input/output schema in the 402.
 
