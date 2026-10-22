@@ -632,6 +632,7 @@ Scores are observations with sample sizes, not ratings; few samples are marked l
 `;
 }
 
+const LOGO = "https://lumitrades.io/assets/icon-512.png";
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** Human quickstart served at `/` when the client asks for text/html (browsers, x402scan's page fetcher). */
@@ -678,34 +679,112 @@ console.log(await res.json());`;
   "lumi": { "command": "npx", "args": ["-y", "lumi-trades-mcp"],
             "env": { "EVM_PRIVATE_KEY": "0x... (USDC on Base)", "LUMI_MAX_USD_PER_CALL": "0.30" } } } }`;
   const pre = (s: string) => `<pre><code>${esc(s)}</code></pre>`;
+  const keywords = [
+    "x402", "pay per call API", "crypto trading signals", "crypto API", "XRP signal", "bitcoin", "support and resistance levels",
+    "daily crypto market brief", "institutional policy brief", "CBDC", "tokenization", "stablecoins", "RLUSD", "USDC on Base",
+    "XRP Ledger", "XRPL", "AI agents", "agentic payments", "MCP server", "A2A agent", "Coinbase x402 Bazaar", "x402 vendor trust scores",
+  ].join(", ");
+  const jsonLd = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebAPI",
+    name: "Lumi API",
+    alternateName: "Lumi Trades API",
+    url: `${base}/`,
+    description: desc,
+    documentation: `${base}/openapi.json`,
+    provider: { "@type": "Organization", name: "Lumi Trades", url: "https://lumitrades.io/", logo: LOGO },
+    keywords,
+    offers: priceTable(cfg).map((p) => ({ "@type": "Offer", name: `${p.method} ${p.path}`, description: p.summary, price: String(p.price_base_usdc ?? p.price_rlusd ?? p.price_usdc ?? ""), priceCurrency: "USD" })),
+  }).replace(/</g, "\\u003c");
+  const quick: [string, string, string][] = [
+    ["skill.md", `${base}/skill.md`, "Agent instructions"],
+    ["openapi.json", `${base}/openapi.json`, "OpenAPI 3.1 with x-payment-info"],
+    [".well-known/x402", `${base}/.well-known/x402`, "x402 discovery"],
+    ["/mcp", `${base}/mcp`, "Remote MCP (streamable HTTP)"],
+    ["agent card", `${base}/.well-known/agent-card.json`, "A2A agent card"],
+    ["llms.txt", `${base}/llms.txt`, "LLM-readable overview"],
+  ];
+  const quickHtml = quick.map(([n, u, d]) => `<a class="ql" href="${esc(u)}"><code>${esc(n)}</code><span>${esc(d)}</span></a>`).join("\n");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}">
+<meta name="keywords" content="${esc(keywords)}">
+<meta name="theme-color" content="#070a10">
 <meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
-<meta property="og:url" content="${esc(base)}/"><meta property="og:type" content="website">
+<meta property="og:url" content="${esc(base)}/"><meta property="og:type" content="website"><meta property="og:image" content="${LOGO}">
+<link rel="icon" href="${LOGO}"><link rel="canonical" href="${esc(base)}/">
 <link rel="alternate" type="application/json" href="${esc(base)}/"><link rel="alternate" type="text/markdown" href="${esc(base)}/llms.txt">
-<style>body{font:15px/1.55 system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;color:#1b1b1b}
-pre{background:#f4f4f6;padding:.8rem;overflow:auto;border-radius:6px;font-size:13px}table{border-collapse:collapse;width:100%;font-size:14px}
-td,th{border-bottom:1px solid #e3e3e3;padding:.35rem .5rem;text-align:left;vertical-align:top}code{font-size:13px}h2{margin-top:2rem}</style>
+<script type="application/ld+json">${jsonLd}</script>
+<style>
+:root{--bg:#070a10;--bg2:#0b1019;--glass:rgba(22,29,42,.62);--line:rgba(148,163,184,.14);--text:#e7edf5;--muted:#8b99ad;--cyan:#22d3ee;--violet:#a78bfa;--grad:linear-gradient(135deg,var(--cyan),var(--violet))}
+*{box-sizing:border-box}html{background:var(--bg)}
+body{margin:0;color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Inter,sans-serif;
+background:radial-gradient(900px 500px at 10% -10%,rgba(34,211,238,.10),transparent 60%),radial-gradient(800px 500px at 100% 0,rgba(167,139,250,.10),transparent 60%),linear-gradient(180deg,var(--bg2),var(--bg) 600px);min-height:100vh}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;z-index:5;backdrop-filter:blur(10px);background:rgba(7,10,16,.78);border-bottom:1px solid var(--line)}
+header .wrap{display:flex;align-items:center;gap:16px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;color:var(--text);font-weight:700;font-size:17px}.brand img{border-radius:9px}
+.brand b{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+nav{margin-left:auto;display:flex;gap:18px;font-size:14px}nav a{color:var(--muted)}nav a:hover{color:var(--text);text-decoration:none}
+.hero{padding:56px 0 28px}.eyebrow{display:inline-block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 12px}
+h1{font-size:clamp(30px,5vw,46px);line-height:1.12;margin:16px 0 12px;letter-spacing:-.02em}
+h1 span{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.pitch{font-size:19px;color:var(--text);margin:0 0 10px;max-width:760px}.lead{color:var(--muted);max-width:820px;margin:0}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.btn{display:inline-block;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--glass);color:var(--text);font-weight:600;font-size:14px}
+.btn.p{background:var(--grad);color:#06121f;border:0}.btn:hover{text-decoration:none;filter:brightness(1.08)}
+h2{font-size:22px;margin:40px 0 12px;letter-spacing:-.01em}h2::after{content:"";display:block;width:44px;height:3px;border-radius:3px;background:var(--grad);margin-top:8px}
+.card{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+.free a{white-space:nowrap}
+.qls{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.ql{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--glass)}
+.ql:hover{border-color:rgba(34,211,238,.45);text-decoration:none}.ql code{color:var(--cyan);font-size:14px}.ql span{color:var(--muted);font-size:13px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--glass)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:640px}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);background:rgba(11,16,25,.6)}
+td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}tbody tr:hover td{background:rgba(34,211,238,.04)}
+td:nth-child(2){font-weight:700;color:#7dd3fc;white-space:nowrap}td:nth-child(3){color:var(--muted);white-space:nowrap}
+code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}td code{color:var(--text)}
+pre{background:#05080d;border:1px solid var(--line);padding:14px 16px;overflow:auto;border-radius:12px;font-size:13px;color:#d3dbe6}
+.note{color:var(--muted);font-size:14px}
+footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+@media (max-width:640px){nav{gap:12px;font-size:13px}.brand span.t{display:none}.hero{padding:36px 0 16px}.pitch{font-size:17px}}
+</style>
 </head><body>
-<h1>Lumi API</h1>
-<p>${esc(desc)}</p>
-<p><strong>Free:</strong> <a href="${esc(base)}/v1/trust/vendors">x402 vendor trust list</a> &middot;
+<header><div class="wrap">
+<a class="brand" href="https://lumitrades.io/"><img src="${LOGO}" width="34" height="34" alt="Lumi logo"><span class="t">Lumi <b>API</b></span></a>
+<nav><a href="https://lumitrades.io/">lumitrades.io</a><a href="https://lumitrades.io/agents/">Agents</a><a href="https://lumitrades.io/trust/">Trust</a></nav>
+</div></header>
+<main class="wrap">
+<section class="hero">
+<span class="eyebrow">x402 &middot; USDC on Base &middot; XRP / RLUSD / USDC on XRPL</span>
+<h1>Lumi API: <span>crypto signals &amp; briefs for AI agents</span></h1>
+<p class="pitch">Pay-per-call crypto data for agents: no API key, no signup, $0.01-$0.25 per call over x402.</p>
+<p class="lead">${esc(desc)}</p>
+<div class="cta"><a class="btn p" href="${esc(base)}/skill.md">Agent quickstart (skill.md)</a><a class="btn" href="${esc(base)}/v1/samples">Free samples</a><a class="btn" href="${esc(base)}/v1/trust/vendors">x402 vendor trust (free)</a></div>
+</section>
+<div class="card free"><p style="margin:0"><strong>Free:</strong> <a href="${esc(base)}/v1/trust/vendors">x402 vendor trust list</a> &middot;
 <a href="${esc(base)}/v1/trust/methodology">methodology</a> &middot; <a href="${esc(base)}/v1/coins">coins</a> &middot; <a href="${esc(base)}/v1/samples">free samples</a> &middot;
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
-<strong>Most popular paid read:</strong> <a href="${esc(base)}/v1/brief">the daily market brief</a> ($0.03, returns HTTP 402 with the price until paid).</p>
+<strong>Most popular paid read:</strong> <a href="${esc(base)}/v1/brief">the daily market brief</a> ($0.03, returns HTTP 402 with the price until paid).</p></div>
+<h2>For agents</h2>
+<div class="qls">
+${quickHtml}
+</div>
 <h2>What you can buy</h2>
-<table><tr><th>Endpoint</th><th>USD</th><th>XRP</th><th>What you get</th></tr>
-${rows}</table>
-<p>Coins: ${esc(coins.map((c) => c.symbol).join(", "))}. You only pay when you get data: stale inputs return 503 "Not charged." before any quote.</p>
+<div class="tbl"><table><thead><tr><th>Endpoint</th><th>USD</th><th>XRP</th><th>What you get</th></tr></thead><tbody>
+${rows}</tbody></table></div>
+<p class="note">Coins: ${esc(coins.map((c) => c.symbol).join(", "))}. You only pay when you get data: stale inputs return 503 "Not charged." before any quote.</p>
 ${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
 <h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
-<p>Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}
+<p class="note">Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}
 <h2>Quickstart: XRP Ledger (XRP, RLUSD, USDC)</h2>${pre(xrplSnippet)}
 <h2>MCP (Claude, Cursor, any MCP client)</h2>${pre(mcpSnippet)}
-<p>The remote server lists prices and payment terms; the npm package <code>lumi-trades-mcp</code> pays from your own wallet within per-call caps.</p>
-<p><small>${esc(DISCLAIMER)} Source: Lumi Trades (lumitrades.io). API v${VERSION}.</small></p>
+<p class="note">The remote server lists prices and payment terms; the npm package <code>lumi-trades-mcp</code> pays from your own wallet within per-call caps.</p>
+</main>
+<footer><div class="wrap"><small>${esc(DISCLAIMER)} Source: Lumi Trades (lumitrades.io). API v${VERSION}.</small></div></footer>
 </body></html>`;
 }

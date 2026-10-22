@@ -34,6 +34,17 @@ describe("free endpoints", () => {
     expect(html).toContain("lumi-trades-mcp");
     expect(html).toContain("x402Fetch");
     expect(html).not.toMatch(/win rate|track record/i);
+    // brand restyle: dark theme, logo, site nav, agent quick-links, price table, JSON-LD, keywords; inline CSS only
+    expect(html).toContain("--bg:#070a10");
+    expect(html).toContain("https://lumitrades.io/assets/icon-512.png");
+    for (const href of ["https://lumitrades.io/", "https://lumitrades.io/agents/", "https://lumitrades.io/trust/"]) expect(html).toContain(`href="${href}"`);
+    for (const p of ["/skill.md", "/openapi.json", "/.well-known/x402", "/mcp", "/.well-known/agent-card.json"]) expect(html).toContain(`href="${BASE}${p}"`);
+    expect(html).toContain('<meta name="keywords"');
+    const ld = JSON.parse(html.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)![1]);
+    expect(ld["@type"]).toBe("WebAPI");
+    expect(ld.offers.length).toBeGreaterThan(5);
+    expect(html.match(/<tbody>([\s\S]*?)<\/tbody>/)![1]).toContain("/v1/brief");
+    expect(html).not.toMatch(/<link[^>]+stylesheet|<script src=/);
     const j = await get("/", { Accept: "application/json" });
     expect(j.headers.get("content-type")).toMatch(/json/);
     expect(j.headers.get("vary")).toBe("Accept");
