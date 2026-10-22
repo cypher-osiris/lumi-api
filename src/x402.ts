@@ -694,8 +694,14 @@ async function requireEvmPayment(
     success: true,
     transaction: tx,
     network: String(settleJson.network || expected.network),
-    payer: typeof settleJson.payer === "string" && settleJson.payer ? settleJson.payer : auth.from,
+    // The signed EIP-3009 `from` is the account that was debited. Facilitators may echo it lowercased (PayAI does),
+    // so report the payer exactly as signed (EIP-55 checksummed from @x402/evm) and log any facilitator disagreement.
+    payer: auth.from,
   };
+  const facPayer = typeof settleJson.payer === "string" ? settleJson.payer : "";
+  if (facPayer && facPayer.toLowerCase() !== auth.from.toLowerCase()) {
+    deps.log?.({ event: "x402_payer_mismatch", route: quote.routeKey, signed: auth.from, facilitator: facPayer, tx });
+  }
   deps.log?.({
     event: "x402_settled",
     route: quote.routeKey,

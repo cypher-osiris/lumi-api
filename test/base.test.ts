@@ -143,6 +143,18 @@ describe("Base payment with the official @x402/fetch client", () => {
     expect(logs.find((l) => l.event === "x402_settled")).toMatchObject({ asset: "USDC", amount: "10000", network: "eip155:84532", route: "sentiment" });
   });
 
+  it("reports the payer as signed (checksummed) even when the facilitator echoes it lowercased, as PayAI does", async () => {
+    const evm = evmFacilitator({
+      settle: (b) => jsonResponse(200, { success: true, transaction: TX, network: b.paymentRequirements.network, payer: String(b.paymentPayload.payload.authorization.from).toLowerCase() }),
+    });
+    const { appFetch } = setup({ evm });
+    const { account, client } = buyer();
+    const r = await wrapFetchWithPayment(appFetch, client)(BASE + "/v1/slate");
+    expect(r.status).toBe(200);
+    expect((await r.json()).payment.payer).toBe(account.address);
+    expect(decodePaymentResponseHeader(r.headers.get("PAYMENT-RESPONSE")!).payer).toBe(account.address);
+  });
+
   it("refuses replay of the same header and reuse of one authorization against a fresh invoice", async () => {
     const { get, evm } = setup();
     const { client } = buyer();
