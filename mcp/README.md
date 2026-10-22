@@ -17,6 +17,7 @@ use this package when you want paid tools to pay automatically from your own wal
 | `lumi_catalog` | free | – | Endpoints, live prices, this server's wallet + spend caps |
 | `lumi_coins` | free | – | The 13 coins covered (XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI) |
 | `lumi_quote` | free | – | The x402 quote for any paid path, without paying |
+| `lumi_vendor_scores` | free | – | Lumi's automated observations of other x402 vendors (402-quote checks, paid test-buys, tx evidence, sample sizes); optional `vendor_id` |
 | `lumi_brief` | paid | 0.02 / 0.03 | Today's market brief (BTC, CoinMarketCap Fear & Greed, movers, key levels, yen, events, paper trades, news). `format: "md"` for markdown |
 | `lumi_signal` | paid | 0.005 / 0.01 | Buy/sell read for one coin (1h/4h/1d + indicators) |
 | `lumi_levels` | paid | 0.005 / 0.01 | Support/resistance, 7-day projection, commentary for one coin |

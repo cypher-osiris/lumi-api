@@ -18,6 +18,7 @@ import { PAID_ENDPOINTS } from "./catalog";
 import { indexDoc, VERSION } from "./docs";
 import { DISCLAIMER, type CoinRef } from "./views";
 import type { Prepared } from "./app";
+import type { Trust } from "./trust";
 
 export const MODERN_VERSION = "2026-07-28";
 const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -34,6 +35,8 @@ export interface McpDeps {
   prepare(route: PaidRoute, coinArg?: string): Promise<Prepared>;
   /** Unpaid internal GET of a paid path (returns the 402 terms, or a not-charged error). */
   quote(path: string): Promise<{ status: number; body: any }>;
+  /** Trust layer (free vendor observations). */
+  trust?: Pick<Trust, "vendorsDoc" | "vendorDoc">;
   log(event: Record<string, unknown>): void;
 }
 
@@ -126,6 +129,15 @@ function toolList() {
       inputSchema: { type: "object", properties: { path: { type: "string", pattern: "^/v1/", description: "Paid API path, e.g. /v1/brief or /v1/signal/XRP" } }, required: ["path"] },
       annotations: ro,
     },
+    {
+      name: "lumi_vendor_scores",
+      title: "Lumi: x402 vendor observations (free)",
+      description:
+        "Free. Lumi's automated observations of other x402 sellers on the XRP Ledger: free 402-quote checks every 30 min plus small paid test-buys, " +
+        "with timestamps, tx hashes and sample sizes. Scores are observations, not ratings; few samples = low confidence. Pass vendor_id for one vendor's full evidence.",
+      inputSchema: { type: "object", properties: { vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Optional vendor id from the list, e.g. asksurf" } } },
+      annotations: ro,
+    },
     ...PAID_TOOLS.map((t) => ({
       name: t.name,
       title: `Lumi: ${t.name.replace(/^lumi_/, "").replace(/_/g, " ")} (paid)`,
@@ -139,7 +151,7 @@ function toolList() {
 const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate and track record, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins, plus a premium daily Institutional & Policy Brief " +
-  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins and lumi_quote are free. " +
+  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free. " +
   "Paid tools cost a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
@@ -157,7 +169,7 @@ export async function safeEqual(a: string, b: string): Promise<boolean> {
   return diff === 0;
 }
 const MIN_KEY_LENGTH = 32;
-async function isOwnerKey(candidate: string | undefined, ownerKey: string | undefined): Promise<boolean> {
+export async function isOwnerKey(candidate: string | undefined, ownerKey: string | undefined): Promise<boolean> {
   if (!ownerKey || ownerKey.length < MIN_KEY_LENGTH || !candidate) return false;
   return safeEqual(candidate, ownerKey);
 }
@@ -406,6 +418,15 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
         const list = await deps.coins();
         return text(list.map((c) => ({ symbol: c.symbol, id: c.id, name: c.name, group: (c as any).group })));
       }
+      case "lumi_vendor_scores": {
+        if (!deps.trust) return text({ error: "trust layer unavailable" }, true);
+        const id = str(args.vendor_id);
+        if (id) {
+          const doc = await deps.trust.vendorDoc(id, base);
+          return doc ? text(doc) : text({ error: "unknown vendor_id", list: `${base}/v1/trust/vendors` }, true);
+        }
+        return text(await deps.trust.vendorsDoc(base));
+      }
       case "lumi_quote": {
         const path = str(args.path);
         if (!path || !/^\/v1\/[A-Za-z0-9/_.?=&%-]*$/.test(path)) return text({ error: "path must be a Lumi paid path such as /v1/brief or /v1/signal/XRP" }, true);
@@ -500,7 +521,7 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
               note: "Runs locally over stdio and pays from your wallet within per-call caps and a session budget.",
             },
           ],
-          free_tools: ["lumi_catalog", "lumi_coins", "lumi_quote"],
+          free_tools: ["lumi_catalog", "lumi_coins", "lumi_quote", "lumi_vendor_scores"],
           disclaimer: DISCLAIMER,
         },
         null,

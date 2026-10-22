@@ -267,7 +267,7 @@ describe("discovery lists both networks", () => {
   it("index, health, /.well-known/x402, openapi, skill.md, llms.txt", async () => {
     const { get } = setup();
     const index = await (await get("/")).json();
-    expect(index.version).toBe("0.5.0");
+    expect(index.version).toBe("0.6.0");
     expect(index.payment.networks.map((n: any) => n.network)).toEqual(["xrpl:1", "eip155:84532"]);
     expect(index.payment.assets[3]).toMatchObject({ symbol: "USDC", network: "eip155:84532", asset: SEPOLIA_USDC, accepts_index: 3 });
     expect(index.free_endpoints.map((e: any) => e.path)).toContain("/.well-known/agent-card.json");
@@ -278,7 +278,7 @@ describe("discovery lists both networks", () => {
     expect(wk.facilitators).toEqual([FACILITATOR, EVM_FAC]);
     expect(wk.agent_card).toBe(`${BASE}/.well-known/agent-card.json`);
     const oa = await (await get("/openapi.json")).json();
-    expect(oa.info.version).toBe("0.5.0");
+    expect(oa.info.version).toBe("0.6.0");
     expect(oa.paths["/v1/brief"].get["x-payment-info"].alternatives.at(-1)).toMatchObject({ network: "eip155:84532", amount: "30000" });
     for (const p of ["/skill.md", "/llms.txt"]) {
       const md = await (await get(p)).text();

@@ -8,6 +8,7 @@
  * live x402 terms for every network and the REST URL to pay at. Nothing is charged over A2A.
  */
 
+import type { Trust } from "./trust";
 import type { Config } from "./config";
 import { atomicToUsdc, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
@@ -38,6 +39,7 @@ interface SkillDef {
 const SKILLS: SkillDef[] = [
   { id: "catalog", name: "Catalog: endpoints, prices, payment networks (free)", tags: ["catalog", "pricing", "x402", "free"], examples: ["catalog", "what do you sell and how much?"], match: /\b(catalog|prices?|pricing|endpoints?|help|menu)\b/i },
   { id: "coins", name: "Supported coins (free)", tags: ["coins", "free"], examples: ["list coins"], match: /\b(coins|supported|tickers)\b/i },
+  { id: "vendor_trust", name: "x402 vendor observations (free)", tags: ["trust", "x402", "vendors", "observations", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"asksurf\"}"], match: /\b(vendors?|trust)\b/i },
   { id: "quote", name: "Price quote for a paid call, without paying (free)", tags: ["quote", "x402", "free"], examples: ["quote /v1/brief"], match: /\bquote\b/i },
   {
     id: "institutional",
@@ -61,6 +63,8 @@ const SKILLS: SkillDef[] = [
 const FREE_DESCRIPTIONS: Record<string, string> = {
   catalog: "Lists every Lumi endpoint with live prices on every payment network (XRP Ledger, Base), the MCP and A2A endpoints, and the no-charge-when-stale guarantee.",
   coins: "The 13 coins Lumi covers (tickers and CoinGecko ids).",
+  vendor_trust:
+    "Lumi's automated observations of other x402 sellers on the XRP Ledger (free 402-quote checks every 30 min plus small paid test-buys), with timestamps, tx hashes and sample sizes. Observations, not ratings; few samples = low confidence. Optional {\"vendor_id\":\"...\"} for one vendor's evidence.",
   quote: "Live x402 v2 quote (all accepts options) for a paid skill or path, e.g. {\"skill\":\"signal\",\"coin\":\"XRP\"} or \"quote /v1/brief\". A 503 means the data is not fresh right now and would not be sold.",
 };
 
@@ -148,6 +152,8 @@ export interface A2aDeps {
   coins(): Promise<CoinRef[]>;
   /** Unpaid internal GET of a paid path (returns the 402 terms, or a not-charged error). */
   quote(path: string): Promise<{ status: number; body: any }>;
+  /** Trust layer (free vendor observations). */
+  trust?: Pick<Trust, "vendorsDoc" | "vendorDoc">;
   log(event: Record<string, unknown>): void;
 }
 
@@ -269,6 +275,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   let skill: SkillDef | undefined = typeof data.skill === "string" ? SKILLS.find((s) => s.id === data.skill || s.route === data.skill) : undefined;
   const pathArg = typeof data.path === "string" ? data.path : text.match(/\/v1\/[A-Za-z0-9/_.?=&%-]+/)?.[0];
   if (!skill && /\bquote\b/i.test(text)) skill = SKILLS.find((s) => s.id === "quote");
+  if (!skill && /\b(vendors?|trust)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_trust");
   if (!skill) skill = SKILLS.filter((s) => s.route).find((s) => s.match.test(text)) ?? SKILLS.find((s) => !s.route && s.match.test(text));
   const coinArg =
     (typeof data.coin === "string" && data.coin) ||
@@ -279,7 +286,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
       skill: "catalog",
       text:
         `Lumi Trades sells crypto market reads per call over x402 (${settledIn(cfg)}). ` +
-        "Free here: catalog, coins, quote. Paid skills: " + SKILLS.filter((s) => s.route).map((s) => s.id).join(", ") +
+        "Free here: catalog, coins, quote, vendor_trust. Paid skills: " + SKILLS.filter((s) => s.route).map((s) => s.id).join(", ") +
         ". Ask e.g. 'signal XRP' to get the live payment terms." + (skill ? "" : " (No skill matched your message, so here is the catalog.)"),
       data: {
         api: base,
@@ -290,6 +297,19 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
         disclaimer: DISCLAIMER,
       },
     };
+  }
+  if (skill.id === "vendor_trust") {
+    if (!deps.trust) return { skill: "vendor_trust", text: "The trust layer is unavailable right now.", data: { error: "unavailable" } };
+    const id = typeof data.vendor_id === "string" ? data.vendor_id : undefined;
+    if (id) {
+      const doc = await deps.trust.vendorDoc(id, base);
+      if (!doc) return { skill: "vendor_trust", text: `Unknown vendor_id ${JSON.stringify(id).slice(0, 80)}. See ${base}/v1/trust/vendors.`, data: { error: "unknown_vendor" } };
+      const sc = doc.score as { value: number | null; confidence: string };
+      return { skill: "vendor_trust", text: `${doc.name}: Lumi observation score ${sc.value ?? "n/a"} (${sc.confidence} confidence). Methodology: ${base}/v1/trust/methodology`, data: doc };
+    }
+    const doc = await deps.trust.vendorsDoc(base);
+    const list = (doc.vendors as { name: string; score: number | null; confidence: string }[]).map((v) => `${v.name}: ${v.score ?? "n/a"} (${v.confidence})`).join("; ");
+    return { skill: "vendor_trust", text: `Lumi's automated observations of x402 vendors (not ratings): ${list}. Methodology: ${base}/v1/trust/methodology`, data: doc };
   }
   if (skill.id === "coins") {
     return { skill: "coins", text: `Lumi covers ${coins.length} coins: ${coins.map((c) => c.symbol).join(", ")}.`, data: { coins } };

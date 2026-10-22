@@ -11,7 +11,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createClient, loadSettings } from "./lumi.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
 export const PAID_TOOLS = [
@@ -95,6 +95,21 @@ export function buildServer(client) {
       inputSchema: { path: z.string().regex(/^\/v1\//).describe("Paid API path, e.g. /v1/brief or /v1/signal/XRP") },
     },
     async ({ path }) => text(await client.quote(path)),
+  );
+
+  server.registerTool(
+    "lumi_vendor_scores",
+    {
+      title: "Lumi: x402 vendor observations (free)",
+      description:
+        "Free. Lumi's automated observations of other x402 sellers on the XRP Ledger: free 402-quote checks every 30 min plus small paid test-buys, " +
+        "with timestamps, tx hashes and sample sizes. Scores are observations, not ratings; few samples = low confidence. Pass vendor_id for one vendor's full evidence.",
+      inputSchema: { vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).optional().describe("Optional vendor id from the list, e.g. asksurf") },
+    },
+    async ({ vendor_id }) => {
+      const r = await client.free(vendor_id ? `/v1/trust/vendors/${encodeURIComponent(vendor_id)}` : "/v1/trust/vendors");
+      return r.status === 200 ? text(r.body) : { ...text({ status: r.status, body: r.body }), isError: true };
+    },
   );
 
   for (const t of PAID_TOOLS) {

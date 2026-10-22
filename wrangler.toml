@@ -81,6 +81,18 @@ class_name = "InvoiceGuard"
 tag = "v1"
 new_sqlite_classes = ["InvoiceGuard"]
 
+# Trust layer v0: vendor observations, probes, verified reports, private tips, replies.
+#   npx wrangler d1 migrations apply lumi_trust --remote
+[[d1_databases]]
+binding = "TRUST_DB"
+database_name = "lumi_trust"
+database_id = "7ddfc495-8500-40cf-88eb-6d7d4121f19b"
+migrations_dir = "migrations"
+
+# Free 402-quote checks of allowlisted vendors (no payment).
+[triggers]
+crons = ["*/30 * * * *"]
+
 [env.testnet]
 name = "lumi-api-testnet"
 workers_dev = true

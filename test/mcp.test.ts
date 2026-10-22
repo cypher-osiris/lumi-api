@@ -82,7 +82,7 @@ describe("remote MCP: protocol", () => {
     expect(r.headers.get("Content-Type")).toBe("text/event-stream");
     const t = await r.text();
     expect(t).toMatch(/^event: message\ndata: /);
-    expect(JSON.parse(t.split("data: ")[1]).result.tools.length).toBe(13);
+    expect(JSON.parse(t.split("data: ")[1]).result.tools.length).toBe(14);
   });
 });
 
@@ -93,7 +93,7 @@ describe("remote MCP: tools", () => {
     const src = readFileSync(join(__dirname, "..", "mcp", "src", "index.js"), "utf8");
     const wrapper = [...src.matchAll(/name: "(lumi_[a-z_]+)"/g), ...src.matchAll(/registerTool\(\s*"(lumi_[a-z_]+)"/g)].map((m) => m[1]);
     expect(new Set(names)).toEqual(new Set(wrapper));
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(14);
   });
 
   it("free tools work without a key", async () => {

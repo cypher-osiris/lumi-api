@@ -246,8 +246,10 @@ Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full
    - `export CLOUDFLARE_API_TOKEN=...` with a token scoped to that account and the `lumitrades.io` zone with **Account › Workers Scripts: Edit**, **Zone › Workers Routes: Edit**, **Zone › DNS: Edit** and **Zone › Zone: Read**. Also set `CLOUDFLARE_ACCOUNT_ID`.
 2. `npx wrangler secret put INVOICE_SECRET` (a long random string, e.g. `openssl rand -hex 32`)
 3. Optional staging first: `npm run deploy:testnet` (testnet, `lumi-api-testnet.<account>.workers.dev`)
-4. `npm run deploy`. Wrangler creates the `api.lumitrades.io` DNS record and certificate, because `custom_domain = true`.
-5. Smoke test: `curl https://api.lumitrades.io/health` and `curl -i https://api.lumitrades.io/v1/signal/XRP` (expect 402).
+4. Trust layer: `npx wrangler d1 create lumi_trust` (put the id in `wrangler.toml`), then
+   `npx wrangler d1 migrations apply lumi_trust --remote`. The `*/30 * * * *` Cron Trigger runs the free probes.
+5. `npm run deploy`. Wrangler creates the `api.lumitrades.io` DNS record and certificate, because `custom_domain = true`.
+6. Smoke test: `curl https://api.lumitrades.io/health` and `curl -i https://api.lumitrades.io/v1/signal/XRP` (expect 402).
 
 ### Mainnet configuration
 
@@ -281,6 +283,61 @@ optional `link_basis`, `additional_sources[]`, `impact` (`bullish|neutral|bearis
 institution_source_url, token_says, token_source_url, overlap, confidence`), `theses[]` (`title, text, evidence_this_window, sources[]`,
 always labelled analysis, never fact), `connections[]`, `watch_next[]`, `markdown` (else rendered), `disclaimer`.
 
+## Trust layer v0: x402 vendor observations (free)
+
+Lumi publishes its own automated observations of other x402 sellers on the XRP Ledger, so agents can see how an endpoint has actually
+answered before they pay it. These are observations with timestamps, tx hashes and sample sizes, not ratings or reviews of a business.
+
+| Endpoint | What |
+|---|---|
+| `GET /v1/trust/vendors` | Every allowlisted vendor (allowlist order, not ranked): score, confidence, sample sizes, last paid observation with evidence, latest probes |
+| `GET /v1/trust/vendors/{id}` | One vendor: listed endpoints and pay-to addresses, score components, up to 50 observations, latest probe per endpoint, verified agent reports, vendor replies |
+| `GET /v1/trust/methodology` | The full method below, as JSON |
+| `POST /v1/reports` | Agent report of a paid call (shown and scored only when verified) |
+| `POST /v1/tips` | Private tip to Lumi. Stored privately; never shown, published, or returned anywhere |
+| `POST /v1/trust/replies` | Vendor right to reply (signed), or email hello@lumitrades.io |
+| `POST /v1/trust/observations` | Owner only (`OWNER_MCP_KEY` bearer): record a Lumi test-buy; the tx is checked on-ledger before it is stored |
+| `POST /v1/trust/probe` | Owner only: run the free probes now |
+
+Also as the MCP tool `lumi_vendor_scores` (optional `vendor_id`) and the A2A skill `vendor_trust`.
+
+### Methodology
+
+- **Free probes (every 30 min, Cron Trigger).** One unpaid request to each listed endpoint (`User-Agent: LumiTrustProbe/0.6`, 15 s timeout,
+  never any payment header). Recorded: HTTP status, whether it is a valid x402 v2 quote with an `xrpl:0` option paying an address listed for
+  that vendor, price and asset, whether the quote carries a `sourceTag`, latency. Probes older than 90 days are pruned.
+- **Paid test-buys (daily, from Lumi's own XRPL wallet, run from the operator's box, never from the Worker).** One call per vendor on its
+  cheapest listed endpoint, hard caps 0.15 RLUSD + 0.05 XRP per day in total, and no endpoint priced above 0.05. Each record shows the amount,
+  asset, ledger tx hash, HTTP status, whether the response contained data, and latency. The Worker re-checks every tx on the ledger (sender is
+  Lumi's wallet, recipient is a listed pay-to address, amount and asset match) before storing it. The Worker holds no key.
+- **"Contained data"** = 2xx and a non-empty body for that endpoint (e.g. a non-empty result list). Error bodies, empty lists and empty
+  objects count as no data.
+- **Score (0-100, last 30 days)** = weighted mean of the components that have data: delivery 0.5 (delivered / paid test-buys), uptime 0.2
+  (valid quotes / probes), latency 0.15 (`1 - (median_ms - 500) / 4500`, clipped to 0..1), agent reports 0.15 (`P / (P + N)`).
+- **Confidence:** low with fewer than 5 paid test-buys or fewer than 10 probes; medium below 20 paid test-buys; otherwise high.
+- **Agent reports** count only when verified: the payment is validated on-ledger (tesSUCCESS, sent by `reporter`, delivered to a listed pay-to
+  address, within 7 days; XRPL or USDC on Base) **and** the payer signs `lumi-report:<network>:<tx_hash>` (XRPL: `ripple-keypairs`
+  `sign(utf8hex(challenge), privateKey)`, checked against the tx's `SigningPubKey`; Base: EIP-191 `personal_sign`). Unverified submissions get
+  422 and are stored privately for abuse review; they are never shown or scored. A verified report is shown at once and counts after a 24 h
+  hold; at most 1 per reporter per day and 5 per 30 days count; a negative report weighs 1.5 when a Lumi test-buy within 6 h also returned no
+  data. One verified report per tx.
+- **Right to reply.** Every vendor entry carries `right_to_reply`. A vendor signs `lumi-reply:<vendor_id>:<sha256 hex of the text>` with the key
+  of a listed pay-to address (XRPL master key or RegularKey, with `public_key`; or EIP-191 for a listed Base address) and POSTs
+  `{vendor_id, text, network, address, public_key?, signature}` to `/v1/trust/replies`, or emails hello@lumitrades.io. Verified replies are
+  shown with the entry.
+- **Wording.** Entries are factual: e.g. "paid <amount> RLUSD on <ISO time>, tx <hash>, HTTP <status>, response contained no data".
+- **Abuse limits.** Bodies up to 16 KB; per-IP limits keyed on a salted HMAC of the IP (reports 5/min, 20/day; tips 3/min, 10/day; replies
+  3/min, 10/day) plus global daily caps. Response excerpts, tips and IP hashes are never served.
+- **Storage.** Cloudflare D1 (`lumi_trust`, migrations in `migrations/`). `0002` seeds Lumi's real paid buys of 2026-10-22. Without a D1
+  binding (Node server, tests, testnet env) an in-memory store with the same seed is used.
+- **Allowlist:** `src/vendors.ts`. Lumi does not list or score itself.
+
+### Daily test-buys (operator box)
+
+`/workspace/tools/trust_testbuys.ts` (outside this repo, next to the wallet tooling) buys once per allowlisted vendor within the caps above,
+logs to `notes/trust_testbuys.log`, and posts each result to `POST /v1/trust/observations` with the owner key. Secrets are read from files
+and never printed.
+
 ## MCP servers
 
 ### Remote: `https://api.lumitrades.io/mcp`
@@ -289,7 +346,7 @@ The Worker serves a remote MCP endpoint (Streamable HTTP, stateless, JSON respon
 plus the legacy `initialize` handshake for `2024-11-05` .. `2025-11-25` clients). Paste the URL into any client that takes a remote MCP
 server URL (e.g. a Grok, Claude or ChatGPT connector, or `npx @modelcontextprotocol/inspector`).
 
-- Same tool names and descriptions as the stdio package below: free `lumi_catalog`, `lumi_coins`, `lumi_quote`; paid `lumi_brief`,
+- Same tool names and descriptions as the stdio package below: free `lumi_catalog`, `lumi_coins`, `lumi_quote`, `lumi_vendor_scores`; paid `lumi_brief`,
   `lumi_signal`, `lumi_levels`, `lumi_slate`, `lumi_market`, `lumi_macro_yen`, `lumi_sentiment`, `lumi_events`, `lumi_trades`, `lumi_institutional_brief`.
 - A remote connector has no wallet, so a paid tool returns a normal tool result with the price and the two ways to pay: x402 at the
   REST endpoint, or the `lumi-trades-mcp` npm package with your own XRPL wallet. Nothing is charged.
@@ -303,7 +360,7 @@ server URL (e.g. a Grok, Claude or ChatGPT connector, or `npx @modelcontextproto
 
 - **Agent card:** `https://api.lumitrades.io/.well-known/agent-card.json` (alias `/.well-known/agent.json`). A2A 1.0 shape
   (`supportedInterfaces`, `capabilities`, `skills`, `provider`) plus the 0.3 fields (`url`, `preferredTransport`, `protocolVersion`).
-  Skills mirror the endpoints (free `catalog`, `coins`, `quote`; paid `brief`, `signal`, `levels`, `slate`, `market`, `macro_yen`,
+  Skills mirror the endpoints (free `catalog`, `coins`, `quote`, `vendor_trust`; paid `brief`, `signal`, `levels`, `slate`, `market`, `macro_yen`,
   `sentiment`, `events`, `trades`, `institutional`). The x402 networks and prices and the MCP URL are in `capabilities.extensions`.
 - **JSON-RPC endpoint:** `POST https://api.lumitrades.io/a2a`, stateless. `SendMessage` (1.0) and `message/send` (0.3) take text such as
   "signal XRP" or a data part `{ "skill": "signal", "coin": "XRP" }` and reply with a direct Message. Free skills answer inline; paid skills
@@ -335,6 +392,9 @@ src/
   a2a.ts            A2A agent card + JSON-RPC endpoint (/a2a)
   catalog.ts        endpoint + price catalog
   config.ts         env parsing, XRP to drops, network defaults
+  vendors.ts        trust-layer allowlist (x402 vendors, endpoints, pay-to addresses)
+  trust/            trust layer v0: routes + scoring (index.ts), D1/in-memory store, ledger + signature checks, seed
+migrations/         D1 schema + 2026-10-22 seed (wrangler d1 migrations apply lumi_trust --remote)
 scripts/            testnet wallet setup, end-to-end demo, replay probe
 examples/           minimal agent clients (TypeScript and Python)
 test/               vitest suites + fixture data (with privacy canaries)

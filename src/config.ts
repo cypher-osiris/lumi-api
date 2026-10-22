@@ -73,6 +73,26 @@ export interface Env {
   INVOICE_GUARD?: DurableObjectNamespaceLike;
   /** Optional KV namespace used as a weaker (eventually consistent) replay guard. */
   USED_INVOICES?: KVLike;
+  /** D1 database for the trust layer (probes, test-buy observations, reports, replies, private tips). */
+  TRUST_DB?: D1Like;
+  /** XRPL JSON-RPC endpoints (comma-separated) used to verify report/observation transactions. */
+  XRPL_RPC_URLS?: string;
+  /** Base JSON-RPC endpoint used to verify Base USDC report transactions. */
+  BASE_RPC_URL?: string;
+  /** Comma-separated XRPL addresses whose payments count as Lumi test-buys (default: PAY_TO). Addresses only. */
+  TRUST_BUYER_ADDRESSES?: string;
+}
+
+/** Minimal Cloudflare D1 surface used by the trust store. */
+export interface D1Statement {
+  bind(...values: unknown[]): D1Statement;
+  run(): Promise<unknown>;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  first<T = Record<string, unknown>>(): Promise<T | null>;
+}
+export interface D1Like {
+  prepare(sql: string): D1Statement;
+  batch(statements: D1Statement[]): Promise<unknown>;
 }
 
 /** Minimal Durable Object namespace surface we use. */

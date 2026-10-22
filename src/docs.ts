@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -47,6 +47,12 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/.well-known/agent-card.json", summary: "A2A agent card (alias /.well-known/agent.json)" },
       { method: "GET", path: "/openapi.json", summary: "OpenAPI 3.1 description with x-payment-info" },
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
+      { method: "GET", path: "/v1/trust/vendors", summary: "Lumi's automated observations of other x402 vendors (402-quote checks every 30 min, paid test-buys with tx evidence, sample sizes)" },
+      { method: "GET", path: "/v1/trust/vendors/{id}", summary: "One vendor: observations with evidence, latest probes, verified agent reports, vendor replies" },
+      { method: "GET", path: "/v1/trust/methodology", summary: "How trust observations and scores are computed; how to report and how vendors reply" },
+      { method: "POST", path: "/v1/reports", summary: "Report a paid call to a listed vendor (counts only with an on-ledger payment + payer signature)" },
+      { method: "POST", path: "/v1/tips", summary: "Send Lumi a private tip (stored privately; never published or returned)" },
+      { method: "POST", path: "/v1/trust/replies", summary: "Vendor right to reply (signed by a listed pay-to address), or email hello@lumitrades.io" },
       { method: "POST", path: "/mcp", summary: "Remote MCP server (Streamable HTTP): free tools for everyone; paid tools return the price and how to pay" },
       { method: "POST", path: "/a2a", summary: "A2A JSON-RPC endpoint (SendMessage / message/send): free skills answered inline, paid skills return x402 terms" },
     ],
@@ -129,6 +135,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   const paths: Record<string, unknown> = {
     "/v1/coins": { get: { summary: "List supported coins (free)", responses: { "200": { description: "OK" } } } },
     "/health": { get: { summary: "Health (free)", responses: { "200": { description: "OK" } } } },
+    ...trustPaths(),
   };
   for (const e of PAID_ENDPOINTS) {
     paths[e.template] = {
@@ -208,13 +215,55 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   };
 }
 
+function trustPaths(): Record<string, unknown> {
+  const json = (props: Record<string, unknown>, required: string[]) => ({ required: true, content: { "application/json": { schema: { type: "object", properties: props, required } } } });
+  const r = (codes: Record<string, string>) => Object.fromEntries(Object.entries(codes).map(([k, v]) => [k, { description: v }]));
+  const tag = ["trust"];
+  return {
+    "/v1/trust/vendors": { get: { tags: tag, summary: "x402 vendor observations (free)", description: "Lumi's automated observations of other x402 sellers: free 402-quote checks every 30 min and small paid test-buys, with timestamps, tx hashes and sample sizes. Listed in allowlist order, not ranked. Observations, not ratings.", responses: r({ "200": "OK" }) } },
+    "/v1/trust/vendors/{id}": { get: { tags: tag, summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" } }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
+    "/v1/trust/methodology": { get: { tags: tag, summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
+    "/v1/reports": {
+      post: {
+        tags: tag,
+        summary: "Report a paid call to a listed vendor",
+        description: "Counts only when verified: the payment must be validated on-ledger (sent by `reporter` to a listed pay-to address, within 7 days) and `signature` must sign `lumi-report:<network>:<tx_hash>` with the payer's key. Unverified submissions are stored privately and never shown. 5/min and 20/day per IP.",
+        requestBody: json({
+          vendor_id: { type: "string" }, network: { type: "string", enum: ["xrpl:0", "eip155:8453"], default: "xrpl:0" }, tx_hash: { type: "string" }, reporter: { type: "string" }, signature: { type: "string" },
+          outcome: { type: "string", enum: ["delivered", "no_data", "empty_result", "error_status", "timeout", "wrong_data", "other"] }, http_status: { type: "integer" }, response_excerpt: { type: "string", maxLength: 4000 },
+        }, ["vendor_id", "tx_hash", "reporter", "outcome", "signature"]),
+        responses: r({ "201": "Verified and recorded", "400": "Invalid input", "404": "Unknown vendor", "409": "A verified report for this tx exists", "422": "Not verified (stored privately, not shown)", "429": "Rate limited", "503": "Ledger unreachable; nothing stored" }),
+      },
+    },
+    "/v1/tips": {
+      post: {
+        tags: tag,
+        summary: "Private tip to Lumi",
+        description: "Stored privately. Never shown, published, or returned by any endpoint. 3/min and 10/day per IP.",
+        requestBody: json({ text: { type: "string", minLength: 10, maxLength: 1000 }, coins: { type: "array", items: { type: "string" }, maxItems: 10 }, source_urls: { type: "array", items: { type: "string", format: "uri" }, maxItems: 5 } }, ["text"]),
+        responses: r({ "202": "Received", "400": "Invalid input", "429": "Rate limited" }),
+      },
+    },
+    "/v1/trust/replies": {
+      post: {
+        tags: tag,
+        summary: "Vendor right to reply",
+        description: "Sign `lumi-reply:<vendor_id>:<sha256 hex of text>` with the key of a pay-to address listed for the vendor (XRPL: master key or RegularKey, include public_key; Base: EIP-191). Verified replies are shown with the vendor entry. Or email hello@lumitrades.io.",
+        requestBody: json({ vendor_id: { type: "string" }, text: { type: "string", maxLength: 1000 }, network: { type: "string", enum: ["xrpl:0", "eip155:8453"] }, address: { type: "string" }, public_key: { type: "string" }, signature: { type: "string" } }, ["vendor_id", "text", "address", "signature"]),
+        responses: r({ "201": "Verified and shown", "400": "Invalid input", "404": "Unknown vendor", "422": "Signature or address not verified (not stored)", "429": "Rate limited" }),
+      },
+    },
+    "/v1/trust/observations": { post: { tags: tag, summary: "Owner only: record a Lumi test-buy (ledger-checked)", security: [{ bearer: [] }], responses: r({ "201": "Recorded", "200": "Duplicate tx", "401": "Unauthorized", "422": "Ledger check failed" }) } },
+  };
+}
+
 function mcpInfo(base: string) {
   return {
     remote: { url: `${base}/mcp`, transport: "streamable-http", stateless: true },
     stdio: { package: "lumi-trades-mcp", command: "npx -y lumi-trades-mcp", pays_with: "your XRPL wallet (XRPL_SEED), within per-call caps and a session budget" },
     registry: "io.github.cypher-osiris/lumi-trades-mcp",
     tools: {
-      free: ["lumi_catalog", "lumi_coins", "lumi_quote"],
+      free: ["lumi_catalog", "lumi_coins", "lumi_quote", "lumi_vendor_scores"],
       paid: ["lumi_brief", "lumi_signal", "lumi_levels", "lumi_slate", "lumi_market", "lumi_macro_yen", "lumi_sentiment", "lumi_events", "lumi_trades", "lumi_institutional_brief"],
     },
     note: "On the remote server, paid tools return the price and how to pay (x402 at the REST endpoint, or the npm package with your wallet). Stale data is never sold.",
@@ -354,7 +403,7 @@ Fields that are not available at request time are omitted, never filled with gue
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/trust/vendors\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
 Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`.
 Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day; the Institutional & Policy Brief once a day (not sold if older than 36 h).
@@ -458,7 +507,7 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 ## MCP
 
 - **Remote MCP server:** \`${base}/mcp\` (Streamable HTTP, stateless; protocol 2026-07-28 and 2025-03-26 .. 2025-11-25).
-  Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_quote\`. Paid tools (\`lumi_brief\`,
+  Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_quote\`, \`lumi_vendor_scores\`. Paid tools (\`lumi_brief\`,
   \`lumi_signal\`, \`lumi_levels\`, \`lumi_slate\`, \`lumi_market\`, \`lumi_macro_yen\`, \`lumi_sentiment\`, \`lumi_events\`, \`lumi_trades\`, \`lumi_institutional_brief\`)
   return the price and how to pay, since a remote connector has no wallet.
 - **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` set (npm \`lumi-trades-mcp\`, MCP Registry
@@ -468,8 +517,20 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 
 - **Agent card:** \`${base}/.well-known/agent-card.json\` (alias \`/.well-known/agent.json\`), A2A protocol 1.0 with 0.3 compatibility fields.
 - **JSON-RPC endpoint:** \`POST ${base}/a2a\` with \`SendMessage\` (A2A 1.0) or \`message/send\` (0.3). Send text such as "list coins", "catalog" or
-  "signal XRP", or a data part \`{ "skill": "signal", "coin": "XRP" }\`. Free skills (\`catalog\`, \`coins\`, \`quote\`) answer inline. Paid skills answer with
+  "signal XRP", or a data part \`{ "skill": "signal", "coin": "XRP" }\`. Free skills (\`catalog\`, \`coins\`, \`quote\`, \`vendor_trust\`) answer inline. Paid skills answer with
   the live x402 terms (every network option) and the REST URL to pay at; nothing is charged over A2A.
+
+## x402 vendor observations (free)
+
+Lumi publishes its automated observations of other x402 sellers on the XRP Ledger: an unpaid 402-quote check of each listed endpoint every 30 minutes,
+and one small paid test-buy per vendor per day from Lumi's own wallet, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
+Scores are observations with sample sizes, not ratings; few samples are marked low confidence; vendors are listed in allowlist order, not ranked.
+
+- \`GET ${base}/v1/trust/vendors\`, \`GET ${base}/v1/trust/vendors/{id}\`, method: \`GET ${base}/v1/trust/methodology\`. MCP: \`lumi_vendor_scores\`. A2A: \`vendor_trust\`.
+- **Report a call you paid for:** \`POST ${base}/v1/reports\` with \`{vendor_id, network, tx_hash, reporter, outcome, signature}\`, where \`signature\` signs
+  \`lumi-report:<network>:<tx_hash>\` with the paying key. Only reports with an on-ledger payment and a valid signature are shown or scored.
+- **Private tips:** \`POST ${base}/v1/tips\` \`{text, coins?, source_urls?}\`. Stored privately; never published or returned.
+- **Vendors can reply:** sign \`lumi-reply:<vendor_id>:<sha256 of text>\` with a listed pay-to key and \`POST ${base}/v1/trust/replies\`, or email hello@lumitrades.io.
 
 ## Rules of use
 

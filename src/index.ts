@@ -6,13 +6,21 @@ import type { Env } from "./config";
 let app: App | undefined;
 let appEnv: Env | undefined;
 
+function appFor(env: Env): App {
+  if (!app || appEnv !== env) {
+    app = createApp(env);
+    appEnv = env;
+  }
+  return app;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!app || appEnv !== env) {
-      app = createApp(env);
-      appEnv = env;
-    }
-    return app.fetch(request);
+    return appFor(env).fetch(request);
+  },
+  /** Cron trigger (every 30 min): free, unpaid 402-quote probes of the trust allowlist. */
+  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+    ctx.waitUntil(appFor(env).scheduled().catch((e) => console.error(JSON.stringify({ event: "trust_probe_error", error: String(e) }))));
   },
 };
 

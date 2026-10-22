@@ -17,13 +17,24 @@ import { staleInputs, hasContent } from "./freshness";
 import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
 import { institutionalView } from "./institutional";
 import { handleMcp, MCP_CORS, type McpDeps } from "./mcp";
+import { createTrust, TRUST_POST_PATHS, type Trust } from "./trust";
+import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
+import { SEED_OBSERVATIONS } from "./trust/seed";
 
 export interface AppOptions {
   fetch?: typeof fetch;
   log?: (event: Record<string, unknown>) => void;
   /** Clock (ms), injectable for tests. */
   now?: () => number;
+  /** Trust-layer store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory seeded store. */
+  trustStore?: TrustStore;
 }
+
+const DEFAULT_XRPL_RPC: Record<string, string[]> = {
+  "xrpl:0": ["https://xrplcluster.com/", "https://s1.ripple.com/", "https://s2.ripple.com/"],
+  "xrpl:1": ["https://s.altnet.rippletest.net:51234/"],
+  "xrpl:2": ["https://s.devnet.rippletest.net:51234/"],
+};
 
 export type Prepared =
   | { ok: true; route: PaidRoute; coin?: CoinRef; body: Record<string, unknown> }
@@ -31,7 +42,10 @@ export type Prepared =
 
 export interface App {
   fetch(request: Request): Promise<Response>;
+  /** Cron entry: free, unpaid 402-quote probes of the trust allowlist. */
+  scheduled(): Promise<{ probes: number; ok: number }>;
   config: Config;
+  trust: Trust;
 }
 
 const NEEDS: Record<PaidRoute, DataFile[]> = {
@@ -75,6 +89,19 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     replay: makeReplayGuard({ durableObject: env.INVOICE_GUARD, kv: env.USED_INVOICES }),
     log: opts.log ?? ((e) => console.log(JSON.stringify(e))),
   };
+
+  const split = (v?: string) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const trust = createTrust({
+    store: opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS)),
+    fetch: doFetch,
+    now,
+    ownerKey: env.OWNER_MCP_KEY,
+    ipSecret: config.invoiceSecret,
+    log: (e) => deps.log?.(e),
+    xrplRpc: split(env.XRPL_RPC_URLS).length ? split(env.XRPL_RPC_URLS) : DEFAULT_XRPL_RPC[config.network] ?? DEFAULT_XRPL_RPC["xrpl:0"],
+    baseRpc: env.BASE_RPC_URL ?? "https://mainnet.base.org",
+    buyers: split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo],
+  });
 
   async function coins(): Promise<CoinRef[]> {
     try {
@@ -134,6 +161,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     ownerKey: env.OWNER_MCP_KEY,
     coins,
     prepare,
+    trust,
     log: (e) => deps.log?.(e),
   };
 
@@ -149,6 +177,13 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           ? MCP_CORS
           : path === "/a2a"
           ? A2A_CORS
+          : TRUST_POST_PATHS.includes(path)
+          ? {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "POST, OPTIONS",
+              "Access-Control-Allow-Headers": "Content-Type, Authorization",
+              "Access-Control-Max-Age": "86400",
+            }
           : {
               "Access-Control-Allow-Origin": "*",
               "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -175,6 +210,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       return handleA2a(request, base, {
         config,
         coins,
+        trust,
         quote: async (p: string) => {
           const r = await handle(new Request(url.origin + p, { headers: { Accept: "application/json" } }));
           const t = await r.text();
@@ -184,6 +220,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         },
         log: (e) => deps.log?.(e),
       });
+    }
+    // Trust layer: free GETs, rate-limited public POSTs, owner-only ingest.
+    if (path.startsWith("/v1/trust") || path === "/v1/reports" || path === "/v1/tips") {
+      const r = await trust.handle(request, path, base);
+      if (r) return r;
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return json(405, { error: "method_not_allowed" }, { Allow: "GET, OPTIONS" });
@@ -289,6 +330,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
 
   return {
     config,
+    trust,
+    scheduled: () => trust.runProbes(),
     async fetch(request: Request): Promise<Response> {
       try {
         return await handle(request);
