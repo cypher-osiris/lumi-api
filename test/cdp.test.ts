@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { cdpJwt, decodeExtensionResponses, CDP_FACILITATOR_URL } from "../src/cdp";
-import { BAZAAR_ROUTES, BAZAAR_MAX_DESCRIPTION, bazaarExtension } from "../src/bazaar";
+import { BAZAAR_ROUTES, BAZAAR_MAX_DESCRIPTION, bazaarExtension, ROUTE_TAGS, SERVICE_NAME, SERVICE_ICON } from "../src/bazaar";
 import { PAID_ENDPOINTS } from "../src/catalog";
 import { PAID_ROUTES } from "../src/config";
-import { validateDiscoveryExtension, extractDiscoveryInfo, isValidRouteTemplate } from "@x402/extensions/bazaar";
+import { validateDiscoveryExtension, extractDiscoveryInfo, isValidRouteTemplate, sanitizeResourceServiceMetadata } from "@x402/extensions/bazaar";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import { x402Client } from "@x402/fetch";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -98,6 +98,10 @@ describe("Bazaar metadata", () => {
       const body = decodeB64Json(h);
       expect(body.resource.description.length).toBeLessThanOrEqual(BAZAAR_MAX_DESCRIPTION);
       expect(body.extensions.bazaar.info.output.example.kind).toBe(BAZAAR_ROUTES[e.route].example.kind);
+      // Bazaar service metadata survives the SDK's soft-drop sanitizer unchanged
+      const meta = { serviceName: body.resource.serviceName, tags: body.resource.tags, iconUrl: body.resource.iconUrl };
+      expect(meta).toEqual({ serviceName: SERVICE_NAME, tags: ROUTE_TAGS[e.route], iconUrl: SERVICE_ICON });
+      expect(sanitizeResourceServiceMetadata(meta as any)).toEqual(meta);
       expect(validateDiscoveryExtension(body.extensions.bazaar).valid).toBe(true);
     }
     const md = decodeB64Json((await app.fetch(new Request("http://lumi.test/v1/brief?format=md"))).headers.get("PAYMENT-REQUIRED"));
@@ -246,5 +250,18 @@ describe("Base settlement via CDP with keyless fallback", () => {
     const { app } = await s.ready();
     expect((await payBase(app)).status).toBe(200);
     expect(s.calls.map((c) => c.fac)).toEqual(["payai", "payai"]);
+  });
+});
+
+describe("bazaar service tags", () => {
+  it("every route has 5 distinct spec-valid tags and the set spans many search terms", () => {
+    const all = new Set<string>();
+    for (const r of PAID_ROUTES) {
+      const t = ROUTE_TAGS[r];
+      expect(t.length).toBe(5);
+      expect(new Set(t.map((x) => x.toLowerCase())).size).toBe(5);
+      for (const x of t) { expect(x).toMatch(/^[\x20-\x7e]{1,32}$/); all.add(x); }
+    }
+    expect(all.size).toBeGreaterThanOrEqual(30);
   });
 });

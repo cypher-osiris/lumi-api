@@ -41,6 +41,10 @@ export interface ResourceInfo {
   url: string;
   description?: string;
   mimeType?: string;
+  /** Bazaar service metadata (optional, additive). */
+  serviceName?: string;
+  tags?: string[];
+  iconUrl?: string;
 }
 
 export interface PaymentRequired {
@@ -79,6 +83,8 @@ export interface Quote {
   resourceUrl: string;
   /** x402 Bazaar discovery extension for this route (see bazaar.ts); a generic GET/JSON declaration when absent. */
   bazaar?: Record<string, unknown>;
+  /** Bazaar service metadata copied onto `resource` (serviceName, tags, iconUrl). */
+  service?: { serviceName?: string; tags?: string[]; iconUrl?: string };
 }
 
 // ---------------------------------------------------------------- encoding
@@ -335,7 +341,7 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
   return {
     x402Version: 2,
     error,
-    resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json" },
+    resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json", ...(quote.service ?? {}) },
     accepts: buildAccepts(cfg, quote, invoiceId),
     extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
   };
@@ -877,7 +883,7 @@ function evmFacilitators(cfg: Config, payload: PaymentPayload, expected: Payment
   if (evm.cdp) {
     const forCdp: PaymentPayload = {
       ...payload,
-      resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json" },
+      resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json", ...(quote.service ?? {}) },
       extensions: { ...(payload.extensions ?? {}), bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
     };
     list.push(make("cdp", evm.cdp.url, forCdp, true));

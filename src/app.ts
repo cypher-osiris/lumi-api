@@ -8,7 +8,7 @@ import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env,
 import { DataSource, type DataFile } from "./data";
 import { makeReplayGuard, json, requirePayment, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
-import { bazaarExtension, resourceDescription } from "./bazaar";
+import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
 import { indexDoc, indexHtml, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
 import { agentCard, handleA2a, A2A_CORS } from "./a2a";
 import {
@@ -495,6 +495,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         coin?.symbol ?? vendorId,
         wantsMarkdown && url.searchParams.has("format") ? { format: "md" } : undefined,
       ),
+      service: serviceMeta(route),
     };
 
     return requirePayment(request, config, paywallDeps(ctx), quote, (s: Settlement, paid: PaymentRequirements) => {

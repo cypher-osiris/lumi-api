@@ -13,6 +13,30 @@ import type { PaidRoute } from "./config";
 /** CDP rejects verify/settle when resource.description is longer than this. */
 export const BAZAAR_MAX_DESCRIPTION = 500;
 
+/**
+ * Bazaar service metadata (x402 v2 `resource.serviceName/tags/iconUrl`): printable ASCII, serviceName <= 32 chars,
+ * at most 5 tags of <= 32 chars each. Each route gets its own tag set so the listings cover many search terms.
+ */
+export const SERVICE_NAME = "Lumi Trades";
+export const SERVICE_ICON = "https://lumitrades.io/assets/icon-512.png";
+export const ROUTE_TAGS: Record<PaidRoute, string[]> = {
+  signal: ["crypto-signals", "trading-signals", "technical-analysis", "crypto", "market-data"],
+  levels: ["support-resistance", "price-levels", "technical-analysis", "crypto", "trading"],
+  slate: ["trade-ideas", "paper-trading", "crypto-trading", "trading", "crypto"],
+  market: ["market-data", "crypto-market", "fear-and-greed", "funding-rates", "bitcoin"],
+  brief: ["market-brief", "crypto-news", "daily-report", "research", "crypto"],
+  yen: ["macro", "forex", "yen-carry-trade", "japan", "bitcoin"],
+  sentiment: ["sentiment", "fear-and-greed", "funding-rates", "open-interest", "crypto"],
+  events: ["economic-calendar", "events", "macro", "catalysts", "crypto"],
+  trades: ["paper-trading", "trade-history", "trading", "crypto", "trade-ideas"],
+  institutional: ["institutional", "policy", "regulation", "tokenization", "cbdc"],
+  vendor_report: ["x402", "trust-score", "due-diligence", "security", "agent-commerce"],
+};
+
+export function serviceMeta(route: PaidRoute): { serviceName: string; tags: string[]; iconUrl: string } {
+  return { serviceName: SERVICE_NAME, tags: ROUTE_TAGS[route], iconUrl: SERVICE_ICON };
+}
+
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
 interface RouteMeta {
