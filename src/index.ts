@@ -49,7 +49,7 @@ export default {
         m.ack();
       } catch (e) {
         console.error(JSON.stringify({ event: "catalog_job_error", kind: m.body?.kind, error: String(e) }));
-        m.retry({ delaySeconds: 60 });
+        m.retry({ delaySeconds: /\b429\b/.test(String(e)) ? 300 + Math.floor(Math.random() * 600) : 60 });
       }
     }
   },

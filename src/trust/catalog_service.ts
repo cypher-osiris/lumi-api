@@ -10,7 +10,7 @@ import { lookupBaseUsdc, lookupXrplPayment, EVM_TX_RE, XRPL_TX_RE } from "./veri
 
 export type CatalogJob = { kind: "ingest"; offset: number } | { kind: "probe"; after: number };
 export interface QueueLike {
-  sendBatch(messages: { body: CatalogJob }[]): Promise<unknown>;
+  sendBatch(messages: { body: CatalogJob; delaySeconds?: number }[]): Promise<unknown>;
 }
 
 export interface SelfEntry {
@@ -37,6 +37,9 @@ const STATS_EVERY_MS = 6 * 3_600_000;
 /** D1 Free allows 100k rows written per day (index entries count). Catalog work stays well under it. */
 export const WRITE_BUDGET = { ingest: 55_000, probe: 85_000 };
 const PER_HOST = 3;
+/** CDP discovery rate-limits bursts (HTTP 429 seen from Workers): one page per 10 s. */
+const INGEST_SPACING_S = 10;
+const PROBE_SPACING_S = 30;
 const dayKey = (t: number) => "writes:" + new Date(t).toISOString().slice(0, 10);
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body, null, 2), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", ...headers } });
@@ -46,13 +49,15 @@ const BANNED = /\b(scam|fraud|rug|fake|ponzi|steal|thief|criminal)\b/i;
 export function createCatalog(deps: CatalogDeps) {
   const { store, now } = deps;
 
-  async function send(jobs: CatalogJob[]) {
+  /** Jobs are spaced `spacing` seconds apart (queue delay) so upstream APIs and vendors see a slow, steady rate. */
+  async function send(jobs: CatalogJob[], spacing = 0) {
     if (!jobs.length) return;
     if (!deps.queue) {
       for (const j of jobs) await consume(j); // tests / Node: run inline
       return;
     }
-    for (let i = 0; i < jobs.length; i += 100) await deps.queue.sendBatch(jobs.slice(i, i + 100).map((body) => ({ body })));
+    const msgs = jobs.map((body, i) => (spacing && i ? { body, delaySeconds: Math.min(43_200, i * spacing) } : { body }));
+    for (let i = 0; i < msgs.length; i += 100) await deps.queue.sendBatch(msgs.slice(i, i + 100));
   }
 
   async function catalogTotal(): Promise<number> {
@@ -69,7 +74,7 @@ export function createCatalog(deps: CatalogDeps) {
     const jobs: CatalogJob[] = [];
     for (let o = 0; o < total + INGEST_PAGE; o += INGEST_PAGE) jobs.push({ kind: "ingest", offset: o });
     await store.setMeta("ingest_last", JSON.stringify({ at: now(), total, pages: jobs.length }));
-    await send(jobs);
+    await send(jobs, INGEST_SPACING_S);
     return total;
   }
 
@@ -92,7 +97,7 @@ export function createCatalog(deps: CatalogDeps) {
       const jobs: CatalogJob[] = [];
       for (let i = 0; i < pages && cursor < total; i++, cursor += INGEST_PAGE) jobs.push({ kind: "ingest", offset: cursor });
       await store.setMeta("ingest_cursor", String(cursor));
-      await send(jobs);
+      await send(jobs, INGEST_SPACING_S);
       out.ingest_jobs = jobs.length;
     } catch (e) {
       out.ingest_error = String(e);
@@ -108,7 +113,7 @@ export function createCatalog(deps: CatalogDeps) {
         cursor += PROBE_BATCH;
       }
       await store.setMeta("probe_cursor", String(cursor));
-      await send(jobs);
+      await send(jobs, PROBE_SPACING_S);
       out.probe_jobs = jobs.length;
     }
     const st = await stats();
