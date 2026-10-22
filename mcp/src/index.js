@@ -59,7 +59,7 @@ export const PAID_TOOLS = [
   {
     name: "lumi_vendor_report",
     path: (a) => `/v1/trust/vendors/${encodeURIComponent(a.vendor_id)}/report`,
-    input: { vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).describe("Vendor id from lumi_vendor_scores, e.g. asksurf") },
+    input: { vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).describe("Vendor id from lumi_vendor_scores, e.g. printmoneylab") },
     description:
       "Detailed report on one x402 vendor from Lumi's trust list: full observation history (every free 402-quote check over 90 days, every paid test-buy with tx hash and delivered yes/no), " +
       "latency stats and 7-day trend, uptime % (24h/7d/30d/90d) and daily series, quoted-price history, verified agent reports, vendor replies, sample sizes and confidence labels. " +
@@ -140,7 +140,7 @@ export function buildServer(client) {
         url: z.string().max(500).optional().describe("Resource URL you are about to pay, e.g. https://example.com/api/data"),
         domain: z.string().max(253).optional().describe("Seller host or domain, e.g. example.com"),
         payTo: z.string().max(120).optional().describe("payTo address from the seller's 402 quote (0x... or r...)"),
-        vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).optional().describe("Optional curated vendor id, e.g. asksurf"),
+        vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).optional().describe("Optional curated vendor id, e.g. printmoneylab"),
       },
     },
     async ({ url, domain, payTo, vendor_id }) => {

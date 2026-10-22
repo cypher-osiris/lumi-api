@@ -44,7 +44,7 @@ interface SkillDef {
 const SKILLS: SkillDef[] = [
   { id: "catalog", name: "Catalog: endpoints, prices, payment networks (free)", tags: ["catalog", "pricing", "x402", "free"], examples: ["catalog", "what do you sell and how much?"], match: /\b(catalog|prices?|pricing|endpoints?|help|menu)\b/i },
   { id: "coins", name: "Supported coins (free)", tags: ["coins", "free"], examples: ["list coins"], match: /\b(coins|supported|tickers)\b/i },
-  { id: "vendor_trust", name: "x402 seller lookup and observations (free)", tags: ["trust", "x402", "vendors", "observations", "lookup", "bazaar", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"url\":\"https://example.com/api/x402\"}", "{\"skill\":\"vendor_trust\",\"payTo\":\"0x...\"}", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"asksurf\"}"], match: /\b(vendors?|trust)\b/i },
+  { id: "vendor_trust", name: "x402 seller lookup and observations (free)", tags: ["trust", "x402", "vendors", "observations", "lookup", "bazaar", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"url\":\"https://example.com/api/x402\"}", "{\"skill\":\"vendor_trust\",\"payTo\":\"0x...\"}", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"printmoneylab\"}"], match: /\b(vendors?|trust)\b/i },
   { id: "samples", name: "Free samples of every paid product", tags: ["samples", "preview", "free"], examples: ["samples", "show me a free sample"], match: /\b(samples?|preview|try|demo)\b/i },
   { id: "quote", name: "Price quote for a paid call, without paying (free)", tags: ["quote", "x402", "free"], examples: ["quote /v1/brief"], match: /\bquote\b/i },
   {
@@ -68,7 +68,7 @@ const SKILLS: SkillDef[] = [
     route: "vendor_report",
     name: "x402 vendor report: full observation history for one vendor (paid)",
     tags: ["trust", "x402", "vendors", "observations", "report", "paid"],
-    examples: ["vendor report asksurf", "{\"skill\":\"vendor_report\",\"vendor_id\":\"asksurf\"}"],
+    examples: ["vendor report printmoneylab", "{\"skill\":\"vendor_report\",\"vendor_id\":\"printmoneylab\"}"],
     match: /\b(vendor|trust)\s+report\b|\breport\b.*\bvendor\b/i,
     needsVendor: true,
   },

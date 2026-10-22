@@ -123,7 +123,7 @@ export const PAID_TOOLS: PaidTool[] = [
     path: (a) => `/v1/trust/vendors/${encodeURIComponent(str(a.vendor_id) ?? "")}/report`,
     inputSchema: {
       type: "object",
-      properties: { vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Vendor id from lumi_vendor_scores, e.g. asksurf" } },
+      properties: { vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Vendor id from lumi_vendor_scores, e.g. printmoneylab" } },
       required: ["vendor_id"],
     },
     description: VENDOR_REPORT_TOOL_DESCRIPTION,
@@ -171,7 +171,7 @@ function toolList() {
           url: { type: "string", maxLength: 500, description: "Resource URL you are about to pay, e.g. https://example.com/api/data" },
           domain: { type: "string", maxLength: 253, description: "Seller host or domain, e.g. example.com" },
           payTo: { type: "string", maxLength: 120, description: "payTo address from the seller's 402 quote (0x... or r...)" },
-          vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Optional curated vendor id, e.g. asksurf" },
+          vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Optional curated vendor id, e.g. printmoneylab" },
         },
       },
       annotations: ro,
@@ -505,7 +505,7 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
     if (tool.coin) {
       coinArg = tool.coin(args)?.trim();
       if (!coinArg) {
-        return text({ error: tool.argName === "vendor_id" ? "missing required argument: vendor_id (e.g. asksurf; list with lumi_vendor_scores)" : "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
+        return text({ error: tool.argName === "vendor_id" ? "missing required argument: vendor_id (e.g. printmoneylab; list with lumi_vendor_scores)" : "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
       }
     }
     if ((tool.name === "lumi_brief" || tool.name === "lumi_institutional_brief") && args.format !== undefined && args.format !== "json" && args.format !== "md") {

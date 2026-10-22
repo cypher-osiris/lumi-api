@@ -137,7 +137,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
       "(min/p50/p90/p95/max) and the 7-day trend; uptime % over 24h/7d/30d/90d and a daily series; per-endpoint quoted-price history; verified " +
       "agent reports; vendor replies; score components, sample sizes and confidence labels; methodology link. Automated observations, not a rating. " +
       "Not sold (503, not charged) when the vendor has no observation in the last 48 h. The free summary is GET /v1/trust/vendors/{id}.",
-    example: "/v1/trust/vendors/asksurf/report",
+    example: "/v1/trust/vendors/printmoneylab/report",
   },
 ];
 
