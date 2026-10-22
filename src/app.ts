@@ -22,6 +22,7 @@ import { createTrust, TRUST_POST_PATHS, REPORT_FRESH_MS, type Trust } from "./tr
 import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
+import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
 export interface AppOptions {
   fetch?: typeof fetch;
@@ -30,6 +31,13 @@ export interface AppOptions {
   now?: () => number;
   /** Trust-layer store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory seeded store. */
   trustStore?: TrustStore;
+  /** Sales ledger override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  salesStore?: SalesStore;
+}
+
+/** The subset of the Workers ExecutionContext the app uses. */
+export interface WaitUntil {
+  waitUntil(p: Promise<unknown>): void;
 }
 
 const DEFAULT_XRPL_RPC: Record<string, string[]> = {
@@ -43,11 +51,12 @@ export type Prepared =
   | { ok: false; status: number; error: Record<string, unknown>; headers?: Record<string, string> };
 
 export interface App {
-  fetch(request: Request): Promise<Response>;
+  fetch(request: Request, ctx?: WaitUntil): Promise<Response>;
   /** Cron entry: free, unpaid 402-quote probes of the trust allowlist. */
   scheduled(): Promise<{ probes: number; ok: number }>;
   config: Config;
   trust: Trust;
+  sales: SalesStore;
 }
 
 const NEEDS: Record<PaidRoute, DataFile[]> = {
@@ -97,6 +106,31 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   };
 
   const split = (v?: string) => (v ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const sales: SalesStore = opts.salesStore ?? (env.TRUST_DB ? new D1SalesStore(env.TRUST_DB) : new MemorySalesStore());
+  const alertCfg: AlertConfig = {
+    webhookUrl: env.SALES_WEBHOOK_URL || undefined,
+    email: env.SALES_ALERT_EMAIL || undefined,
+    emailFrom: env.SALES_ALERT_FROM || undefined,
+    emailBinding: env.SALES_EMAIL,
+    includeTests: env.SALES_ALERT_TESTS === "1",
+  };
+  const extraTestWallets = split(env.SALES_TEST_WALLETS);
+  /** Per-request paywall deps: records the sale, then alerts in the background (waitUntil) when configured. */
+  const paywallDeps = (ctx?: WaitUntil): PaywallDeps => ({
+    ...deps,
+    onSale: async (sale) => {
+      const row = toRow(sale, now(), extraTestWallets);
+      const inserted = await sales.insert(row).catch((e) => {
+        deps.log?.({ event: "sale_record_error", tx: row.tx, error: String(e) });
+        return true;
+      });
+      if (inserted && alertEnabled(alertCfg)) {
+        const p = sendSaleAlert(alertCfg, row, doFetch).then((sent) => sent.length && deps.log?.({ event: "sale_alert_sent", tx: row.tx, via: sent }));
+        if (ctx) ctx.waitUntil(p);
+        else await p;
+      }
+    },
+  });
   const trust = createTrust({
     store: opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS)),
     fetch: doFetch,
@@ -197,7 +231,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     log: (e) => deps.log?.(e),
   };
 
-  async function handle(request: Request): Promise<Response> {
+  async function handle(request: Request, ctx?: WaitUntil): Promise<Response> {
     const url = new URL(request.url);
     const base = config.publicBaseUrl ?? url.origin;
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -260,6 +294,18 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return json(405, { error: "method_not_allowed" }, { Allow: "GET, OPTIONS" });
+    }
+    // Owner-only sales ledger summary (Authorization: Bearer <OWNER_MCP_KEY>). Excludes Lumi's own test wallets.
+    if (path === "/v1/owner/sales") {
+      const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") ?? "")?.[1]?.trim();
+      if (!bearer || !(await isOwnerKey(bearer, env.OWNER_MCP_KEY))) {
+        return json(401, { error: "owner_key_required", hint: "Authorization: Bearer <OWNER_MCP_KEY>" }, { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" });
+      }
+      const summary = await salesSummary(sales, now(), {
+        includeTests: url.searchParams.get("include_tests") === "1",
+        recent: Math.min(200, Math.max(0, Number(url.searchParams.get("recent") ?? 20) || 0)),
+      });
+      return json(200, { ...summary, alert: { webhook: Boolean(alertCfg.webhookUrl), email: Boolean(alertCfg.email && alertCfg.emailFrom && alertCfg.emailBinding) } }, { "Cache-Control": "no-store" });
     }
 
     // ---------------- free
@@ -368,7 +414,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       ),
     };
 
-    return requirePayment(request, config, deps, quote, (s: Settlement, paid: PaymentRequirements) => {
+    return requirePayment(request, config, paywallDeps(ctx), quote, (s: Settlement, paid: PaymentRequirements) => {
       const evm = isEvmRequirement(paid);
       const payment = evm
         ? {
@@ -404,10 +450,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   return {
     config,
     trust,
+    sales,
     scheduled: () => trust.runProbes(),
-    async fetch(request: Request): Promise<Response> {
+    async fetch(request: Request, ctx?: WaitUntil): Promise<Response> {
       try {
-        return await handle(request);
+        return await handle(request, ctx);
       } catch (err) {
         console.error(JSON.stringify({ event: "unhandled_error", error: String(err) }));
         return json(500, { error: "internal_error" });

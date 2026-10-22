@@ -91,6 +91,18 @@ export interface Env {
   BASE_RPC_URL?: string;
   /** Comma-separated XRPL addresses whose payments count as Lumi test-buys (default: PAY_TO). Addresses only. */
   TRUST_BUYER_ADDRESSES?: string;
+  /** Sales alert (optional, off unless set): incoming-webhook URL (Slack/Discord/generic JSON POST). */
+  SALES_WEBHOOK_URL?: string;
+  /** Sales alert by email (optional): recipient; needs the SALES_EMAIL send_email binding and SALES_ALERT_FROM. */
+  SALES_ALERT_EMAIL?: string;
+  /** Sender address on a domain with Cloudflare Email Routing enabled, e.g. sales-bot@lumitrades.io. */
+  SALES_ALERT_FROM?: string;
+  /** Cloudflare send_email binding used for the email alert. */
+  SALES_EMAIL?: { send(message: unknown): Promise<void> };
+  /** "1" = also alert on test-wallet sales. */
+  SALES_ALERT_TESTS?: string;
+  /** Extra comma-separated wallets whose payments are marked is_test. */
+  SALES_TEST_WALLETS?: string;
 }
 
 /** Minimal Cloudflare D1 surface used by the trust store. */

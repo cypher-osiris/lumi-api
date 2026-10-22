@@ -16,6 +16,7 @@
  * (Durable Object in production; memory for a single Node process).
  */
 
+import type { SaleEvent } from "./sales";
 import type { Config, DurableObjectNamespaceLike, IouOption, KVLike } from "./config";
 import { isPaymentPayloadV2 } from "@x402/core/schemas";
 import { cdpAuthHeaders, decodeExtensionResponses } from "./cdp";
@@ -415,10 +416,36 @@ function sameRequirements(a: PaymentRequirements, b: PaymentRequirements): boole
   );
 }
 
+function dropsToXrpStr(drops: string): string {
+  const n = BigInt(drops);
+  const whole = n / 1_000_000n;
+  const frac = (n % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
 export interface PaywallDeps {
   fetch: typeof fetch;
   replay: ReplayGuard;
   log?: (event: Record<string, unknown>) => void;
+  /** Called once per successful settlement (sales ledger + alert). Errors are swallowed; it never blocks serving. */
+  onSale?: (sale: SaleEvent) => Promise<void> | void;
+}
+
+/** USD list price of a quote (its stablecoin amount), so XRP and USDC sales can be summed on one scale. */
+export function quoteUsd(quote: Quote): number | undefined {
+  const iou = quote.amountsIou?.USDC ?? quote.amountsIou?.RLUSD;
+  if (iou && Number.isFinite(Number(iou))) return Number(iou);
+  if (quote.amountEvm && /^\d+$/.test(quote.amountEvm)) return Number(quote.amountEvm) / 1e6;
+  return undefined;
+}
+
+async function emitSale(deps: PaywallDeps, sale: SaleEvent): Promise<void> {
+  if (!deps.onSale || !sale.tx) return;
+  try {
+    await deps.onSale(sale);
+  } catch (e) {
+    deps.log?.({ event: "sale_record_error", tx: sale.tx, error: String(e) });
+  }
 }
 
 const LEGACY_UNKNOWN = /^(submit_failed:|submit_missing_tx_hash|validation_failed:)/;
@@ -540,6 +567,18 @@ export async function requirePayment(
     network: settlement.network,
     tx: settlement.transaction,
     payer: settlement.payer,
+  });
+  await emitSale(deps, {
+    route: quote.routeKey.split(":")[0],
+    routeKey: quote.routeKey,
+    rail: "xrpl",
+    network: settlement.network,
+    asset: assetLabel(expected),
+    amount: expected.asset === "XRP" ? dropsToXrpStr(expected.amount) : expected.amount,
+    usd: quoteUsd(quote),
+    payer: settlement.payer,
+    tx: settlement.transaction,
+    facilitator: "t54",
   });
 
   const resp = await serve(settlement, expected);
@@ -740,6 +779,18 @@ async function requireEvmPayment(
     network: settlement.network,
     tx: settlement.transaction,
     payer: settlement.payer,
+    facilitator: settleFac.name,
+  });
+  await emitSale(deps, {
+    route: quote.routeKey.split(":")[0],
+    routeKey: quote.routeKey,
+    rail: "base",
+    network: settlement.network,
+    asset: "USDC",
+    amount: (Number(expected.amount) / 1e6).toFixed(6).replace(/0+$/, "").replace(/\.$/, ""),
+    usd: quoteUsd(quote),
+    payer: settlement.payer,
+    tx: settlement.transaction,
     facilitator: settleFac.name,
   });
 

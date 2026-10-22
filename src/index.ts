@@ -15,8 +15,8 @@ function appFor(env: Env): App {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return appFor(env).fetch(request);
+  async fetch(request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
+    return appFor(env).fetch(request, ctx);
   },
   /** Cron trigger (every 30 min): free, unpaid 402-quote probes of the trust allowlist. */
   async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {

@@ -409,6 +409,24 @@ reads it free. MCP: `lumi_vendor_report` (`vendor_id`). A2A: `vendor_report`. Th
 logs to `notes/trust_testbuys.log`, and posts each result to `POST /v1/trust/observations` with the owner key. Secrets are read from files
 and never printed.
 
+## Sales ledger (owner-only)
+
+Every settled payment (XRPL and Base) writes one row to the D1 `sales` table (migration `0003_sales.sql`): route, rail,
+asset, amount, list USD, payer, tx, time and `is_test` (payments from Lumi's own wallets, i.e. test-buys and Bazaar
+refreshes). `GET /v1/owner/sales` with `Authorization: Bearer <OWNER_MCP_KEY>` returns today (UTC), 7-day, 30-day,
+by-route and by-rail totals, excluding test wallets (`?include_tests=1` to include them, `?recent=N` for more rows).
+Recording is best effort and never blocks or fails a paid response.
+
+Optional alert per sale (off unless configured; test-wallet sales are skipped unless `SALES_ALERT_TESTS=1`):
+
+| Setting | Kind | Meaning |
+|---|---|---|
+| `SALES_WEBHOOK_URL` | secret | Incoming-webhook URL; receives a JSON POST `{text, content, sale}` (Slack, Discord or generic) |
+| `SALES_ALERT_EMAIL` | var | Recipient address (must be a verified destination in Cloudflare Email Routing) |
+| `SALES_ALERT_FROM` | var | Sender on a domain with Email Routing enabled |
+| `SALES_EMAIL` | `send_email` binding | Cloudflare binding used to send the email alert |
+| `SALES_TEST_WALLETS` | var | Extra comma-separated wallets to mark `is_test` |
+
 ## MCP servers
 
 ### Remote: `https://api.lumitrades.io/mcp`
