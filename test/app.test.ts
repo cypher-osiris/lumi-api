@@ -58,7 +58,9 @@ describe("free endpoints", () => {
     expect(wk.resources).toHaveLength(11);
     expect(wk.resources.map((r: any) => r.url)).toContain(`${BASE}/v1/macro/yen`);
     const oa = await (await get("/openapi.json")).json();
-    expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].price).toEqual({ mode: "fixed", currency: "XRP", amount: "0.005" });
+    expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].price).toEqual({ mode: "fixed", currency: "USD", amount: "0.010000" });
+    expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].protocols).toEqual([{ x402: {} }]);
+    expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].xrp_price).toEqual({ mode: "fixed", currency: "XRP", amount: "0.005" });
     const coins = await (await get("/v1/coins")).json();
     expect(coins.count).toBe(13);
     expect(coins.coins.map((c: any) => c.symbol)).toContain("ZBCN");

@@ -60,7 +60,7 @@ describe("/v1/institutional: 402 terms ($0.25)", () => {
     expect(idx.mcp.tools.paid).toContain("lumi_institutional_brief");
     const oa = await (await get("/openapi.json")).json();
     const op = oa.paths["/v1/institutional"].get;
-    expect(op["x-payment-info"].price).toEqual({ mode: "fixed", currency: "XRP", amount: "0.19" });
+    expect(op["x-payment-info"].price).toEqual({ mode: "fixed", currency: "USD", amount: "0.250000" });
     expect(op.parameters[0]).toMatchObject({ name: "format" });
     const wk = await (await get("/.well-known/x402")).json();
     expect(wk.resources.map((r: any) => r.url)).toContain(`${BASE}/v1/institutional`);
@@ -216,5 +216,26 @@ describe("institutional brief over MCP and A2A", () => {
     expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.19", "0.25", "0.25", "0.25"]);
     expect((await a2a([{ text: "today's crypto market brief" }]))[1].data.url).toBe(`${BASE}/v1/brief`);
     expect((await a2a([{ data: { skill: "institutional" } }]))[1].data.url).toBe(`${BASE}/v1/institutional`);
+  });
+});
+
+
+describe("?format validation", () => {
+  it("rejects unknown format values with 400 before any quote or settlement", async () => {
+    const { get, fac } = setup();
+    for (const p of ["/v1/institutional?format=xml", "/v1/brief?format=pdf"]) {
+      const r = await get(p);
+      expect(r.status).toBe(400);
+      expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
+      expect((await r.json()).error).toBe("invalid_format");
+    }
+    expect((await get("/v1/institutional?format=json")).status).toBe(402);
+    expect(fac.calls).toEqual([]);
+  });
+
+  it("/health names the facilitator actually used", async () => {
+    const { get } = setup();
+    const h = await (await get("/health")).json();
+    expect(h.evm.facilitator).toMatch(/^https:\/\//);
   });
 });

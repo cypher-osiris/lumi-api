@@ -1,6 +1,6 @@
 /** Free, human- and agent-facing documents: index, skill.md, discovery manifests, OpenAPI. */
 
-import type { Config } from "./config";
+import type { Config, PaidRoute } from "./config";
 import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
@@ -163,8 +163,10 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           ? { "x-example-url": `${base}${e.template.replace("{id}", "scalpstream")}` }
           : {}),
         "x-payment-info": {
-          protocols: ["x402"],
-          price: { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
+          // x402scan discovery spec: protocols as objects, price in decimal USD (the per-asset terms follow).
+          protocols: [{ x402: {} }],
+          price: { mode: "fixed", currency: "USD", amount: usdPrice(cfg, e.route) },
+          xrp_price: { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
           scheme: "exact",
           network: cfg.network,
           asset: "XRP",
@@ -209,10 +211,13 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   return {
     openapi: "3.1.0",
     info: {
-      title: "Lumi API",
+      title: "Lumi Trades API: pay-per-call crypto signals, levels and daily briefs (x402)",
       version: VERSION,
       contact: { name: "Lumi Trades", url: "https://lumitrades.io", email: "hello@lumitrades.io" },
-      description: `Pay-per-call crypto market reads from lumitrades.io, paid in ${settledIn(cfg)} via x402.`,
+      description:
+        `Pay-per-call crypto market reads from lumitrades.io for AI agents: per-coin buy/sell signal scores, support/resistance levels, ` +
+        `paper-trade ideas, macro backdrop, sentiment, events, a daily market brief and a daily Institutional & Policy Brief, ` +
+        `plus free x402 vendor lookups. No API key: pay $0.01-$0.25 per call in ${settledIn(cfg)} via x402.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
         "GET /v1/coins (free) lists supported coins; GET /v1/samples (free) previews every paid product, truncated. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
@@ -237,6 +242,12 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
       },
     },
   };
+}
+
+/** Route price in decimal USD with 6 places (the USDC price, else the RLUSD price, both USD-denominated). */
+export function usdPrice(cfg: Config, route: PaidRoute): string | undefined {
+  const v = cfg.evm?.prices[route] ?? cfg.ious.find((o) => o.symbol === "RLUSD")?.prices[route];
+  return v == null ? undefined : Number(v).toFixed(6);
 }
 
 function trustPaths(): Record<string, unknown> {

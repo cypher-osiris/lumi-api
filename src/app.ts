@@ -395,7 +395,17 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           network: config.network,
           pay_to: config.payTo,
           facilitator: config.facilitatorUrl,
-          ...(config.evm ? { evm: { network: config.evm.network, pay_to: config.evm.payTo, asset: config.evm.asset, facilitator: config.evm.facilitatorUrl } } : {}),
+          ...(config.evm
+            ? {
+                evm: {
+                  network: config.evm.network,
+                  pay_to: config.evm.payTo,
+                  asset: config.evm.asset,
+                  facilitator: config.evm.cdp ? config.evm.cdp.url : config.evm.facilitatorUrl,
+                  ...(config.evm.cdp ? { facilitator_name: "Coinbase CDP", fallback_facilitator: config.evm.facilitatorUrl } : {}),
+                },
+              }
+            : {}),
           timestamp: new Date().toISOString(),
         });
       case "/skill.md":
@@ -465,6 +475,9 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const wantsMarkdown =
       (route === "brief" || route === "institutional") && (/^(md|markdown|text)$/i.test(url.searchParams.get("format") ?? "") || /text\/markdown/i.test(request.headers.get("Accept") ?? ""));
 
+    if ((route === "brief" || route === "institutional") && url.searchParams.has("format") && !/^(json|md|markdown|text)$/i.test(url.searchParams.get("format") ?? "")) {
+      return json(400, { error: "invalid_format", detail: "format must be json or md. Not charged." });
+    }
     const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
     const quote: Quote = {
       routeKey: coin ? `${route}:${coin.symbol}` : vendorId ? `${route}:${vendorId}` : route,
