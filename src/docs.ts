@@ -329,7 +329,8 @@ export function paymentNetworks(cfg: Config) {
       decimals: cfg.evm.decimals,
       accepts_index: String(cfg.ious.length + 1),
       pay_to: cfg.evm.payTo,
-      facilitator: cfg.evm.facilitatorUrl,
+      facilitator: cfg.evm.cdp ? cfg.evm.cdp.url : cfg.evm.facilitatorUrl,
+      ...(cfg.evm.cdp ? { fallback_facilitator: cfg.evm.facilitatorUrl } : {}),
       payload: "EIP-3009 transferWithAuthorization (gasless for the payer; @x402/evm, @x402/fetch)",
     });
   }
@@ -396,7 +397,7 @@ description: Pay-per-call crypto market reads from Lumi Trades (daily market bri
 
 Base URL: ${base}
 Network: \`${net}\` (${cfg.networkName}). Assets: XRP${cfg.ious.map((o) => ` or ${o.symbol} (${IOU_NAMES[o.symbol]}, issuer \`${o.issuer}\`, currency \`${o.currency}\`)`).join("")}. Pay to: \`${cfg.payTo}\`.
-${cfg.evm ? `Also: \`${cfg.evm.network}\` (${cfg.evm.networkName}). Asset: USDC \`${cfg.evm.asset}\`. Pay to: \`${cfg.evm.payTo}\`. Facilitator: ${cfg.evm.facilitatorUrl}.
+${cfg.evm ? `Also: \`${cfg.evm.network}\` (${cfg.evm.networkName}). Asset: USDC \`${cfg.evm.asset}\`. Pay to: \`${cfg.evm.payTo}\`. Facilitator: ${cfg.evm.cdp ? `${cfg.evm.cdp.url} (Coinbase CDP; fallback ${cfg.evm.facilitatorUrl})` : cfg.evm.facilitatorUrl}.
 ` : ""}Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call${cfg.evm ? ", or one EIP-3009 USDC authorization on Base" : ""}).
 No API key, no account, no sign-up.
 A2A agent card: ${base}/.well-known/agent-card.json. MCP: ${base}/mcp.
@@ -453,7 +454,7 @@ ${cfg.evm ? `
 
 The same 402 also lists \`accepts[${cfg.ious.length + 1}]\` = \`{ scheme: "exact", network: "${cfg.evm.network}", asset: "${cfg.evm.asset}", amount: "<atomic USDC, 6 decimals: 10000 = 0.01>", payTo: "${cfg.evm.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { name: "${cfg.evm.eip712.name}", version: "${cfg.evm.eip712.version}", invoiceId, symbol: "USDC", decimals: 6 } }\`.
 Sign an EIP-3009 \`transferWithAuthorization\` for exactly \`amount\` to \`payTo\` and retry with \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <that entry, unchanged>, payload: { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } })\`.
-Lumi's facilitator (${cfg.evm.facilitatorUrl}) verifies it and submits it on ${cfg.evm.networkName}, paying the gas: your wallet needs USDC only, no ETH. Same rules: one invoice, one payment, never charged when data is stale.
+Lumi's facilitator (${cfg.evm.cdp ? `Coinbase CDP, fallback ${cfg.evm.facilitatorUrl}` : cfg.evm.facilitatorUrl}) verifies it and submits it on ${cfg.evm.networkName}, paying the gas: your wallet needs USDC only, no ETH. Same rules: one invoice, one payment, never charged when data is stale.
 The official x402 client packages (\`@x402/fetch\` + \`@x402/evm\`) do this for you and skip the XRPL options automatically.
 ` : ""}
 
