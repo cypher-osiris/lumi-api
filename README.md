@@ -132,8 +132,8 @@ The last `accepts[]` entry is a standard x402 v2 EVM requirement, so the officia
 
 The agent signs an EIP-3009 `transferWithAuthorization` (no gas, no ETH needed) and retries with
 `PAYMENT-SIGNATURE: base64({ x402Version: 2, accepted, payload: { signature, authorization } })`. Lumi API checks the invoice and the
-authorization locally (recipient, exact amount, validity window), has the [PayAI facilitator](https://facilitator.payai.network) verify
-it, claims the invoice **and** the authorization nonce in the Durable Object guard, then settles. Same receipt, same error semantics,
+authorization locally (recipient, exact amount, validity window), has the [Coinbase CDP facilitator](https://docs.cdp.coinbase.com/x402/welcome)
+verify it (falling back to the keyless [PayAI facilitator](https://facilitator.payai.network) if CDP is unreachable or errors), claims the invoice **and** the authorization nonce in the Durable Object guard, then settles. Same receipt, same error semantics,
 same "never charged on stale data" rule as XRPL.
 
 ```ts
@@ -147,9 +147,17 @@ const res = await wrapFetchWithPayment(fetch, client)("https://api.lumitrades.io
 console.log(await res.json());
 ```
 
-Why PayAI: it is listed on [docs.x402.org/dev-tools/facilitators](https://docs.x402.org/dev-tools/facilitators), supports x402 v2 `exact`
-on `eip155:8453`, and needs no API key or sign-up (each receiving wallet gets 1,000 free credits, about 2 credits per Base settlement at
-current gas). The `x402.org` facilitator is testnet only, and Coinbase CDP's needs CDP API keys. `EVM_FACILITATOR_URL` switches facilitator.
+Why CDP first (since v0.8): payments settled through Coinbase's CDP facilitator get the endpoint listed in the
+[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar), the discovery index that x402 clients and agent wallets search. Every paid 402
+carries an `extensions.bazaar` block (input schema, path/query parameters, a sample JSON output and its JSON Schema, and a `routeTemplate`
+such as `/v1/signal/:coin` so all coins list as one resource) plus a `resource.description` of at most 500 characters. The Worker signs a
+short-lived (120 s) Ed25519 JWT per facilitator request with Web Crypto; the CDP key is a Worker secret, never in the repo.
+
+Fallback: if CDP fails for a facilitator-side reason (network error, 401/403/404, 408/429/5xx, malformed reply, or a rejection about the
+extension or requirements rather than the payment), the same signed payment goes to PayAI, which needs no key. A failed settle only
+falls back when CDP returned no transaction hash; EIP-3009 authorizations execute at most once on-chain, so a payment can never be taken
+twice. Payment problems (insufficient funds, bad signature, expired authorization) are final and return a fresh 402, with no fallback.
+`EVM_FACILITATOR = "fallback"` turns CDP off; `EVM_FACILITATOR_URL` switches the fallback facilitator.
 
 ### Error semantics (same as the reference middleware)
 
@@ -265,7 +273,9 @@ Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full
 | `OWNER_MCP_KEY` | optional secret (32+ chars): operator key for the remote MCP endpoint; paid tools return data free (`npx wrangler secret put OWNER_MCP_KEY`) |
 | `EVM_NETWORK` | `eip155:8453` (Base mainnet; testnet env uses `eip155:84532`, Base Sepolia) |
 | `EVM_PAY_TO` | `0x5E617bac19912e6d212CB303ae84655E9E203532` (Lumi's Base receiving address; address only). Unset = no Base option |
-| `EVM_FACILITATOR_URL` | `https://facilitator.payai.network` (testnet: `https://x402.org/facilitator`) |
+| `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET` | secrets (`npx wrangler secret put ...`): Coinbase CDP Secret API Key (Ed25519). With both set, Base USDC verifies and settles through the CDP facilitator |
+| `EVM_FACILITATOR` | `cdp` (default; uses CDP when its key is set) or `fallback` (keyless facilitator only) |
+| `EVM_FACILITATOR_URL` | fallback facilitator: `https://facilitator.payai.network` (testnet: `https://x402.org/facilitator`) |
 | `ACCEPT_BASE_USDC` | `true`; `false` removes the Base option |
 
 The server never holds a private key. The payer signs, the facilitator submits, and XRP (or RLUSD/USDC) lands in `PAY_TO`; Base USDC lands in `EVM_PAY_TO`. `PAY_TO` needs RLUSD and USDC trust lines to receive stablecoins. Lumi's mainnet wallet has both (limit 1,000,000 each).
@@ -386,6 +396,8 @@ src/
   node.ts           Node HTTP adapter (npm start)
   app.ts            router, free/paid endpoints, "never charge on failure" ordering
   x402.ts           x402 v2 merchant flow: challenge, HMAC invoices, verify/settle (XRPL + Base), replay guards
+  cdp.ts            Coinbase CDP facilitator auth: per-request Ed25519 JWT (Web Crypto), EXTENSION-RESPONSES decoding
+  bazaar.ts         x402 Bazaar discovery metadata per paid route (description, input/output schema, example, routeTemplate)
   invoice-guard.ts  Durable Object: atomic one-time invoice redemption
   views.ts          whitelisted response shapes (signal, levels, slate, market)
   products.ts       brief, macro/yen, sentiment, events, trades (+ markdown brief, carry-trade + funding rules)

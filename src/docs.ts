@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -113,7 +113,7 @@ export function wellKnownX402(cfg: Config, base: string) {
           : []),
       ],
     })),
-    facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [cfg.evm.facilitatorUrl] : [])],
+    facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [...(cfg.evm.cdp ? [cfg.evm.cdp.url] : []), cfg.evm.facilitatorUrl] : [])],
     networks: paymentNetworks(cfg),
     agent_card: `${base}/.well-known/agent-card.json`,
     openapi: `${base}/openapi.json`,

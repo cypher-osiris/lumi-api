@@ -18,6 +18,7 @@
 
 import type { Config, DurableObjectNamespaceLike, IouOption, KVLike } from "./config";
 import { isPaymentPayloadV2 } from "@x402/core/schemas";
+import { cdpAuthHeaders, decodeExtensionResponses } from "./cdp";
 
 export const HEADER_PAYMENT_REQUIRED = "PAYMENT-REQUIRED";
 export const HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE";
@@ -75,6 +76,8 @@ export interface Quote {
   amountEvm?: string;
   description: string;
   resourceUrl: string;
+  /** x402 Bazaar discovery extension for this route (see bazaar.ts); a generic GET/JSON declaration when absent. */
+  bazaar?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------- encoding
@@ -333,7 +336,7 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
     error,
     resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json" },
     accepts: buildAccepts(cfg, quote, invoiceId),
-    extensions: { bazaar: BAZAAR_GET_JSON },
+    extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
   };
 }
 
@@ -603,7 +606,7 @@ export function parseEip3009(payload: PaymentPayload): { authorization: Eip3009A
 }
 
 /**
- * Base USDC settlement through an x402 facilitator (PayAI by default on mainnet). Same guarantees as the XRPL path:
+ * Base USDC settlement through an x402 facilitator (Coinbase CDP when its API key is configured, PayAI as the automatic keyless fallback). Same guarantees as the XRPL path:
  * the paid body is already built (freshness gate ran before the 402), the invoice is claimed exactly once in the
  * replay guard before settlement, and the EIP-3009 authorization nonce is claimed too, so one signed authorization
  * can never be redeemed against two invoices even if a facilitator treats a re-settle as success.
@@ -637,31 +640,44 @@ async function requireEvmPayment(
   const nonceKey = `eip3009:${expected.network}:${expected.asset.toLowerCase()}:${auth.from.toLowerCase()}:${auth.nonce.toLowerCase()}`;
   if (await deps.replay.isUsed(nonceKey)) return paymentRequiredResponse(cfg, quote, "authorization_already_used");
 
-  const body = JSON.stringify({ x402Version: 2, paymentPayload: payload, paymentRequirements: expected });
-  const post = (path: string) =>
-    deps.fetch(`${evm.facilitatorUrl}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body,
-    });
+  const fac = evmFacilitators(cfg, payload, expected, quote, deps);
 
   // ---- verify (no money moves; safe to retry). Facilitators answer an invalid payment with 200 or 400 + isValid:false.
-  let verifyResp: Response;
-  try {
-    verifyResp = await post("/verify");
-  } catch {
-    return transient("facilitator_unavailable");
+  // CDP first (when configured); any CDP-side failure falls back to the keyless facilitator.
+  let verified: FacilitatorCall | null = null;
+  for (const f of fac) {
+    const r = await f.call("verify");
+    const last = f === fac[fac.length - 1];
+    if (r.kind === "error") {
+      if (!last) {
+        deps.log?.({ event: "x402_facilitator_fallback", phase: "verify", from: f.name, status: r.status ?? null, reason: r.reason });
+        continue;
+      }
+      if (r.reason === "bad_json") {
+        return json(502, { error: "invalid_verify_response", retryable: false, phase: "verify", settlementAttempted: false });
+      }
+      return transient("facilitator_unavailable", r.retryAfter);
+    }
+    const v = r.json;
+    if (typeof v.isValid !== "boolean" || (v.isValid && r.status !== 200)) {
+      if (!last) {
+        deps.log?.({ event: "x402_facilitator_fallback", phase: "verify", from: f.name, status: r.status, reason: "invalid_verify_response" });
+        continue;
+      }
+      return json(502, { error: "invalid_verify_response", retryable: false, phase: "verify", settlementAttempted: false });
+    }
+    if (!v.isValid) {
+      const reason = String(v.invalidReason || "verify_failed");
+      if (!last && facilitatorSideReason(reason)) {
+        deps.log?.({ event: "x402_facilitator_fallback", phase: "verify", from: f.name, status: r.status, reason });
+        continue;
+      }
+      return paymentRequiredResponse(cfg, quote, `verify_failed:${reason}`);
+    }
+    verified = { facilitator: f, response: r };
+    break;
   }
-  if (verifyResp.status === 408 || verifyResp.status === 429 || verifyResp.status >= 500) {
-    return transient("facilitator_unavailable", verifyResp.headers.get("Retry-After"));
-  }
-  const verifyJson = (await verifyResp.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!verifyJson || typeof verifyJson.isValid !== "boolean" || (verifyJson.isValid && verifyResp.status !== 200)) {
-    return json(502, { error: "invalid_verify_response", retryable: false, phase: "verify", settlementAttempted: false });
-  }
-  if (!verifyJson.isValid) {
-    return paymentRequiredResponse(cfg, quote, `verify_failed:${String(verifyJson.invalidReason || "verify_failed")}`);
-  }
+  if (!verified) return transient("facilitator_unavailable");
 
   // ---- one-time redemption: the invoice and the authorization nonce
   const ttl = Math.max(60, Math.ceil((expiresAt - Date.now()) / 1000) + 60);
@@ -673,14 +689,28 @@ async function requireEvmPayment(
     return transient("invoice_guard_unavailable");
   }
 
-  // ---- settle (the facilitator submits transferWithAuthorization on Base)
-  let settleResp: Response;
-  try {
-    settleResp = await post("/settle");
-  } catch {
-    return settlementUnknown();
+  // ---- settle (the facilitator submits transferWithAuthorization on Base) with the facilitator that verified.
+  // Fallback after a CDP settle failure is safe: an EIP-3009 authorization (from + nonce) can execute on-chain at most
+  // once, so a second facilitator can never move the buyer's USDC twice; it either settles the not-yet-used
+  // authorization or fails, which is reported as settlement_status_unknown exactly as before.
+  let settleFac = verified.facilitator;
+  let s = await settleFac.call("settle");
+  if (settleFac !== fac[fac.length - 1] && cdpSettleShouldFallBack(s)) {
+    const next = fac[fac.indexOf(settleFac) + 1];
+    deps.log?.({
+      event: "x402_facilitator_fallback",
+      phase: "settle",
+      from: settleFac.name,
+      status: s.status ?? null,
+      reason: s.kind === "error" ? s.reason : String(s.json.errorReason ?? "unknown"),
+    });
+    settleFac = next;
+    s = await settleFac.call("settle");
   }
-  const settleJson = (await settleResp.json().catch(() => null)) as Record<string, unknown> | null;
+  if (s.kind === "error" && s.status === undefined) return settlementUnknown();
+  const settleResp = { status: s.status!, headers: s.headers! };
+  const settleJson = s.kind === "ok" ? s.json : null;
+  if (settleFac.name === "cdp") logBazaar(deps, quote, "settle", s.headers);
   const tx = typeof settleJson?.transaction === "string" ? settleJson.transaction : "";
   if (!settleJson || typeof settleJson.success !== "boolean") return settlementUnknown();
   if (!settleJson.success || settleResp.status !== 200) {
@@ -710,6 +740,7 @@ async function requireEvmPayment(
     network: settlement.network,
     tx: settlement.transaction,
     payer: settlement.payer,
+    facilitator: settleFac.name,
   });
 
   const resp = await serve(settlement, expected);
@@ -717,4 +748,89 @@ async function requireEvmPayment(
   out.headers.set(HEADER_PAYMENT_RESPONSE, settleResp.headers.get(HEADER_PAYMENT_RESPONSE) || encodeHeader(settlement));
   out.headers.set("Cache-Control", "no-store");
   return out;
+}
+
+// ---------------------------------------------------------------- EVM facilitators (CDP primary, keyless fallback)
+
+type FacilitatorResult =
+  | { kind: "ok"; status: number; headers: Headers; json: Record<string, unknown> }
+  | { kind: "error"; status?: number; headers?: Headers; retryAfter?: string | null; reason: string };
+
+interface EvmFacilitator {
+  name: "cdp" | "fallback";
+  call(phase: "verify" | "settle"): Promise<FacilitatorResult>;
+}
+interface FacilitatorCall {
+  facilitator: EvmFacilitator;
+  response: FacilitatorResult;
+}
+
+/** Verify/settle invalid reasons that say "this facilitator can't handle it" (try the next one) rather than "this payment is bad". */
+function facilitatorSideReason(reason: string): boolean {
+  return /bazaar|extension|unsupported|not_supported|unauthori[sz]ed|forbidden|internal|unexpected|unknown_error|rate_limit|invalid_x402_version|invalid_payment_requirements/i.test(
+    reason,
+  );
+}
+
+/** After CDP settle: fall back on transport errors, auth/5xx/429 answers and facilitator-side refusals without a tx hash. */
+function cdpSettleShouldFallBack(r: FacilitatorResult): boolean {
+  if (r.kind === "error") return true;
+  if (typeof r.json.transaction === "string" && r.json.transaction) return false;
+  if (r.json.success === true && r.status === 200) return false;
+  if (r.status === 401 || r.status === 403 || r.status === 404 || r.status === 429 || r.status >= 500) return true;
+  return r.json.success === false && facilitatorSideReason(String(r.json.errorReason ?? ""));
+}
+
+function logBazaar(deps: PaywallDeps, quote: Quote, phase: string, headers?: Headers) {
+  const ext = decodeExtensionResponses(headers?.get("EXTENSION-RESPONSES") ?? null);
+  const bazaar = ext?.bazaar as Record<string, unknown> | undefined;
+  if (bazaar) deps.log?.({ event: "x402_bazaar", phase, route: quote.routeKey, status: bazaar.status ?? null, reason: bazaar.rejectedReason ?? null });
+}
+
+/**
+ * The ordered facilitator list for a Base payment. CDP gets the payload with the server's own `resource` and
+ * `extensions.bazaar` (what the Bazaar indexes; clients may omit or alter their echo), the keyless facilitator gets
+ * the payload exactly as the client sent it.
+ */
+function evmFacilitators(cfg: Config, payload: PaymentPayload, expected: PaymentRequirements, quote: Quote, deps: PaywallDeps): EvmFacilitator[] {
+  const evm = cfg.evm!;
+  const make = (name: EvmFacilitator["name"], baseUrl: string, paymentPayload: PaymentPayload, auth: boolean): EvmFacilitator => {
+    const body = JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: expected });
+    return {
+      name,
+      async call(phase) {
+        const url = `${baseUrl}/${phase}`;
+        let resp: Response;
+        try {
+          const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
+          if (auth) Object.assign(headers, await cdpAuthHeaders(evm.cdp!.credentials, "POST", url));
+          resp = await deps.fetch(url, { method: "POST", headers, body });
+        } catch (err) {
+          return { kind: "error", reason: auth && !(err instanceof TypeError) ? "cdp_auth_error" : "network_error" };
+        }
+        if (name === "cdp" && phase === "verify") logBazaar(deps, quote, phase, resp.headers);
+        const retryAfter = resp.headers.get("Retry-After");
+        const j = (await resp.json().catch(() => null)) as Record<string, unknown> | null;
+        if (phase === "verify" && (resp.status === 408 || resp.status === 429 || resp.status >= 500)) {
+          return { kind: "error", status: resp.status, headers: resp.headers, retryAfter, reason: `http_${resp.status}` };
+        }
+        if (phase === "verify" && name === "cdp" && (resp.status === 401 || resp.status === 403 || resp.status === 404)) {
+          return { kind: "error", status: resp.status, headers: resp.headers, retryAfter, reason: `http_${resp.status}` };
+        }
+        if (!j || typeof j !== "object") return { kind: "error", status: resp.status, headers: resp.headers, retryAfter, reason: "bad_json" };
+        return { kind: "ok", status: resp.status, headers: resp.headers, json: j };
+      },
+    };
+  };
+  const list: EvmFacilitator[] = [];
+  if (evm.cdp) {
+    const forCdp: PaymentPayload = {
+      ...payload,
+      resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json" },
+      extensions: { ...(payload.extensions ?? {}), bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
+    };
+    list.push(make("cdp", evm.cdp.url, forCdp, true));
+  }
+  list.push(make("fallback", evm.facilitatorUrl, payload, false));
+  return list;
 }

@@ -4,6 +4,8 @@
  * so the same code runs on Cloudflare Workers, `wrangler dev` and plain Node.
  */
 
+import { CDP_FACILITATOR_URL, type CdpCredentials } from "./cdp";
+
 export type XrplNetwork = "xrpl:0" | "xrpl:1" | "xrpl:2";
 
 export interface Env {
@@ -69,6 +71,14 @@ export interface Env {
   EVM_FACILITATOR_URL?: string;
   /** "false" disables the Base USDC option even when EVM_PAY_TO is set. Default on. */
   ACCEPT_BASE_USDC?: string;
+  /** CDP secret API key id + Ed25519 secret (`wrangler secret put`). When both are set, Base verify/settle goes to the
+   *  Coinbase CDP facilitator (x402 Bazaar indexing) and EVM_FACILITATOR_URL becomes the automatic fallback. */
+  CDP_API_KEY_ID?: string;
+  CDP_API_KEY_SECRET?: string;
+  /** "cdp" (default when the CDP key is set) or "fallback" to send Base payments straight to EVM_FACILITATOR_URL. */
+  EVM_FACILITATOR?: string;
+  /** Override for the CDP facilitator base URL (default https://api.cdp.coinbase.com/platform/v2/x402). */
+  CDP_FACILITATOR_URL?: string;
   /** Durable Object namespace for the strongly-consistent invoice replay guard (recommended). */
   INVOICE_GUARD?: DurableObjectNamespaceLike;
   /** Optional KV namespace used as a weaker (eventually consistent) replay guard. */
@@ -164,7 +174,10 @@ export interface EvmOption {
   /** EIP-712 domain of the token (x402 `extra.name` / `extra.version`). */
   eip712: { name: string; version: string };
   decimals: 6;
+  /** Keyless facilitator (PayAI on mainnet); the fallback when `cdp` is set. */
   facilitatorUrl: string;
+  /** Primary facilitator: Coinbase CDP with JWT auth (set when the CDP key is configured). */
+  cdp?: { url: string; credentials: CdpCredentials };
   explorer: string;
   /** Decimal USDC prices per route (same as the XRPL stablecoin prices). */
   prices: Record<PaidRoute, string>;
@@ -173,7 +186,7 @@ export interface EvmOption {
 }
 
 /** Circle USDC on Base (https://developers.circle.com/stablecoins/usdc-contract-addresses), with its EIP-712 domain. */
-export const EVM_NETWORKS: Record<EvmNetwork, Omit<EvmOption, "payTo" | "prices" | "amounts" | "facilitatorUrl"> & { facilitatorUrl: string }> = {
+export const EVM_NETWORKS: Record<EvmNetwork, Omit<EvmOption, "payTo" | "prices" | "amounts" | "facilitatorUrl" | "cdp"> & { facilitatorUrl: string }> = {
   "eip155:8453": {
     network: "eip155:8453",
     networkName: "Base",
@@ -224,10 +237,14 @@ function evmConfig(env: Env): EvmOption | undefined {
     prices[r] = iouValue(e[`PRICE_${R}_BASE_USDC`] || e[`PRICE_${R}_USDC`] || DEFAULT_PRICES[r].usd);
     amounts[r] = usdcToAtomic(prices[r]);
   }
+  const keyId = (env.CDP_API_KEY_ID || "").trim();
+  const keySecret = (env.CDP_API_KEY_SECRET || "").trim();
+  const useCdp = keyId && keySecret && (env.EVM_FACILITATOR || "cdp").trim().toLowerCase() === "cdp";
   return {
     ...net,
     payTo,
     facilitatorUrl: (env.EVM_FACILITATOR_URL || net.facilitatorUrl).replace(/\/+$/, ""),
+    ...(useCdp ? { cdp: { url: (env.CDP_FACILITATOR_URL || CDP_FACILITATOR_URL).replace(/\/+$/, ""), credentials: { keyId, keySecret } } } : {}),
     prices,
     amounts,
   };
