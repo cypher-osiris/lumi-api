@@ -94,6 +94,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   for (const e of PAID_ENDPOINTS) {
     paths[e.template] = {
       get: {
+        operationId: e.route,
         summary: e.summary,
         parameters: e.template.includes("{coin}") ? [coinParam] : [],
         "x-payment-info": {
@@ -115,7 +116,17 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   }
   return {
     openapi: "3.1.0",
-    info: { title: "Lumi API", version: VERSION, description: "Pay-per-call crypto market reads from lumitrades.io, paid in XRP via x402." },
+    info: {
+      title: "Lumi API",
+      version: VERSION,
+      description: "Pay-per-call crypto market reads from lumitrades.io, paid in XRP via x402.",
+      "x-guidance":
+        `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
+        "GET /v1/coins (free) lists supported coins. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
+        "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
+        "GET /v1/market gives the BTC and macro backdrop. Each paid call is one x402 v2 'exact' XRP payment on the XRP Ledger " +
+        `(${cfg.network}); unknown coins return 404 before any payment is requested. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
+    },
     servers: [{ url: base }],
     paths,
   };

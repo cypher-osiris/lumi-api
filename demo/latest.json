@@ -1,11 +1,11 @@
 {
-  "started": "2026-10-22T11:41:41.003Z",
+  "started": "2026-10-22T12:20:14.221Z",
   "network": "xrpl:1",
-  "server": "http://127.0.0.1:39235",
+  "server": "http://127.0.0.1:39163",
   "step1_payment_required": {
     "x402Version": 2,
     "resource": {
-      "url": "http://127.0.0.1:39235/v1/signal/XRP",
+      "url": "http://127.0.0.1:39163/v1/signal/XRP",
       "description": "Lumi API /v1/signal/XRP: Mechanical buy/sell read for one coin: overall label + score, per-timeframe (1h/4h/1d) labels and an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume).",
       "mimeType": "application/json"
     },
@@ -13,25 +13,73 @@
       {
         "scheme": "exact",
         "network": "xrpl:1",
-        "amount": "20000",
+        "amount": "5000",
         "asset": "XRP",
         "payTo": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
         "maxTimeoutSeconds": 300,
         "extra": {
-          "invoiceId": "lumi1.signal:XRP.tnb4qa.gKIFOgsFhIX1.6RH5vj0ZVzRpfdbZdmbNnQ",
+          "invoiceId": "lumi1.signal:XRP.tnb6ik.lOzDsXDFy5DM.j_f8zY5LZvoQv76Xz53-hw",
           "sourceTag": 5864
         }
       }
     ],
     "error": "PAYMENT-SIGNATURE header is required",
-    "extensions": {}
+    "extensions": {
+      "bazaar": {
+        "info": {
+          "input": {
+            "method": "GET",
+            "type": "http"
+          },
+          "output": {
+            "type": "json"
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "input": {
+              "properties": {
+                "method": {
+                  "enum": [
+                    "GET"
+                  ],
+                  "type": "string"
+                },
+                "type": {
+                  "const": "http",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "method"
+              ],
+              "type": "object"
+            },
+            "output": {
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "input"
+          ],
+          "type": "object"
+        }
+      }
+    }
   },
   "step2": {
     "status": 200,
-    "latency_ms": 6904,
+    "latency_ms": 8374,
     "receipt": {
       "success": true,
-      "transaction": "D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA",
+      "transaction": "70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E",
       "network": "xrpl:1",
       "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
       "extensions": {
@@ -42,7 +90,7 @@
           "memoType": "urn:t54:xrpl:attestation:v2",
           "nonProduction": true,
           "paymentNetwork": "xrpl:1",
-          "paymentTxHash": "D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA",
+          "paymentTxHash": "70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E",
           "status": "ready",
           "v": 2
         }
@@ -50,7 +98,7 @@
     },
     "response": {
       "kind": "signal",
-      "timestamp": "2026-10-22T11:41:59.633Z",
+      "timestamp": "2026-10-22T12:20:33.022Z",
       "source": "lumitrades.io",
       "coin": {
         "id": "ripple",
@@ -218,11 +266,11 @@
       "generated_utc": "2026-10-22T10:50:39Z",
       "disclaimer": "Analytics and education only. Not financial advice. Trade ideas are paper trades tracked publicly on lumitrades.io, not orders or signals to copy. Crypto is volatile and leverage can magnify losses. Do your own research.",
       "payment": {
-        "transaction": "D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA",
+        "transaction": "70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E",
         "network": "xrpl:1",
         "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
-        "amount_drops": "20000",
-        "explorer": "https://testnet.xrpl.org/transactions/D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA"
+        "amount_drops": "5000",
+        "explorer": "https://testnet.xrpl.org/transactions/70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E"
       }
     }
   },
@@ -232,10 +280,10 @@
   },
   "step4": {
     "status": 200,
-    "latency_ms": 6640,
+    "latency_ms": 5710,
     "receipt": {
       "success": true,
-      "transaction": "59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4",
+      "transaction": "4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97",
       "network": "xrpl:1",
       "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
       "extensions": {
@@ -246,7 +294,7 @@
           "memoType": "urn:t54:xrpl:attestation:v2",
           "nonProduction": true,
           "paymentNetwork": "xrpl:1",
-          "paymentTxHash": "59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4",
+          "paymentTxHash": "4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97",
           "status": "ready",
           "v": 2
         }
@@ -254,7 +302,7 @@
     },
     "response": {
       "kind": "market",
-      "timestamp": "2026-10-22T11:42:07.529Z",
+      "timestamp": "2026-10-22T12:20:42.413Z",
       "source": "lumitrades.io",
       "btc_backdrop": {
         "coin": {
@@ -433,64 +481,64 @@
       "analysis_as_of": "2026-10-22T11:05:00Z",
       "disclaimer": "Analytics and education only. Not financial advice. Trade ideas are paper trades tracked publicly on lumitrades.io, not orders or signals to copy. Crypto is volatile and leverage can magnify losses. Do your own research.",
       "payment": {
-        "transaction": "59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4",
+        "transaction": "4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97",
         "network": "xrpl:1",
         "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
-        "amount_drops": "50000",
-        "explorer": "https://testnet.xrpl.org/transactions/59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4"
+        "amount_drops": "10000",
+        "explorer": "https://testnet.xrpl.org/transactions/4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97"
       }
     }
   },
   "ledger": [
     {
-      "hash": "D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA",
+      "hash": "70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E",
       "validated": true,
       "result": "tesSUCCESS",
-      "ledger_index": 21733686,
+      "ledger_index": 21734375,
       "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
       "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
-      "amount_drops": "20000",
-      "delivered_drops": "20000",
+      "amount_drops": "5000",
+      "delivered_drops": "5000",
       "fee_drops": "12",
       "source_tag": 5864,
-      "invoice_id_field": "220E602D4132467F8EF674265201B74DF0255FDBFF5204E2DD12AE3C479734D3",
+      "invoice_id_field": "C193616C789B1EE60CD73D39D8FBB104403375EAA185443FA5A02FE428764F64",
       "memos": [
         {
-          "data": "lumi1.signal:XRP.tnb4qa.gKIFOgsFhIX1.6RH5vj0ZVzRpfdbZdmbNnQ"
+          "data": "lumi1.signal:XRP.tnb6ik.lOzDsXDFy5DM.j_f8zY5LZvoQv76Xz53-hw"
         }
       ],
-      "explorer": "https://testnet.xrpl.org/transactions/D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA"
+      "explorer": "https://testnet.xrpl.org/transactions/70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E"
     },
     {
-      "hash": "59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4",
+      "hash": "4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97",
       "validated": true,
       "result": "tesSUCCESS",
-      "ledger_index": 21733688,
+      "ledger_index": 21734377,
       "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
       "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
-      "amount_drops": "50000",
-      "delivered_drops": "50000",
+      "amount_drops": "10000",
+      "delivered_drops": "10000",
       "fee_drops": "12",
       "source_tag": 5864,
-      "invoice_id_field": "2C6822383A4B3039CF2FB0D1CFF34DC8D34F555561A5309019E0039D87C2CB3F",
+      "invoice_id_field": "6C6AFF1B9EF5D7CA315F793EAB64DF77293B6A9E3DFC0C34FB999190D99A1FC3",
       "memos": [
         {
-          "data": "lumi1.market.tnb4qi.sn31-IC1e3cg.dN8woZfcpyDvYAdZV4EpMA"
+          "data": "lumi1.market.tnb6it.-cQyFThQnG-K.MqoA2mM1Dna1xnUdb_l-6A"
         }
       ],
-      "explorer": "https://testnet.xrpl.org/transactions/59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4"
+      "explorer": "https://testnet.xrpl.org/transactions/4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97"
     }
   ],
   "balances": {
     "before": {
-      "payer": 99.749906,
-      "receiver": 100.25
-    },
-    "after": {
       "payer": 99.679882,
       "receiver": 100.32
+    },
+    "after": {
+      "payer": 99.664858,
+      "receiver": 100.335
     }
   },
-  "finished": "2026-10-22T11:42:13.633Z",
+  "finished": "2026-10-22T12:20:47.520Z",
   "ok": true
 }

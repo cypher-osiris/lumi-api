@@ -133,7 +133,7 @@ The demo does the following:
 
 To run it against the Workers runtime instead: `npm run dev` in one shell, then `LUMI_API_URL=http://127.0.0.1:8787 npm run demo:testnet`.
 
-Recorded runs (Oct 22 2026), all validated `tesSUCCESS` on XRPL Testnet (recorded at the launch prices of 0.02/0.05 XRP, before prices were lowered to 0.005/0.01 XRP):
+Recorded runs (Oct 22 2026), all validated `tesSUCCESS` on XRPL Testnet (the first five at the launch prices of 0.02/0.05 XRP, the last two at the current 0.005/0.01 XRP):
 
 | Run | Endpoint | Amount | Tx |
 |---|---|---|---|
@@ -142,6 +142,8 @@ Recorded runs (Oct 22 2026), all validated `tesSUCCESS` on XRPL Testnet (recorde
 | workerd (`wrangler dev`) | `/v1/signal/XRP` | 0.02 XRP | [2E7E0E11…402591](https://testnet.xrpl.org/transactions/2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591) |
 | workerd (`wrangler dev`) | `/v1/market` (x402Fetch) | 0.05 XRP | [E4165025…21BB90](https://testnet.xrpl.org/transactions/E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90) |
 | Python SDK client | `/v1/levels/XRP` | 0.02 XRP | [355244D3…683F70](https://testnet.xrpl.org/transactions/355244D3602E67D7BF87CB2920B609CF74DF9E9C63B01005F27B020823683F70) |
+| Node (current prices) | `/v1/signal/XRP` | 0.005 XRP | [70B12A01…FB2A6E](https://testnet.xrpl.org/transactions/70B12A01E8D8E51E5E9755C858AC94DCB5360BE996C96A6242DF92B994FB2A6E) |
+| Node (current prices) | `/v1/market` (x402Fetch) | 0.01 XRP | [4510B9AE…2E7C97](https://testnet.xrpl.org/transactions/4510B9AE3D4B2751D55CB54634DAA4B6C6148809A9E609EE53574C97562E7C97) |
 
 Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full transcripts are in `demo/`.
 

@@ -265,9 +265,27 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
     error,
     resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json" },
     accepts: [buildRequirements(cfg, quote, invoiceId)],
-    extensions: {},
+    extensions: { bazaar: BAZAAR_GET_JSON },
   };
 }
+
+/** x402 Bazaar discovery extension: every paid route is a plain GET returning JSON (inputs are in the URL path). */
+const BAZAAR_GET_JSON = {
+  info: { input: { type: "http", method: "GET" }, output: { type: "json" } },
+  schema: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    properties: {
+      input: {
+        type: "object",
+        properties: { type: { type: "string", const: "http" }, method: { type: "string", enum: ["GET"] } },
+        required: ["type", "method"],
+      },
+      output: { type: "object", properties: { type: { type: "string" } } },
+    },
+    required: ["input"],
+  },
+};
 
 // ---------------------------------------------------------------- responses
 
@@ -284,7 +302,8 @@ export function json(status: number, body: unknown, headers: Record<string, stri
 }
 
 async function paymentRequiredResponse(cfg: Config, quote: Quote, error: string): Promise<Response> {
-  const body = await buildPaymentRequired(cfg, quote, error);
+  // Body uses the same canonical (sorted-key) order as the header, so naive string comparisons of the two match.
+  const body = JSON.parse(canonicalJson(await buildPaymentRequired(cfg, quote, error)));
   return json(402, body, { [HEADER_PAYMENT_REQUIRED]: encodeHeader(body), "Cache-Control": "no-store" });
 }
 
