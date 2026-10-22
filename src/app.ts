@@ -346,7 +346,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       amountEvm: config.evm?.amounts[route],
       description: resourceDescription(
         route,
-        `Lumi API ${endpoint.template.replace("{coin}", coin?.symbol ?? "").replace("{id}", vendorId ?? "")}: ${endpoint.summary}`,
+        `Lumi API ${endpoint.template}: ${endpoint.summary}`,
       ),
       resourceUrl: `${base}${path}`,
       bazaar: bazaarExtension(
