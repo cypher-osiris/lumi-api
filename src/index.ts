@@ -41,7 +41,7 @@ export default {
     ctx.waitUntil(appFor(env).scheduled().catch((e) => console.error(JSON.stringify({ event: "trust_probe_error", error: String(e) }))));
   },
   /** Queue consumer (lumi-trust-jobs, batch size 1): one catalog ingest page or one quote-check slice per invocation. */
-  async queue(batch: { messages: { body: CatalogJob; ack(): void; retry(): void }[] }, env: Env): Promise<void> {
+  async queue(batch: { messages: { body: CatalogJob; ack(): void; retry(o?: { delaySeconds?: number }): void }[] }, env: Env): Promise<void> {
     const a = appFor(env);
     for (const m of batch.messages) {
       try {
@@ -49,7 +49,7 @@ export default {
         m.ack();
       } catch (e) {
         console.error(JSON.stringify({ event: "catalog_job_error", kind: m.body?.kind, error: String(e) }));
-        m.retry();
+        m.retry({ delaySeconds: 60 });
       }
     }
   },

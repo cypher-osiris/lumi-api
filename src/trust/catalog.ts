@@ -7,7 +7,7 @@
 import type { D1Like } from "../config";
 
 export const DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources";
-export const INGEST_PAGE = 50;
+export const INGEST_PAGE = 25; // a Bazaar page is ~3.5 KB per item; 25 keeps JSON parse + statement build well under 10 ms CPU
 export const PROBE_BATCH = 36;
 export const RDAP_PER_BATCH = 3;
 export const RUNS_PER_DAY = 46; // */30 cron = 48 runs; 46 leaves slack so every entry is checked within 24 h
