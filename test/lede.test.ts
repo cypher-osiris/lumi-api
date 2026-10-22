@@ -8,6 +8,10 @@ describe("brief lede sync", () => {
     expect(r.changed).toBe(true);
     expect(r.text).toBe("Bitcoin is around $81,129 (-3.93%) as risk cools. ETH holds $3,000.");
   });
+  it("replaces a worded 24h % instead of appending a second one", () => {
+    expect(syncBtcLede("Bitcoin is around $81,700 (-2.1% in 24h) and alts are off.", 81129, -3.93).text).toBe("Bitcoin is around $81,129 (-3.93% in 24h) and alts are off.");
+    expect(syncBtcLede("Bitcoin is around $81,700 (-2.1% in 24h).", 81129, null).text).toBe("Bitcoin is around $81,129.");
+  });
   it("handles k-suffixed prices and leaves texts without a BTC price alone", () => {
     expect(syncBtcLede("BTC near $82k today", 81000, 1.2).text).toBe("BTC near $81,000 (+1.2%) today");
     expect(syncBtcLede("Markets are quiet.", 81000, 1).changed).toBe(false);

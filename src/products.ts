@@ -406,13 +406,15 @@ export function briefView(d: { prices: Json; context: Json; analysis: Json; sign
 export function syncBtcLede(text: string, usd: number | undefined | null, changePct: number | undefined | null): { text: string; changed: boolean } {
   if (typeof usd !== "number" || !isFinite(usd)) return { text, changed: false };
   let changed = false;
-  const re = /\b(Bitcoin|BTC)\b([^$.;]{0,40}?)\$\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?([kK])?(\s*\(\s*[+\-\u2212]?\d+(?:\.\d+)?%\s*\))?/;
+  const re = /\b(Bitcoin|BTC)\b([^$.;]{0,40}?)\$\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s?([kK])?(\s*\(\s*[+\-\u2212]?\d+(?:\.\d+)?%[^()]{0,24}\))?/;
   const out = text.replace(re, (_m, coin: string, mid: string, _n: string, _k: string, pctPart: string | undefined) => {
     changed = true;
     const price = `$${Math.round(usd).toLocaleString("en-US")}`;
     // a stale 24h % is dropped when there is no live one to replace it with
-    const p = typeof changePct === "number" && isFinite(changePct) ? ` (${changePct >= 0 ? "+" : ""}${changePct}%)` : "";
-    void pctPart;
+    const live = typeof changePct === "number" && isFinite(changePct) ? `${changePct >= 0 ? "+" : ""}${changePct}%` : null;
+    let p = live ? ` (${live})` : "";
+    // keep the writer's wording around the stale % ("(-2.1% in 24h)" becomes "(-3.93% in 24h)")
+    if (live && pctPart) p = " " + pctPart.trim().replace(/[+\-\u2212]?\d+(?:\.\d+)?%/, live);
     return `${coin}${mid}${price}${p}`;
   });
   return { text: out, changed };
