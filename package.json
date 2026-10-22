@@ -1,0 +1,36 @@
+{
+  "name": "lumi-api",
+  "version": "0.1.0",
+  "description": "Pay-per-call crypto market reads from Lumi Trades for AI agents, paid in XRP via x402 on the XRP Ledger.",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/node.ts",
+    "dev": "wrangler dev --env testnet",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "testnet:setup": "tsx scripts/testnet-setup.ts",
+    "demo:testnet": "tsx scripts/demo-testnet.ts",
+    "deploy:testnet": "wrangler deploy --env testnet",
+    "deploy": "wrangler deploy",
+    "build:check": "wrangler deploy --dry-run --outdir .wrangler/dist",
+    "probe:replay": "tsx scripts/replay-probe.ts",
+    "client": "tsx examples/agent-client.ts"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "x402-xrpl": "^0.3.4",
+    "xrpl": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.86.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}

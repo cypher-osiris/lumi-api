@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+.testnet/
+*.log
+.DS_Store
+__pycache__/
+!demo/*.log

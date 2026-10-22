@@ -1,0 +1,7 @@
+# Copy to .dev.vars for `wrangler dev --env testnet` / `npm start`. Never commit .dev.vars.
+XRPL_NETWORK=xrpl:1
+PAY_TO=rYourTestnetReceiverAddress
+FACILITATOR_URL=https://xrpl-facilitator-testnet.t54.ai
+INVOICE_SECRET=change-me-to-a-long-random-string
+# Optional: comma-separated private names to scrub from paid responses
+PRIVATE_NAMES=

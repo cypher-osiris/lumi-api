@@ -1,0 +1,119 @@
+
+=== Testnet wallets =======================================================
+payer    rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV   (testnet faucet wallet)
+receiver rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5   (stands in for Lumi's mainnet wallet)
+XRPL node wss://testnet.xrpl-labs.com
+balances before: payer 99.749906 XRP, receiver 100.25 XRP
+
+=== Start Lumi API locally (testnet config) ===============================
+Lumi API at http://127.0.0.1:39235 (Node) -> facilitator https://xrpl-facilitator-testnet.t54.ai
+
+=== 1. GET http://127.0.0.1:39235/v1/signal/XRP (no payment) ==============
+HTTP 402
+PAYMENT-REQUIRED accepts[0]: {
+  "scheme": "exact",
+  "network": "xrpl:1",
+  "amount": "20000",
+  "asset": "XRP",
+  "payTo": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+  "maxTimeoutSeconds": 300,
+  "extra": {
+    "invoiceId": "lumi1.signal:XRP.tnb4qa.gKIFOgsFhIX1.6RH5vj0ZVzRpfdbZdmbNnQ",
+    "sourceTag": 5864
+  }
+}
+
+=== 2. Sign XRP Payment with x402-xrpl, retry with PAYMENT-SIGNATURE ======
+signed Payment blob (286 bytes) bound to invoice lumi1.signal:XRP.tnb4qa.gKIFOgsFhIX1.6RH5vj0ZVzRpfdbZdmbNnQ
+{"event":"x402_settled","route":"signal:XRP","amountDrops":"20000","network":"xrpl:1","tx":"D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA","payer":"rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV"}
+HTTP 200 in 6904 ms (verify + on-ledger settlement)
+PAYMENT-RESPONSE: {"success":true,"transaction":"D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA","network":"xrpl:1","payer":"rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV","extensions":{"t54Attestation":{"attestationNetwork":"xrpl:1","attestor":"r4tVmgGoDcykMcuJQKD7SgB5kXFvhSS5Ax","environment":"rewards-testnet","memoType":"urn:t54:xrpl:attestation:v2","nonProduction":true,"paymentNetwork":"xrpl:1","paymentTxHash":"D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA","status":"ready","v":2}}}
+data: {
+  "kind": "signal",
+  "coin": "XRP",
+  "label": "Sell",
+  "score": -0.343,
+  "timeframes": {
+    "1h": "Sell",
+    "4h": "Neutral",
+    "1d": "Strong Sell"
+  },
+  "price_usd": 1.33,
+  "timestamp": "2026-10-22T11:41:59.633Z",
+  "source": "lumitrades.io"
+}
+tx: https://testnet.xrpl.org/transactions/D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA
+
+=== 3. Replay the same PAYMENT-SIGNATURE ==================================
+HTTP 402 error=invoice_already_used
+
+=== 4. Agent one-liner: x402Fetch(http://127.0.0.1:39235/v1/market) =======
+{"event":"x402_settled","route":"market","amountDrops":"50000","network":"xrpl:1","tx":"59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4","payer":"rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV"}
+HTTP 200 in 6640 ms (402 -> sign -> retry -> settle, all inside x402Fetch)
+data: {
+  "kind": "market",
+  "btc_bias": "soft: lost $82.5K, testing the $80-81.5K base",
+  "btc_projection": {
+    "horizon_days": 7,
+    "bull": 85000,
+    "base": 82500,
+    "bear": 79500
+  },
+  "yen_note": "Yen watch: USD/JPY ~156.9, down from ~158.3, the yen's biggest daily rally in a month on safe-haven flows (Reuters), and the Nikkei fell 2.65% to 62,908, its first close under 63,000 since July (Kyodo). That raises carry-trade unwind risk a...",
+  "breadth": {
+    "coins_tracked": 13,
+    "up_24h": 1,
+    "down_24h": 12,
+    "signal_labels": {
+      "Sell": 11,
+      "Buy": 2
+    }
+  }
+}
+tx: https://testnet.xrpl.org/transactions/59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4
+
+=== 5. Confirm on the XRP Ledger (testnet) ================================
+{
+  "hash": "D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA",
+  "validated": true,
+  "result": "tesSUCCESS",
+  "ledger_index": 21733686,
+  "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+  "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+  "amount_drops": "20000",
+  "delivered_drops": "20000",
+  "fee_drops": "12",
+  "source_tag": 5864,
+  "invoice_id_field": "220E602D4132467F8EF674265201B74DF0255FDBFF5204E2DD12AE3C479734D3",
+  "memos": [
+    {
+      "data": "lumi1.signal:XRP.tnb4qa.gKIFOgsFhIX1.6RH5vj0ZVzRpfdbZdmbNnQ"
+    }
+  ],
+  "explorer": "https://testnet.xrpl.org/transactions/D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA"
+}
+{
+  "hash": "59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4",
+  "validated": true,
+  "result": "tesSUCCESS",
+  "ledger_index": 21733688,
+  "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+  "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+  "amount_drops": "50000",
+  "delivered_drops": "50000",
+  "fee_drops": "12",
+  "source_tag": 5864,
+  "invoice_id_field": "2C6822383A4B3039CF2FB0D1CFF34DC8D34F555561A5309019E0039D87C2CB3F",
+  "memos": [
+    {
+      "data": "lumi1.market.tnb4qi.sn31-IC1e3cg.dN8woZfcpyDvYAdZV4EpMA"
+    }
+  ],
+  "explorer": "https://testnet.xrpl.org/transactions/59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4"
+}
+balances after: payer 99.679882 XRP, receiver 100.32 XRP (receiver +0.070000)
+
+=== DEMO PASSED ===========================================================
+tesSUCCESS  https://testnet.xrpl.org/transactions/D1575C79856EF71080F9118B0E3228C397021002D26EAAA9EED300BCA13A38EA
+tesSUCCESS  https://testnet.xrpl.org/transactions/59790423E951F3FA9DD32BA026CEED66CED895DB4232800A072E9E8C3DF870A4
+transcript: demo/testnet-run-2026-10-22T11-42-13-633Z.json

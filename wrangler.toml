@@ -1,0 +1,66 @@
+# Lumi API on Cloudflare Workers.
+#   Production (mainnet, api.lumitrades.io):  npx wrangler deploy
+#   Testnet staging (workers.dev):            npx wrangler deploy --env testnet
+#   Local:                                    npx wrangler dev --env testnet   (or `npm start` for plain Node)
+# Secrets (never in this file):               npx wrangler secret put INVOICE_SECRET [--env testnet]
+
+name = "lumi-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+workers_dev = false
+
+# Custom domain: wrangler creates the DNS record + certificate in the lumitrades.io zone.
+routes = [
+  { pattern = "api.lumitrades.io", custom_domain = true }
+]
+
+[observability]
+enabled = true   # Workers Logs: every settled payment logs an `x402_settled` JSON line
+
+[vars]
+XRPL_NETWORK = "xrpl:0"                                  # mainnet
+PAY_TO = "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM"             # Lumi's receiving wallet (address only)
+FACILITATOR_URL = "https://xrpl-facilitator-mainnet.t54.ai"
+SOURCE_TAG = "5864"
+PRICE_SIGNAL_XRP = "0.005"
+PRICE_LEVELS_XRP = "0.005"
+PRICE_SLATE_XRP = "0.01"
+PRICE_MARKET_XRP = "0.01"
+DATA_BASE_URL = "https://lumitrades.io/data"
+DATA_TTL_SECONDS = "60"
+INVOICE_TTL_SECONDS = "300"
+PUBLIC_BASE_URL = "https://api.lumitrades.io"
+
+# One-time invoice redemption across all isolates/PoPs (required for correctness:
+# the facilitator does not reject a replayed, already-settled payment).
+# SQLite-backed Durable Objects are available on the Workers Free plan.
+[[durable_objects.bindings]]
+name = "INVOICE_GUARD"
+class_name = "InvoiceGuard"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["InvoiceGuard"]
+
+[env.testnet]
+name = "lumi-api-testnet"
+workers_dev = true
+routes = []
+
+[[env.testnet.durable_objects.bindings]]
+name = "INVOICE_GUARD"
+class_name = "InvoiceGuard"
+
+[env.testnet.vars]
+XRPL_NETWORK = "xrpl:1"
+PAY_TO = "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5"            # throwaway testnet receiver from `npm run testnet:setup`; replace with yours
+FACILITATOR_URL = "https://xrpl-facilitator-testnet.t54.ai"
+SOURCE_TAG = "5864"
+PRICE_SIGNAL_XRP = "0.005"
+PRICE_LEVELS_XRP = "0.005"
+PRICE_SLATE_XRP = "0.01"
+PRICE_MARKET_XRP = "0.01"
+DATA_BASE_URL = "https://lumitrades.io/data"
+DATA_TTL_SECONDS = "60"
+INVOICE_TTL_SECONDS = "300"
+PUBLIC_BASE_URL = ""   # empty = use the request origin (workers.dev / localhost)

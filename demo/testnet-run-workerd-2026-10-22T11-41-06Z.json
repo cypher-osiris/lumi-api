@@ -1,0 +1,496 @@
+{
+  "started": "2026-10-22T11:40:34.458Z",
+  "network": "xrpl:1",
+  "server": "http://127.0.0.1:8787",
+  "step1_payment_required": {
+    "x402Version": 2,
+    "resource": {
+      "url": "http://127.0.0.1:8787/v1/signal/XRP",
+      "description": "Lumi API /v1/signal/XRP: Mechanical buy/sell read for one coin: overall label + score, per-timeframe (1h/4h/1d) labels and an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume).",
+      "mimeType": "application/json"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "xrpl:1",
+        "amount": "20000",
+        "asset": "XRP",
+        "payTo": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "invoiceId": "lumi1.signal:XRP.tnb4og.xDv_2AlhWDgL.TmbIsVuNJTz0TGL4Ie-5cw",
+          "sourceTag": 5864
+        }
+      }
+    ],
+    "error": "PAYMENT-SIGNATURE header is required",
+    "extensions": {}
+  },
+  "step2": {
+    "status": 200,
+    "latency_ms": 6884,
+    "receipt": {
+      "success": true,
+      "transaction": "2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591",
+      "network": "xrpl:1",
+      "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+      "extensions": {
+        "t54Attestation": {
+          "attestationNetwork": "xrpl:1",
+          "attestor": "r4tVmgGoDcykMcuJQKD7SgB5kXFvhSS5Ax",
+          "environment": "rewards-testnet",
+          "memoType": "urn:t54:xrpl:attestation:v2",
+          "nonProduction": true,
+          "paymentNetwork": "xrpl:1",
+          "paymentTxHash": "2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591",
+          "status": "ready",
+          "v": 2
+        }
+      }
+    },
+    "response": {
+      "kind": "signal",
+      "timestamp": "2026-10-22T11:40:53.022Z",
+      "source": "lumitrades.io",
+      "coin": {
+        "id": "ripple",
+        "symbol": "XRP",
+        "name": "XRP",
+        "group": "watchlist"
+      },
+      "label": "Sell",
+      "score": -0.343,
+      "price": {
+        "usd": 1.33,
+        "change_24h_pct": -2.18902,
+        "change_7d_pct": 0.7567,
+        "change_30d_pct": -14.1474,
+        "high_24h": 1.4,
+        "low_24h": 1.32,
+        "market_cap_rank": 5,
+        "volume_24h_usd": 1922778450,
+        "as_of": "2026-10-22T10:49:50.000Z"
+      },
+      "timeframes": {
+        "1h": {
+          "label": "Sell",
+          "score": -0.3,
+          "points": -1.5,
+          "max_points": 5,
+          "candle_time": "2026-10-22T10:00:00Z",
+          "indicators": {
+            "rsi": {
+              "value": 33.7,
+              "state": "bearish momentum",
+              "points": -0.5
+            },
+            "macd": {
+              "hist": -0.005458,
+              "cross": null,
+              "state": "below signal",
+              "points": -1
+            },
+            "ema": {
+              "ema20": 1.34716,
+              "ema50": 1.34199,
+              "state": "mixed, below EMA50",
+              "points": -0.5
+            },
+            "bollinger": {
+              "pct_b": 0.15,
+              "bandwidth_pct": 6.29,
+              "squeeze": false,
+              "state": "lower half",
+              "points": 0
+            },
+            "stoch_rsi": {
+              "k": 3.8,
+              "d": 1.8,
+              "state": "oversold, turning up",
+              "points": 0.5
+            },
+            "volume": {
+              "ratio": 0.5,
+              "state": "low volume",
+              "points": 0
+            }
+          }
+        },
+        "4h": {
+          "label": "Neutral",
+          "score": -0.1,
+          "points": -0.5,
+          "max_points": 5,
+          "candle_time": "2026-10-22T08:00:00Z",
+          "indicators": {
+            "rsi": {
+              "value": 49.2,
+              "state": "bearish momentum",
+              "points": -0.5
+            },
+            "macd": {
+              "hist": 0.00126022,
+              "cross": null,
+              "state": "above signal",
+              "points": 1
+            },
+            "ema": {
+              "ema20": 1.33422,
+              "ema50": 1.33457,
+              "state": "price < EMA20 < EMA50 (downtrend)",
+              "points": -1
+            },
+            "bollinger": {
+              "pct_b": 0.5,
+              "bandwidth_pct": 8.26,
+              "squeeze": false,
+              "state": "upper half",
+              "points": 0
+            },
+            "stoch_rsi": {
+              "k": 25.4,
+              "d": 43.7,
+              "state": "neutral",
+              "points": 0
+            },
+            "volume": {
+              "ratio": 0.39,
+              "state": "low volume",
+              "points": 0
+            }
+          }
+        },
+        "1d": {
+          "label": "Strong Sell",
+          "score": -0.583,
+          "points": -3.5,
+          "max_points": 6,
+          "candle_time": "2026-10-22T00:00:00Z",
+          "indicators": {
+            "rsi": {
+              "value": 42.9,
+              "state": "bearish momentum",
+              "points": -0.5
+            },
+            "macd": {
+              "hist": -0.00402478,
+              "cross": null,
+              "state": "below signal",
+              "points": -1
+            },
+            "ema": {
+              "ema20": 1.36744,
+              "ema50": 1.37343,
+              "state": "price < EMA20 < EMA50 (downtrend)",
+              "points": -1
+            },
+            "bollinger": {
+              "pct_b": 0.32,
+              "bandwidth_pct": 20.44,
+              "squeeze": false,
+              "state": "lower half",
+              "points": 0
+            },
+            "stoch_rsi": {
+              "k": 79,
+              "d": 57,
+              "state": "neutral",
+              "points": 0
+            },
+            "volume": {
+              "ratio": 1.28,
+              "state": "normal volume",
+              "points": 0
+            }
+          }
+        }
+      },
+      "method": {
+        "timeframe_weights": {
+          "1h": 0.25,
+          "4h": 0.35,
+          "1d": 0.4
+        },
+        "labels": "score >= 0.5 Strong Buy; >= 0.15 Buy; > -0.15 Neutral; > -0.5 Sell; else Strong Sell",
+        "points": "RSI +-1/+-0.5, MACD hist +-1 (+-0.5 fresh cross), EMA stack +-1 (+-0.5 mixed), EMA200 +-1 (1d), Bollinger %B outside bands +-0.5, StochRSI turn +-0.5, volume >=1.5x avg +-0.5; score = points / max",
+        "note": "Mechanical indicator readings from exchange candles; not predictions."
+      },
+      "generated_utc": "2026-10-22T10:50:39Z",
+      "disclaimer": "Analytics and education only. Not financial advice. Trade ideas are paper trades tracked publicly on lumitrades.io, not orders or signals to copy. Crypto is volatile and leverage can magnify losses. Do your own research.",
+      "payment": {
+        "transaction": "2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591",
+        "network": "xrpl:1",
+        "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+        "amount_drops": "20000",
+        "explorer": "https://testnet.xrpl.org/transactions/2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591"
+      }
+    }
+  },
+  "step3_replay": {
+    "status": 402,
+    "error": "invoice_already_used"
+  },
+  "step4": {
+    "status": 200,
+    "latency_ms": 6463,
+    "receipt": {
+      "success": true,
+      "transaction": "E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90",
+      "network": "xrpl:1",
+      "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+      "extensions": {
+        "t54Attestation": {
+          "attestationNetwork": "xrpl:1",
+          "attestor": "r4tVmgGoDcykMcuJQKD7SgB5kXFvhSS5Ax",
+          "environment": "rewards-testnet",
+          "memoType": "urn:t54:xrpl:attestation:v2",
+          "nonProduction": true,
+          "paymentNetwork": "xrpl:1",
+          "paymentTxHash": "E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90",
+          "status": "ready",
+          "v": 2
+        }
+      }
+    },
+    "response": {
+      "kind": "market",
+      "timestamp": "2026-10-22T11:41:00.747Z",
+      "source": "lumitrades.io",
+      "btc_backdrop": {
+        "coin": {
+          "id": "bitcoin",
+          "symbol": "BTC",
+          "name": "Bitcoin",
+          "group": "majors"
+        },
+        "price": {
+          "usd": 81984,
+          "change_24h_pct": -1.62172,
+          "change_7d_pct": 0.6856,
+          "change_30d_pct": -5.0366,
+          "high_24h": 84808,
+          "low_24h": 81607,
+          "market_cap_rank": 1,
+          "volume_24h_usd": 37687907033,
+          "as_of": "2026-10-22T10:49:50.000Z"
+        },
+        "signal": {
+          "label": "Sell",
+          "score": -0.242,
+          "by_timeframe": {
+            "1h": "Sell",
+            "4h": "Sell",
+            "1d": "Neutral"
+          }
+        },
+        "bias": "soft: lost $82.5K, testing the $80-81.5K base",
+        "support": [
+          81550,
+          80800,
+          80100
+        ],
+        "resistance": [
+          82500,
+          84850,
+          86000
+        ],
+        "projection": {
+          "horizon_days": 7,
+          "bull": 85000,
+          "base": 82500,
+          "bear": 79500
+        },
+        "commentary": "Morning (6 AM CT, Oct 22): BTC ~$82.0K (24h $81.6K-$84.8K) after Wednesday's run at $85K reversed. It has lost the $82.5K support that analysts quoted by CoinDesk flagged, and the 1h and 4h are Sell while the daily is Neutral (under EMA20 ~$82.6K, above EMA50 ~$80.8K). The selling is macro, not crypto-specific: Nasdaq 100 futures fell after Tesla cut its spending forecast and Lam Research guided lower, China's CSI 300 entered a bear market, Brent crude topped $112 and the VIX rose to ~18 (CoinDesk). CoinGlass counted ~$431M of liquidations in 24 hours, with longs taking $210M of the last $222M. Underneath, spot BTC ETFs keep buying: +$528.4M on Oct 21 and over $1B in three sessions (The Block); Glassnode places buyers near ETF and treasury cost bases around $80K and the next sell-order cluster at $85K-87.5K. Total crypto market cap fell ~4.9% in 24h to ~$2.74T; BTC dominance ~60%; OKX funding is a flat ~0.007%. Yen watch: USD/JPY ~156.9, down from ~158.3, the yen's biggest daily rally in a month on safe-haven flows (Reuters), and the Nikkei fell 2.65% to 62,908, its first close under 63,000 since July (Kyodo). That raises carry-trade unwind risk a notch but doesn't trigger it: 155 is still about 1.2% away, and Nikkei Asia reports the BOJ will hold at 1.25% on Oct 29-30. A fast break below 155 would be the warning sign. Plan: $81.5K (today's low) and $80.1K (Oct 15 low) are the floors; a reclaim of $82.5K-83K steadies things. The T007 swing long (from $82,300, stop $80,800) stays open. Dated risks: flash PMI Oct 23, FOMC Oct 28, GDP/PCE Oct 29.",
+        "catalysts": [
+          {
+            "date": "2026-10-21",
+            "kind": "news",
+            "text": "Spot BTC ETFs took in $528.4M on Oct 21 (IBIT $235M, FBTC $212.7M), over $1B in three sessions; ETH ETFs +$14.9M.",
+            "source": "The Block, Oct 22 2026",
+            "url": "https://www.theblock.co/news/markets/2026-10-22-bitcoin-etfs-draw-528-million-as-ether-funds-snap-five-day-outflow-streak-421904"
+          },
+          {
+            "date": "2026-10-22",
+            "kind": "news",
+            "text": "The yen had its biggest daily rally in a month (USD/JPY ~157) and the Nikkei fell 2.65% below 63,000 as Asian stocks sold off.",
+            "source": "Reuters / Kyodo, Oct 22 2026",
+            "url": "https://www.investing.com/news/economy-news/dip-in-the-dollar-takes-a-breather-with-fed-in-focus-4964546"
+          },
+          {
+            "date": "2026-10-29",
+            "kind": "event",
+            "text": "Bank of Japan meets Oct 29-30; Nikkei reports it will hold at 1.25%.",
+            "source": "Nikkei Asia, Oct 22 2026",
+            "url": "https://asia.nikkei.com/economy/bank-of-japan/boj-to-hold-rate-at-1.25-at-meeting-next-week"
+          },
+          {
+            "date": "2026-10-21",
+            "kind": "news",
+            "text": "Spot BTC ETFs took in +$289.8M on Oct 21 (FBTC +$212.7M), a second straight inflow day; ETH ETFs +$44.3M.",
+            "source": "CoinLab / SoSoValue, Oct 21 2026",
+            "url": "https://coinlab.info/en/indicators/etf-flows/"
+          },
+          {
+            "date": "2026-10-28",
+            "kind": "event",
+            "text": "FOMC rate decision Oct 28 at 2 PM ET (press conference 2:30 PM), then Q3 GDP and September PCE inflation on Oct 29.",
+            "source": "Macro Bullseye calendar",
+            "url": "https://macrobullseye.com/calendar/2026/10/"
+          },
+          {
+            "date": "2026-10-21",
+            "kind": "news",
+            "text": "US spot bitcoin ETFs took in $526.6M, the most since Sept 22; Mudrex flags $86K as resistance and $80K as support.",
+            "source": "Economic Times, Oct 21 2026",
+            "url": "https://economictimes.indiatimes.com/markets/cryptocurrency/crypto-news/bitcoin-rebounds-above-83000-as-strong-us-earnings-and-falling-oil-prices-lift-risk-appetite/articleshow/135091348.cms"
+          },
+          {
+            "date": "2026-10-27",
+            "kind": "event",
+            "text": "Fed meets Oct 27-28; hike odds reported at 15-17%.",
+            "source": "Economic Times, Oct 21 2026 (odds); RoboForex weekly outlook (dates)",
+            "url": "https://economictimes.indiatimes.com/markets/cryptocurrency/crypto-news/bitcoin-rebounds-above-83000-as-strong-us-earnings-and-falling-oil-prices-lift-risk-appetite/articleshow/135091348.cms"
+          }
+        ],
+        "sources": [
+          {
+            "title": "CoinDesk live updates, Oct 22 2026 (BTC under $82K; ~$431M liquidated in 24h per CoinGlass)",
+            "url": "https://www.coindesk.com/business/2026/10/22/live-updates-bitcoin-s-round-trip-to-usd85-000-burns-traders-on-both-sides"
+          },
+          {
+            "title": "CoinDesk: Asian selloff deepens as oil rises; BTC slips to $82K (Oct 22 2026)",
+            "url": "https://www.coindesk.com/markets/2026/10/22/asian-stocks-tumble-bitcoin-retreats-as-china-enters-bear-market"
+          },
+          {
+            "title": "The Block: Bitcoin ETFs draw $528M as ether funds snap five-day outflow streak (Oct 22 2026)",
+            "url": "https://www.theblock.co/news/markets/2026-10-22-bitcoin-etfs-draw-528-million-as-ether-funds-snap-five-day-outflow-streak-421904"
+          },
+          {
+            "title": "Reuters via Investing.com: Yen set for biggest rally in a month (Oct 22 2026)",
+            "url": "https://www.investing.com/news/economy-news/dip-in-the-dollar-takes-a-breather-with-fed-in-focus-4964546"
+          },
+          {
+            "title": "Mainichi/Kyodo: Nikkei ends below 63,000 for the first time since July; dollar 157.22 yen (Oct 22 2026)",
+            "url": "https://mainichi.jp/english/articles/20261022/p2g/00m/0bu/045000c"
+          },
+          {
+            "title": "Nikkei Asia: BOJ to hold rate at 1.25% at Oct 29-30 meeting (Oct 22 2026)",
+            "url": "https://asia.nikkei.com/economy/bank-of-japan/boj-to-hold-rate-at-1.25-at-meeting-next-week"
+          },
+          {
+            "title": "Yahoo Finance USD/JPY (JPY=X) daily chart",
+            "url": "https://finance.yahoo.com/quote/JPY=X/"
+          },
+          {
+            "title": "Roll Call: Stablecoin yield rule revives crypto vs. banking industry fight (Oct 22 2026)",
+            "url": "https://rollcall.com/2026/10/22/stablecoin-yield-rule-revives-crypto-vs-banking-industry-fight/"
+          },
+          {
+            "title": "OCC news release 2026-92: final rule implementing the GENIUS Act, effective Jan 18 2027 (Oct 21 2026)",
+            "url": "https://occ.gov/news-issuances/news-releases/2026/nr-occ-2026-92.html"
+          },
+          {
+            "title": "CoinDesk live updates, Oct 21 2026 (BTC $82.5K support / $84K level, per XS.com)",
+            "url": "https://www.coindesk.com/markets/2026/10/21/live-updates-bitcoin-clings-to-usd82-500-as-spacex-results-lift-stock-futures"
+          },
+          {
+            "title": "Economic Times, Oct 21 2026 (spot BTC ETF inflows $526.6M; $86K resistance / $80K support per Mudrex)",
+            "url": "https://economictimes.indiatimes.com/markets/cryptocurrency/crypto-news/bitcoin-rebounds-above-83000-as-strong-us-earnings-and-falling-oil-prices-lift-risk-appetite/articleshow/135091348.cms"
+          },
+          {
+            "title": "RoboForex weekly outlook 19-23 Oct 2026 (Fed meeting Oct 27-28; XRP H4 levels 1.309 / 1.419)",
+            "url": "https://roboforex.com/beginners/analytics/forex-forecast/cryptocurrency/cryptocurrencies-forecast-2026-10-19/"
+          }
+        ]
+      },
+      "macro": {
+        "yen_note": "Yen watch: USD/JPY ~156.9, down from ~158.3, the yen's biggest daily rally in a month on safe-haven flows (Reuters), and the Nikkei fell 2.65% to 62,908, its first close under 63,000 since July (Kyodo). That raises carry-trade unwind risk a notch but doesn't trigger it: 155 is still about 1.2% away, and Nikkei Asia reports the BOJ will hold at 1.25% on Oct 29-30.",
+        "total_mcap_usd": 2742576601668.1177,
+        "mcap_change_24h_pct": -4.917749760424769,
+        "btc_dominance_pct": 60.040454401488354,
+        "eth_dominance_pct": 10.705307686344295,
+        "fear_greed": {
+          "value": 68,
+          "classification": "Greed",
+          "previous": 63
+        },
+        "btc_perp": {
+          "instrument": "BTC-USDT-SWAP (OKX)",
+          "funding_rate_pct": 0.00657200805468,
+          "open_interest_usd": 2462680121.1604085
+        },
+        "context_as_of": "2026-10-22T10:50:39Z"
+      },
+      "breadth": {
+        "coins_tracked": 13,
+        "up_24h": 1,
+        "down_24h": 12,
+        "signal_labels": {
+          "Sell": 11,
+          "Buy": 2
+        }
+      },
+      "analysis_as_of": "2026-10-22T11:05:00Z",
+      "disclaimer": "Analytics and education only. Not financial advice. Trade ideas are paper trades tracked publicly on lumitrades.io, not orders or signals to copy. Crypto is volatile and leverage can magnify losses. Do your own research.",
+      "payment": {
+        "transaction": "E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90",
+        "network": "xrpl:1",
+        "payer": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+        "amount_drops": "50000",
+        "explorer": "https://testnet.xrpl.org/transactions/E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90"
+      }
+    }
+  },
+  "ledger": [
+    {
+      "hash": "2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591",
+      "validated": true,
+      "result": "tesSUCCESS",
+      "ledger_index": 21733666,
+      "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+      "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+      "amount_drops": "20000",
+      "delivered_drops": "20000",
+      "fee_drops": "12",
+      "source_tag": 5864,
+      "invoice_id_field": "100D805816D2D33C51C4A1FE63808402C8A570C4232B640FBD923CF05573B9A5",
+      "memos": [
+        {
+          "data": "lumi1.signal:XRP.tnb4og.xDv_2AlhWDgL.TmbIsVuNJTz0TGL4Ie-5cw"
+        }
+      ],
+      "explorer": "https://testnet.xrpl.org/transactions/2E7E0E119548B9C96F16359BAFABB0A2906EF2F0FD2326473A91042286402591"
+    },
+    {
+      "hash": "E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90",
+      "validated": true,
+      "result": "tesSUCCESS",
+      "ledger_index": 21733668,
+      "account": "rBCpEBgyfwme3obwjCx95UzqKFbayPXAuV",
+      "destination": "rUJvhZ513MnBQVBcNap9NPJmKDWdKjyhC5",
+      "amount_drops": "50000",
+      "delivered_drops": "50000",
+      "fee_drops": "12",
+      "source_tag": 5864,
+      "invoice_id_field": "7E06327287077C9105A45F125BBA5F54E5EA28796055F1D90609D2BBF5FB7B69",
+      "memos": [
+        {
+          "data": "lumi1.market.tnb4on.kFb6J3caC5gb.VgOICLoS_o7hepJQTUZ1DQ"
+        }
+      ],
+      "explorer": "https://testnet.xrpl.org/transactions/E41650253754E23A613C4D593D2B4B2654C7581BB64AFD397D6EE3526A21BB90"
+    }
+  ],
+  "balances": {
+    "before": {
+      "payer": 99.83994,
+      "receiver": 100.16
+    },
+    "after": {
+      "payer": 99.769916,
+      "receiver": 100.23
+    }
+  },
+  "finished": "2026-10-22T11:41:06.786Z",
+  "ok": true
+}
