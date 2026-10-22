@@ -487,6 +487,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       description: resourceDescription(
         route,
         `Lumi API ${endpoint.template}: ${endpoint.summary}`,
+        { subject: coin?.symbol ?? vendorId, usd: config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route] },
       ),
       resourceUrl: `${base}${path}`,
       bazaar: bazaarExtension(

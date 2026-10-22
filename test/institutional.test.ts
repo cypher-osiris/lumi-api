@@ -239,3 +239,14 @@ describe("?format validation", () => {
     expect(h.evm.facilitator).toMatch(/^https:\/\//);
   });
 });
+
+describe("Bazaar resource descriptions", () => {
+  it("lead with buyer keywords and the USD price", async () => {
+    const { get } = setup();
+    const sig = await (await get("/v1/signal/xrp")).json();
+    expect(sig.resource.description).toMatch(/^XRP crypto trading signal \(buy\/sell score\) - \$0\.01\. /);
+    expect(sig.resource.description.length).toBeLessThanOrEqual(500);
+    const inst = await (await get("/v1/institutional")).json();
+    expect(inst.resource.description).toMatch(/^Daily institutional & policy brief for XRP.* - \$0\.25\. /);
+  });
+});

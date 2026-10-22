@@ -280,7 +280,30 @@ export function bazaarExtension(route: PaidRoute, arg?: string, query?: Record<s
 }
 
 /** resource.description for a quote: the full summary when it fits CDP's limit, otherwise the Bazaar listing text. */
-export function resourceDescription(route: PaidRoute, full: string): string {
+/** Buyer-keyword headline per route, so Bazaar search and listings show what it is and what it costs first. */
+const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
+  signal: (c) => `${c ?? "Crypto"} crypto trading signal (buy/sell score)`,
+  levels: (c) => `${c ?? "Crypto"} support and resistance levels with 7-day price projection`,
+  slate: () => "Crypto paper-trade ideas (entry, stop, targets)",
+  market: () => "Crypto market backdrop (BTC levels, macro, dominance, funding)",
+  brief: () => "Daily crypto market brief (BTC, movers, key levels, news)",
+  yen: () => "Yen carry-trade risk watch for crypto (USD/JPY, Nikkei, BOJ)",
+  sentiment: () => "Crypto sentiment (Fear & Greed, BTC funding, open interest)",
+  events: () => "Crypto and macro events calendar (Fed, CPI, BOJ, upgrades)",
+  trades: () => "Crypto paper-trade history (entries, stops, targets, status)",
+  institutional: () => "Daily institutional & policy brief for XRP, XLM, XDC, QNT, AXL, HBAR",
+  vendor_report: (v) => `x402 vendor trust report${v ? ` for ${v}` : ""} (uptime, latency, test-buys)`,
+};
+
+/**
+ * The 402 resource description that the Bazaar indexes: "<keywords> - $<USD price>. <route description>", capped at
+ * BAZAAR_MAX_DESCRIPTION. Without a USD price, falls back to the full endpoint description.
+ */
+export function resourceDescription(route: PaidRoute, full: string, opts: { subject?: string; usd?: string } = {}): string {
+  if (opts.usd) {
+    const d = `${HEADLINES[route](opts.subject)} - $${Number(opts.usd)}. ${BAZAAR_ROUTES[route].description}`;
+    return d.length <= BAZAAR_MAX_DESCRIPTION ? d : d.slice(0, BAZAAR_MAX_DESCRIPTION - 1).replace(/\s+\S*$/, "") + "…";
+  }
   if (full.length <= BAZAAR_MAX_DESCRIPTION) return full;
   return BAZAAR_ROUTES[route].description.slice(0, BAZAAR_MAX_DESCRIPTION);
 }
