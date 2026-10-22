@@ -22,17 +22,37 @@ function edgeCache(): Cache | undefined {
   return (globalThis as any).caches?.default as Cache | undefined;
 }
 
+/** Header that keeps the app's own Cache-Control on the stored copy. Cloudflare's zone "Browser Cache TTL" (4 h by default)
+ * rewrites Cache-Control on Cache-API hits, which would let clients keep trust lookups for 4 h instead of 5 min. */
+const ORIGIN_CC = "X-Lumi-Cache-Control";
+
+/** A cache hit with the app's original Cache-Control restored (and the helper header dropped). */
+export function restoreHit(hit: Response): Response {
+  const h = new Headers(hit.headers);
+  const cc = h.get(ORIGIN_CC);
+  if (cc) h.set("Cache-Control", cc);
+  h.delete(ORIGIN_CC);
+  return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers: h });
+}
+
+/** The copy stored in the edge cache: the same response plus the helper header. */
+export function storable(res: Response): Response {
+  const h = new Headers(res.headers);
+  h.set(ORIGIN_CC, res.headers.get("Cache-Control") ?? "");
+  return new Response(res.clone().body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
     const url = new URL(request.url);
     const cache = request.method === "GET" && !request.headers.has("Authorization") && EDGE_CACHED.test(url.pathname) ? edgeCache() : undefined;
     if (cache) {
       const hit = await cache.match(request).catch(() => undefined);
-      if (hit) return hit;
+      if (hit) return restoreHit(hit);
     }
     const res = await appFor(env).fetch(request, ctx);
     if (cache && res.status === 200 && /public, max-age=\d+/.test(res.headers.get("Cache-Control") ?? "")) {
-      ctx.waitUntil(cache.put(request, res.clone()).catch(() => {}));
+      ctx.waitUntil(cache.put(request, storable(res)).catch(() => {}));
     }
     return res;
   },
