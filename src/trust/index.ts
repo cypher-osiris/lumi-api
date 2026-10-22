@@ -126,6 +126,15 @@ function median(xs: number[]): number | null {
 
 const cleanText = (s: string) => s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim();
 
+/** POST bodies: a missing/blank vendor_id is a 400 (field required); an unknown one is a 404 that links the list instead of dumping it. */
+function vendorIdError(id: unknown, base: string): Response | null {
+  if (typeof id !== "string" || !id.trim()) {
+    return json(400, { error: "invalid_request", field: "vendor_id", detail: `vendor_id is required: a vendor id from GET ${base}/v1/trust/vendors (e.g. "printmoneylab").` });
+  }
+  if (!vendorById(id)) return json(404, { error: "unknown_vendor", field: "vendor_id", detail: `No listed vendor "${id.slice(0, 64)}". Vendor ids: GET ${base}/v1/trust/vendors (free).` });
+  return null;
+}
+
 function bad(field: string, detail: string): Response {
   return json(400, { error: "invalid_request", field, detail });
 }
@@ -758,15 +767,16 @@ export function createTrust(deps: TrustDeps): Trust {
 
   // ---------------- POST /v1/reports
 
-  async function postReport(request: Request): Promise<Response> {
+  async function postReport(request: Request, base: string): Promise<Response> {
     const who = await ipHash(request);
     const rl = await limited("report", who, 5, 20, 2000);
     if (rl) return rl;
     const parsed = await readJson(request);
     if (!parsed.ok) return parsed.res;
     const b = parsed.body;
-    const vendor = typeof b.vendor_id === "string" ? vendorById(b.vendor_id) : undefined;
-    if (!vendor) return json(404, { error: "unknown_vendor", vendors: VENDORS.map((v) => v.id) });
+    const vendorErr = vendorIdError(b.vendor_id, base);
+    if (vendorErr) return vendorErr;
+    const vendor = vendorById(b.vendor_id as string)!;
     const network = b.network ?? "xrpl:0";
     if (network !== "xrpl:0" && network !== "eip155:8453") return bad("network", "xrpl:0 or eip155:8453");
     const evm = network === "eip155:8453";
@@ -882,7 +892,7 @@ export function createTrust(deps: TrustDeps): Trust {
 
   // ---------------- POST /v1/trust/replies
 
-  async function postReply(request: Request): Promise<Response> {
+  async function postReply(request: Request, base: string): Promise<Response> {
     const owner = await isOwner(request);
     const who = await ipHash(request);
     if (!owner) {
@@ -892,8 +902,9 @@ export function createTrust(deps: TrustDeps): Trust {
     const parsed = await readJson(request);
     if (!parsed.ok) return parsed.res;
     const b = parsed.body;
-    const vendor = typeof b.vendor_id === "string" ? vendorById(b.vendor_id) : undefined;
-    if (!vendor) return json(404, { error: "unknown_vendor", vendors: VENDORS.map((v) => v.id) });
+    const vendorErr = vendorIdError(b.vendor_id, base);
+    if (vendorErr) return vendorErr;
+    const vendor = vendorById(b.vendor_id as string)!;
     const text = typeof b.text === "string" ? scrubText(cleanText(b.text)) : "";
     if (text.length < 1 || text.length > 1000) return bad("text", "string, 1-1000 chars");
     if (owner) {
@@ -937,13 +948,14 @@ export function createTrust(deps: TrustDeps): Trust {
 
   // ---------------- POST /v1/trust/observations (owner)
 
-  async function postObservation(request: Request): Promise<Response> {
+  async function postObservation(request: Request, base: string): Promise<Response> {
     if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
     const parsed = await readJson(request);
     if (!parsed.ok) return parsed.res;
     const b = parsed.body;
-    const vendor = typeof b.vendor_id === "string" ? vendorById(b.vendor_id) : undefined;
-    if (!vendor) return json(404, { error: "unknown_vendor", vendors: VENDORS.map((v) => v.id) });
+    const vendorErr = vendorIdError(b.vendor_id, base);
+    if (vendorErr) return vendorErr;
+    const vendor = vendorById(b.vendor_id as string)!;
     const endpoint = typeof b.endpoint === "string" ? b.endpoint : "";
     if (!vendor.endpoints.some((e) => e.url === endpoint)) return bad("endpoint", "one of the vendor's listed endpoint URLs");
     if ((b.network ?? "xrpl:0") !== "xrpl:0") return bad("network", "xrpl:0");
@@ -1024,13 +1036,13 @@ export function createTrust(deps: TrustDeps): Trust {
     if (method !== "POST") return TRUST_POST_PATHS.includes(path) || path.startsWith("/v1/trust/") ? json(405, { error: "method_not_allowed" }, { Allow: "GET, POST, OPTIONS" }) : null;
     switch (path) {
       case "/v1/reports":
-        return postReport(request);
+        return postReport(request, base);
       case "/v1/tips":
         return postTip(request);
       case "/v1/trust/replies":
-        return postReply(request);
+        return postReply(request, base);
       case "/v1/trust/observations":
-        return postObservation(request);
+        return postObservation(request, base);
       case "/v1/trust/probe":
         if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
         return json(200, { ran: true, ...(await runProbes()) });

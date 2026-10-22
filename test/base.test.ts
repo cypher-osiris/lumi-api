@@ -197,7 +197,7 @@ describe("Base payment with the official @x402/fetch client", () => {
       [{ ...payload, payload: { ...payload.payload, authorization: { ...auth, value: "1" } } }, 402, "authorization_amount_mismatch"],
       [{ ...payload, payload: { ...payload.payload, authorization: { ...auth, validBefore: "1" } } }, 402, "authorization_expired"],
       [{ ...payload, payload: { ...payload.payload, authorization: { ...auth, validAfter: String(Math.floor(Date.now() / 1000) + 3600) } } }, 402, "authorization_not_yet_valid"],
-      [{ ...payload, payload: { signature: "0x00" } }, 400, "invalid_evm_payload"],
+      [{ ...payload, payload: { signature: "0x00" } }, 402, "invalid_evm_payload"],
     ];
     for (const [p, status, error] of cases) {
       const r = await send(p);
@@ -267,7 +267,7 @@ describe("discovery lists both networks", () => {
   it("index, health, /.well-known/x402, openapi, skill.md, llms.txt", async () => {
     const { get } = setup();
     const index = await (await get("/")).json();
-    expect(index.version).toBe("0.9.1");
+    expect(index.version).toBe("0.9.2");
     expect(index.payment.networks.map((n: any) => n.network)).toEqual(["xrpl:1", "eip155:84532"]);
     expect(index.payment.assets[3]).toMatchObject({ symbol: "USDC", network: "eip155:84532", asset: SEPOLIA_USDC, accepts_index: 3 });
     expect(index.free_endpoints.map((e: any) => e.path)).toContain("/.well-known/agent-card.json");
@@ -278,7 +278,7 @@ describe("discovery lists both networks", () => {
     expect(wk.facilitators).toEqual([FACILITATOR, EVM_FAC]);
     expect(wk.agent_card).toBe(`${BASE}/.well-known/agent-card.json`);
     const oa = await (await get("/openapi.json")).json();
-    expect(oa.info.version).toBe("0.9.1");
+    expect(oa.info.version).toBe("0.9.2");
     expect(oa.paths["/v1/brief"].get["x-payment-info"].alternatives.at(-1)).toMatchObject({ network: "eip155:84532", amount: "30000" });
     for (const p of ["/skill.md", "/llms.txt"]) {
       const md = await (await get(p)).text();

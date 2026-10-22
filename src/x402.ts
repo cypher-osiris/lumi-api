@@ -491,14 +491,15 @@ export async function requirePayment(
   if (!header) return paymentRequiredResponse(cfg, quote, "PAYMENT-SIGNATURE header is required");
 
   const payload = decodePaymentPayload(header);
-  if (!payload) return json(400, { error: "invalid_payment_signature_header" });
-  if (payload.x402Version !== 2) return json(400, { error: "invalid_x402_version" });
+  // An unusable payment header re-quotes (402 + full accepts + PAYMENT-REQUIRED) so a client SDK can fix it and retry.
+  if (!payload) return paymentRequiredResponse(cfg, quote, "invalid_payment_signature_header");
+  if (payload.x402Version !== 2) return paymentRequiredResponse(cfg, quote, "invalid_x402_version");
 
   const invoiceId =
     (typeof payload.payload?.invoiceId === "string" && payload.payload.invoiceId) ||
     (typeof payload.accepted.extra?.invoiceId === "string" && (payload.accepted.extra.invoiceId as string)) ||
     "";
-  if (!invoiceId) return json(400, { error: "missing_invoiceId" });
+  if (!invoiceId) return paymentRequiredResponse(cfg, quote, "missing_invoiceId");
 
   const check = await checkInvoiceId(cfg, invoiceId, quote);
   if (!check.ok) return paymentRequiredResponse(cfg, quote, check.reason);
@@ -690,14 +691,10 @@ async function requireEvmPayment(
   serve: (settlement: Settlement, paid: PaymentRequirements) => Promise<Response> | Response,
 ): Promise<Response> {
   const evm = cfg.evm!;
-  if (!isPaymentPayloadV2(payload)) return json(400, { error: "invalid_payment_payload", detail: "not an x402 v2 PaymentPayload" });
+  // Malformed EVM payloads re-quote (402 + accepts) like every other unusable payment, so the client can retry.
+  if (!isPaymentPayloadV2(payload)) return paymentRequiredResponse(cfg, quote, "invalid_payment_payload");
   const parsed = parseEip3009(payload);
-  if (!parsed) {
-    return json(400, {
-      error: "invalid_evm_payload",
-      detail: "expected payload { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } (EIP-3009)",
-    });
-  }
+  if (!parsed) return paymentRequiredResponse(cfg, quote, "invalid_evm_payload");
   const { authorization: auth } = parsed;
   if (auth.to.toLowerCase() !== evm.payTo.toLowerCase()) return paymentRequiredResponse(cfg, quote, "authorization_payto_mismatch");
   if (BigInt(auth.value) !== BigInt(expected.amount)) return paymentRequiredResponse(cfg, quote, "authorization_amount_mismatch");

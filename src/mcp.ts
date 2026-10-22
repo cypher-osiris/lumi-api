@@ -4,7 +4,7 @@
  * Dual-era: serves modern clients (protocol 2026-07-28: per-request `_meta`, `server/discover`, no handshake) and
  * legacy clients (2024-11-05 .. 2025-11-25: `initialize` / `notifications/initialized` / `ping`). Every request is a
  * POST with one JSON-RPC message (legacy batches are accepted too); replies are application/json, or a single-event
- * text/event-stream when the client only accepts SSE. No sessions, no GET stream (GET/DELETE -> 405).
+ * text/event-stream when the client only accepts SSE. No sessions, no GET stream (GET/DELETE -> 405; HEAD -> 204).
  *
  * Tools mirror the stdio wrapper in mcp/ (lumi-trades-mcp). Free tools work for everyone. Paid tools return data only
  * for the owner key (Authorization: Bearer <key> or /mcp/<key>), via the same internal handlers as the REST API and with
@@ -214,9 +214,12 @@ export async function isOwnerKey(candidate: string | undefined, ownerKey: string
 
 // ---------------------------------------------------------------- HTTP
 
+/** Methods /mcp actually supports; Allow (on 405) and Access-Control-Allow-Methods both use this one list. */
+export const MCP_ALLOW = "POST, HEAD, OPTIONS";
+
 export const MCP_CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": MCP_ALLOW,
   "Access-Control-Allow-Headers":
     "*, Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, Mcp-Method, Mcp-Name, Last-Event-ID, PAYMENT-SIGNATURE, X-PAYMENT",
   "Access-Control-Expose-Headers": "MCP-Protocol-Version, Mcp-Session-Id, WWW-Authenticate",
@@ -271,6 +274,10 @@ export async function handleMcp(request: Request, base: string, pathKey: string 
   if (!validOrigin(request.headers.get("Origin"))) {
     return httpJson(403, rpcError(null, -32600, "Forbidden origin"));
   }
+  if (request.method === "HEAD") {
+    // Liveness probe (some MCP clients/connectors HEAD the URL first): no body, same CORS + Allow headers.
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store", ...MCP_CORS, Allow: MCP_ALLOW } });
+  }
   if (request.method !== "POST") {
     // Stateless server: no standalone SSE stream and no sessions to delete.
     return httpJson(
@@ -282,7 +289,7 @@ export async function handleMcp(request: Request, base: string, pathKey: string 
         protocol_versions: SUPPORTED_VERSIONS,
         docs: `${base}/skill.md`,
       },
-      { Allow: "POST, OPTIONS" },
+      { Allow: MCP_ALLOW },
     );
   }
 

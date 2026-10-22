@@ -201,7 +201,22 @@ describe("trust: agent reports", () => {
     const { req } = setup();
     let ip = 0;
     const post = (b: unknown) => req("/v1/reports", { method: "POST", body: b, ip: `192.0.2.${++ip}` });
-    expect((await post({ ...good(rep, H("AB")), vendor_id: "x" })).status).toBe(404);
+    const unk = await post({ ...good(rep, H("AB")), vendor_id: "x" });
+    expect(unk.status).toBe(404);
+    expect(await unk.json()).not.toHaveProperty("vendors");
+    for (const vendor_id of [undefined, "", "  ", 7]) {
+      const r = await post({ ...good(rep, H("AB")), vendor_id });
+      expect(r.status).toBe(400);
+      const b: any = await r.json();
+      expect(b).toMatchObject({ error: "invalid_request", field: "vendor_id" });
+      expect(b.detail).toMatch(/required/);
+      expect(b).not.toHaveProperty("vendors");
+    }
+    const rr = await req("/v1/trust/replies", { method: "POST", body: { text: "hi" }, ip: "192.0.2.60" });
+    expect(rr.status).toBe(400);
+    const rb: any = await rr.json();
+    expect(rb).toMatchObject({ error: "invalid_request", field: "vendor_id" });
+    expect(rb).not.toHaveProperty("vendors");
     expect((await post({ ...good(rep, H("AB")), tx_hash: "zz" })).status).toBe(400);
     expect((await post({ ...good(rep, H("AB")), reporter: "nope" })).status).toBe(400);
     expect((await post({ ...good(rep, H("AB")), outcome: "bad" })).status).toBe(400);

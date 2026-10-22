@@ -66,11 +66,17 @@ describe("remote MCP: protocol", () => {
   it("GET/DELETE are 405, OPTIONS allows MCP headers, parse errors are 400", async () => {
     const { app } = setup();
     expect((await app.fetch(new Request(BASE + "/mcp"))).status).toBe(405);
-    expect((await app.fetch(new Request(BASE + "/mcp", { method: "DELETE" }))).status).toBe(405);
+    const del = await app.fetch(new Request(BASE + "/mcp", { method: "DELETE" }));
+    expect(del.status).toBe(405);
+    expect(del.headers.get("Allow")).toBe("POST, HEAD, OPTIONS");
+    expect(del.headers.get("Access-Control-Allow-Methods")).toBe(del.headers.get("Allow"));
+    const head = await app.fetch(new Request(BASE + "/mcp", { method: "HEAD" }));
+    expect(head.status).toBe(204);
+    expect(head.headers.get("Allow")).toBe("POST, HEAD, OPTIONS");
     const o = await app.fetch(new Request(BASE + "/mcp", { method: "OPTIONS" }));
     expect(o.status).toBe(204);
     expect(o.headers.get("Access-Control-Allow-Headers")).toMatch(/Authorization/);
-    expect(o.headers.get("Access-Control-Allow-Methods")).toMatch(/POST/);
+    expect(o.headers.get("Access-Control-Allow-Methods")).toBe("POST, HEAD, OPTIONS");
     const pe = await app.fetch(new Request(BASE + "/mcp", { method: "POST", body: "{nope" }));
     expect(pe.status).toBe(400);
     expect((await pe.json()).error.code).toBe(-32700);

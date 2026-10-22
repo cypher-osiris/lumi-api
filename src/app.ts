@@ -375,6 +375,20 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         log: (e) => deps.log?.(e),
       });
     }
+    // Literal /v1/trust/vendors/{id} (or :id, <id>, ...) gets the same helpful template 400 as the paid template paths.
+    {
+      const tv = (request.method === "GET" || request.method === "HEAD") && path.match(/^\/v1\/trust\/vendors\/([^/]{1,64})$/);
+      const arg = tv ? safeDecode(tv[1]) : undefined;
+      if (arg !== undefined && PATH_TEMPLATE_RE.test(arg)) {
+        return json(400, {
+          error: "path_template_not_filled",
+          detail: `Replace ${arg} with a real value. Vendor ids: GET /v1/trust/vendors (free).`,
+          example: `${base}/v1/trust/vendors/printmoneylab`,
+          openapi: `${base}/openapi.json`,
+          note: "Not charged.",
+        });
+      }
+    }
     // Trust layer: free GETs, rate-limited public POSTs, owner-only ingest.
     if (path.startsWith("/v1/trust") || path === "/v1/reports" || path === "/v1/tips") {
       const r = await trust.handle(request, path, base);

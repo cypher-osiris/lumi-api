@@ -147,7 +147,18 @@ describe("x402 paywall", () => {
     expect(r2.status).toBe(402);
     expect((await r2.json()).error).toBe("payment_requirements_mismatch");
     const r3 = await get("/v1/signal/XRP", { "PAYMENT-SIGNATURE": "%%%not-base64" });
-    expect(r3.status).toBe(400);
+    expect(r3.status).toBe(402);
+    const b3 = await r3.json();
+    expect(b3.error).toBe("invalid_payment_signature_header");
+    expect(b3.accepts.length).toBeGreaterThan(0);
+    const h3 = JSON.parse(Buffer.from(r3.headers.get("PAYMENT-REQUIRED")!, "base64").toString("utf8"));
+    expect(h3).toEqual(b3);
+    for (const bad of [Buffer.from(JSON.stringify({ x402Version: 1, accepted: req })).toString("base64"), Buffer.from(JSON.stringify({ x402Version: 2, accepted: { ...req, extra: {} }, payload: {} })).toString("base64")]) {
+      const r = await get("/v1/signal/XRP", { "X-PAYMENT": bad });
+      expect(r.status).toBe(402);
+      expect(["invalid_x402_version", "missing_invoiceId"]).toContain((await r.json()).error);
+      expect(r.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
+    }
     expect(fac.calls).toHaveLength(0);
   });
 
@@ -267,7 +278,8 @@ describe("openapi scanner hints", () => {
     for (const [p, ex] of [["/v1/signal/{coin}", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp"], ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report"],
       ["/v1/signal/:coin", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/xrp"],
       ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/xrp"],
-      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report"], ["/v1/trust/vendors/%7BvendorId%7D/report", "/v1/trust/vendors/printmoneylab/report"]]) {
+      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report"], ["/v1/trust/vendors/%7BvendorId%7D/report", "/v1/trust/vendors/printmoneylab/report"],
+      ["/v1/trust/vendors/%7Bid%7D", "/v1/trust/vendors/printmoneylab"], ["/v1/trust/vendors/:id", "/v1/trust/vendors/printmoneylab"], ["/v1/trust/vendors/%3Cvendor_id%3E", "/v1/trust/vendors/printmoneylab"]]) {
       const r = await get(p);
       expect(r.status).toBe(400);
       expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();

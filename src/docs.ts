@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.9.1";
+export const VERSION = "0.9.2";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
