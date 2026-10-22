@@ -299,8 +299,7 @@ export function createCatalog(deps: CatalogDeps) {
     if (request.method === "POST" && path === "/v1/trust/catalog/ingest") {
       if (!(await deps.isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
       if (url.searchParams.get("now") === "1") return json(200, { started: true, total: await startIngest() });
-      await store.setMeta("ingest_requested", "1");
-      return json(202, { requested: true, detail: "Runs on the next 30-minute cron." });
+      return json(202, { requested: false, detail: "Not needed: the 30-minute cron runs a rolling ingest that covers the full catalog daily. Use ?now=1 to queue every page immediately." });
     }
     if (request.method === "POST" && path === "/v1/trust/catalog/stats") {
       if (!(await deps.isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });

@@ -65,6 +65,24 @@ async function rpc(f: Fetch, url: string, body: unknown): Promise<any> {
   return r.json();
 }
 
+/** Public Base RPCs tried after the configured one (some refuse or rate-limit requests from Workers). */
+export const BASE_RPC_FALLBACKS = ["https://base-rpc.publicnode.com", "https://1rpc.io/base"];
+
+/** JSON-RPC against each URL in turn; a reply with a JSON-RPC error also moves on to the next URL. */
+async function rpcAny(f: Fetch, urls: string[], body: unknown): Promise<any> {
+  let last: unknown = new Error("no rpc url");
+  for (const u of urls) {
+    try {
+      const j = await rpc(f, u, body);
+      if (j && j.error == null) return j;
+      last = new Error("rpc error");
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
+}
+
 /** Look up a validated XRPL Payment. Tries each RPC URL until one answers. */
 export async function lookupXrplPayment(f: Fetch, urls: string[], hash: string): Promise<Lookup> {
   for (const url of urls) {
@@ -118,9 +136,10 @@ export async function xrplRegularKey(f: Fetch, urls: string[], account: string):
 
 /** Look up a successful Base tx and return its USDC Transfer logs. */
 export async function lookupBaseUsdc(f: Fetch, url: string, hash: string): Promise<Lookup> {
+  const urls = [url, ...BASE_RPC_FALLBACKS.filter((u) => u !== url)];
   let receipt: any;
   try {
-    receipt = (await rpc(f, url, { jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [hash] }))?.result;
+    receipt = (await rpcAny(f, urls, { jsonrpc: "2.0", id: 1, method: "eth_getTransactionReceipt", params: [hash] }))?.result;
   } catch {
     return { ok: false, reason: "ledger_unavailable" };
   }
@@ -128,7 +147,7 @@ export async function lookupBaseUsdc(f: Fetch, url: string, hash: string): Promi
   if (receipt.status !== "0x1") return { ok: false, reason: "tx_failed" };
   let ts = NaN;
   try {
-    const block = (await rpc(f, url, { jsonrpc: "2.0", id: 2, method: "eth_getBlockByNumber", params: [receipt.blockNumber, false] }))?.result;
+    const block = (await rpcAny(f, urls, { jsonrpc: "2.0", id: 2, method: "eth_getBlockByNumber", params: [receipt.blockNumber, false] }))?.result;
     ts = parseInt(block?.timestamp, 16) * 1000;
   } catch {
     return { ok: false, reason: "ledger_unavailable" };
