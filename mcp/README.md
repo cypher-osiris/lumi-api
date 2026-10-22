@@ -6,6 +6,10 @@ No API key, no account: each paid tool call is one small XRPL payment (XRP, RLUS
 
 > Analytics and education only. Not financial advice. Lumi's trade ideas are public paper trades.
 
+**No install needed to browse:** the same tools are also served remotely at `https://api.lumitrades.io/mcp` (Streamable HTTP),
+for clients that take a remote MCP server URL. A remote connector has no wallet, so its paid tools return the price and how to pay;
+use this package when you want paid tools to pay automatically from your own wallet.
+
 ## Tools
 
 | Tool | Paid? | Price (XRP / stable) | What you get |

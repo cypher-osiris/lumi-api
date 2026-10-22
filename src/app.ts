@@ -14,6 +14,7 @@ import {
 } from "./views";
 import { staleInputs, hasContent } from "./freshness";
 import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
+import { handleMcp, MCP_CORS, type McpDeps } from "./mcp";
 
 export interface AppOptions {
   fetch?: typeof fetch;
@@ -21,6 +22,10 @@ export interface AppOptions {
   /** Clock (ms), injectable for tests. */
   now?: () => number;
 }
+
+export type Prepared =
+  | { ok: true; route: PaidRoute; coin?: CoinRef; body: Record<string, unknown> }
+  | { ok: false; status: number; error: Record<string, unknown>; headers?: Record<string, string> };
 
 export interface App {
   fetch(request: Request): Promise<Response>;
@@ -75,6 +80,59 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
   }
 
+  /**
+   * Load, validate (present, non-empty, fresh) and build the paid body for a route, without any payment step.
+   * Shared by the x402 REST paywall and the remote MCP endpoint, so both enforce the same freshness rule:
+   * a failure here is never charged.
+   */
+  async function prepare(route: PaidRoute, coinArg?: string): Promise<Prepared> {
+    let coin: CoinRef | undefined;
+    if (coinArg !== undefined) {
+      coin = resolveCoin(await coins(), coinArg);
+      if (!coin) {
+        return {
+          ok: false,
+          status: 404,
+          error: { error: "unknown_coin", coin: coinArg, supported: (await coins()).map((c) => c.symbol), note: "Not charged." },
+        };
+      }
+    }
+    // Load (cached) data before asking for money, so a payment is never
+    // settled when the upstream data is unavailable.
+    let loaded: Record<string, unknown>;
+    try {
+      loaded = { ...(await data.getOptional(OPTIONAL[route] ?? [])), ...(await data.getMany(NEEDS[route])) };
+    } catch (err) {
+      return { ok: false, status: 503, error: { error: "data_unavailable", detail: String((err as Error).message), retryable: true, note: "Not charged." }, headers: { "Retry-After": "30" } };
+    }
+    const t = now();
+    const stale = staleInputs(loaded, NEEDS[route], t, config.dataMaxAgeHours);
+    if (stale.length) {
+      return { ok: false, status: 503, error: { error: "data_stale", detail: "Lumi's published data is missing or out of date, so this call is not for sale right now.", inputs: stale, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+    }
+    // Optional inputs that are stale are dropped (their fields are omitted), never served as current.
+    for (const f of OPTIONAL[route] ?? []) if (staleInputs(loaded, [f], t, config.dataMaxAgeHours).length) delete loaded[f];
+    const list = await coins();
+    const body = buildBody(route, coin, loaded, list, t);
+    if (body && !hasContent(route, body)) {
+      return { ok: false, status: 503, error: { error: "data_unavailable", detail: `the ${route} data is empty right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+    }
+    if (!body) {
+      return coin
+        ? { ok: false, status: 404, error: { error: "no_data_for_coin", coin: coin.symbol, note: "Not charged." } }
+        : { ok: false, status: 503, error: { error: "data_unavailable", detail: `no ${route} data published right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+    }
+    return { ok: true, route, coin, body: body as Record<string, unknown> };
+  }
+
+  const mcpDeps: Omit<McpDeps, "quote"> = {
+    config,
+    ownerKey: env.OWNER_MCP_KEY,
+    coins,
+    prepare,
+    log: (e) => deps.log?.(e),
+  };
+
   async function handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const base = config.publicBaseUrl ?? url.origin;
@@ -83,11 +141,26 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, Content-Type",
-          "Access-Control-Max-Age": "86400",
+        headers: path === "/mcp" || path.startsWith("/mcp/")
+          ? MCP_CORS
+          : {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET, OPTIONS",
+              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, Content-Type",
+              "Access-Control-Max-Age": "86400",
+            },
+      });
+    }
+    // Remote MCP (Streamable HTTP): /mcp, or /mcp/<owner key> for connector UIs that cannot set headers.
+    if (path === "/mcp" || path.startsWith("/mcp/")) {
+      return handleMcp(request, base, path === "/mcp" ? undefined : path.slice(5), {
+        ...mcpDeps,
+        quote: async (p: string) => {
+          const r = await handle(new Request(url.origin + p, { headers: { Accept: "application/json" } }));
+          const t = await r.text();
+          let body: unknown = t;
+          try { body = JSON.parse(t); } catch { /* text */ }
+          return { status: r.status, body };
         },
       });
     }
@@ -140,44 +213,9 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
-    let coin: CoinRef | undefined;
-    if (m[2] !== undefined) {
-      coin = resolveCoin(await coins(), m[2]);
-      if (!coin) {
-        return json(404, {
-          error: "unknown_coin",
-          coin: m[2],
-          supported: (await coins()).map((c) => c.symbol),
-          note: "Not charged.",
-        });
-      }
-    }
-
-    // Load (cached) data before asking for money, so a payment is never
-    // settled when the upstream data is unavailable.
-    let loaded: Record<string, unknown>;
-    try {
-      loaded = { ...(await data.getOptional(OPTIONAL[route] ?? [])), ...(await data.getMany(NEEDS[route])) };
-    } catch (err) {
-      return json(503, { error: "data_unavailable", detail: String((err as Error).message), retryable: true, note: "Not charged." }, { "Retry-After": "30" });
-    }
-    const t = now();
-    const stale = staleInputs(loaded, NEEDS[route], t, config.dataMaxAgeHours);
-    if (stale.length) {
-      return json(503, { error: "data_stale", detail: "Lumi's published data is missing or out of date, so this call is not for sale right now.", inputs: stale, retryable: true, note: "Not charged." }, { "Retry-After": "300" });
-    }
-    // Optional inputs that are stale are dropped (their fields are omitted), never served as current.
-    for (const f of OPTIONAL[route] ?? []) if (staleInputs(loaded, [f], t, config.dataMaxAgeHours).length) delete loaded[f];
-    const list = await coins();
-    const body = buildBody(route, coin, loaded, list, t);
-    if (body && !hasContent(route, body)) {
-      return json(503, { error: "data_unavailable", detail: `the ${route} data is empty right now`, retryable: true, note: "Not charged." }, { "Retry-After": "300" });
-    }
-    if (!body) {
-      return coin
-        ? json(404, { error: "no_data_for_coin", coin: coin.symbol, note: "Not charged." })
-        : json(503, { error: "data_unavailable", detail: `no ${route} data published right now`, retryable: true, note: "Not charged." }, { "Retry-After": "300" });
-    }
+    const prep = await prepare(route, m[2]);
+    if (!prep.ok) return json(prep.status, prep.error, prep.headers);
+    const { coin, body } = prep;
     const wantsMarkdown =
       route === "brief" && (/^(md|markdown|text)$/i.test(url.searchParams.get("format") ?? "") || /text\/markdown/i.test(request.headers.get("Accept") ?? ""));
 

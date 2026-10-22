@@ -57,6 +57,8 @@ export interface Env {
   INVOICE_TTL_SECONDS?: string;
   /** Comma-separated private names to scrub from paid responses. Set with `wrangler secret put PRIVATE_NAMES`. */
   PRIVATE_NAMES?: string;
+  /** Owner access key for the remote MCP endpoint (/mcp): paid tools return data free. `wrangler secret put OWNER_MCP_KEY`. */
+  OWNER_MCP_KEY?: string;
   /** Public base URL used in docs/discovery (e.g. https://api.lumitrades.io). */
   PUBLIC_BASE_URL?: string;
   /** Durable Object namespace for the strongly-consistent invoice replay guard (recommended). */

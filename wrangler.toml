@@ -17,6 +17,10 @@ routes = [
 [observability]
 enabled = true   # Workers Logs: every settled payment logs an `x402_settled` JSON line
 
+[observability.logs]
+enabled = true
+invocation_logs = false   # no automatic per-request logs (request URLs/headers): keeps the /mcp/<owner key> path out of logs
+
 [vars]
 XRPL_NETWORK = "xrpl:0"                                  # mainnet
 PAY_TO = "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM"             # Lumi's receiving wallet (address only)

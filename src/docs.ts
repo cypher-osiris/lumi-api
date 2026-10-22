@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -43,7 +43,9 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/.well-known/x402", summary: "x402 discovery manifest" },
       { method: "GET", path: "/openapi.json", summary: "OpenAPI 3.1 description with x-payment-info" },
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
+      { method: "POST", path: "/mcp", summary: "Remote MCP server (Streamable HTTP): free tools for everyone; paid tools return the price and how to pay" },
     ],
+    mcp: mcpInfo(base),
     paid_endpoints: priceTable(cfg),
     coins: coins.map((c) => c.symbol),
     docs: `${base}/skill.md`,
@@ -89,6 +91,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     facilitators: [cfg.facilitatorUrl],
     openapi: `${base}/openapi.json`,
     docs: `${base}/skill.md`,
+    mcp: { url: `${base}/mcp`, transport: "streamable-http" },
     attestation: { type: "none" },
     contact: "https://lumitrades.io",
     updated: new Date().toISOString(),
@@ -165,6 +168,19 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     },
     servers: [{ url: base }],
     paths,
+  };
+}
+
+function mcpInfo(base: string) {
+  return {
+    remote: { url: `${base}/mcp`, transport: "streamable-http", stateless: true },
+    stdio: { package: "lumi-trades-mcp", command: "npx -y lumi-trades-mcp", pays_with: "your XRPL wallet (XRPL_SEED), within per-call caps and a session budget" },
+    registry: "io.github.cypher-osiris/lumi-trades-mcp",
+    tools: {
+      free: ["lumi_catalog", "lumi_coins", "lumi_quote"],
+      paid: ["lumi_brief", "lumi_signal", "lumi_levels", "lumi_slate", "lumi_market", "lumi_macro_yen", "lumi_sentiment", "lumi_events", "lumi_trades"],
+    },
+    note: "On the remote server, paid tools return the price and how to pay (x402 at the REST endpoint, or the npm package with your wallet). Stale data is never sold.",
   };
 }
 
@@ -247,7 +263,7 @@ Fields that are not available at request time are omitted, never filled with gue
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /openapi.json\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /openapi.json\`, \`POST /mcp\`.
 
 Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (tx hash, explorer link) and a \`disclaimer\`.
 Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day.
@@ -323,6 +339,15 @@ r = session.get("${base}/v1/market", timeout=180)
 print(r.status_code, r.json()["macro"]["yen_note"])
 print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 \`\`\`
+
+## MCP
+
+- **Remote MCP server:** \`${base}/mcp\` (Streamable HTTP, stateless; protocol 2026-07-28 and 2025-03-26 .. 2025-11-25).
+  Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_quote\`. Paid tools (\`lumi_brief\`,
+  \`lumi_signal\`, \`lumi_levels\`, \`lumi_slate\`, \`lumi_market\`, \`lumi_macro_yen\`, \`lumi_sentiment\`, \`lumi_events\`, \`lumi_trades\`)
+  return the price and how to pay, since a remote connector has no wallet.
+- **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` set (npm \`lumi-trades-mcp\`, MCP Registry
+  \`io.github.cypher-osiris/lumi-trades-mcp\`). Same tools; each paid call is an x402 payment from your wallet within per-call caps and a session budget.
 
 ## Rules of use
 
