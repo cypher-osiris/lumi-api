@@ -27,6 +27,7 @@ use this package when you want paid tools to pay automatically from your own wal
 | `lumi_sentiment` | paid | 0.005 / 0.01 | Fear & Greed, funding read, OI, dominance, breadth |
 | `lumi_events` | paid | 0.005 / 0.01 | Sourced upcoming macro/crypto events and catalysts |
 | `lumi_trades` | paid | 0.01 / 0.02 | Full paper-trade history + honest track record |
+| `lumi_vendor_report` | paid | 0.015 / 0.02 | Full observation history for one x402 vendor on Lumi's trust list: every quote check (90 days) and paid test-buy with tx hash and delivered yes/no, latency stats and trend, uptime %, verified agent reports, vendor replies, confidence labels. `vendor_id` required |
 | `lumi_institutional_brief` | paid | 0.19 / 0.25 | Daily Institutional & Policy Brief: BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR (confirmed vs indirect-alignment links, sourced). `format: "md"` for markdown. Needs `LUMI_MAX_XRP_PER_CALL` ≥ 0.19 (or `LUMI_MAX_USD_PER_CALL` ≥ 0.25) |
 
 Prices are read live from each 402 quote; the table is for orientation. **You only pay when you get data**: the API refuses to quote

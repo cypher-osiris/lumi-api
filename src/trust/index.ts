@@ -53,7 +53,19 @@ export interface Trust {
   runProbes(): Promise<{ probes: number; ok: number }>;
   vendorsDoc(base: string): Promise<Record<string, unknown>>;
   vendorDoc(id: string, base: string): Promise<Record<string, unknown> | null>;
+  /** Paid detailed report: full observation history. Unknown vendor and stale data are never sold. */
+  vendorReport(id: string, base: string): Promise<VendorReportResult>;
 }
+
+export type VendorReportResult =
+  | { ok: true; doc: Record<string, unknown> }
+  | { ok: false; reason: "unknown_vendor" }
+  | { ok: false; reason: "stale"; last_observed_at: string | null };
+
+/** The paid report is sold only when the vendor has a probe or paid test-buy in this window. */
+export const REPORT_FRESH_MS = 48 * 3_600_000;
+const REPORT_PROBE_DAYS = 90;
+const REPORT_MAX_PROBES = 10_000;
 
 // ---------------------------------------------------------------- helpers
 
@@ -172,6 +184,58 @@ export function scoreVendor(probes: ProbeSummary, obs: ObservationRow[], reports
       agent_reports: { value: round(agentReports), weight: WEIGHTS.agent_reports, counted, meaning: "verified agent reports (on-ledger payment + payer signature), after a 24 h hold; excluded when there are none" },
     },
     samples: { paid_test_buys: paid, delivered, probes: probes.n, probes_ok: probes.ok, verified_reports_counted: counted },
+  };
+}
+
+
+// ---------------------------------------------------------------- report stats
+
+function quantile(sorted: number[], q: number): number | null {
+  if (!sorted.length) return null;
+  const i = (sorted.length - 1) * q;
+  const lo = Math.floor(i);
+  const hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+export function latencyStats(xs: number[]) {
+  const s = xs.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
+  const r = (x: number | null) => (x == null ? null : Math.round(x));
+  return {
+    samples: s.length,
+    min_ms: r(s[0] ?? null),
+    p50_ms: r(quantile(s, 0.5)),
+    p90_ms: r(quantile(s, 0.9)),
+    p95_ms: r(quantile(s, 0.95)),
+    max_ms: r(s.length ? s[s.length - 1] : null),
+    mean_ms: s.length ? Math.round(s.reduce((a, b) => a + b, 0) / s.length) : null,
+  };
+}
+
+const pct = (num: number, den: number) => (den ? Math.round((1000 * num) / den) / 10 : null);
+
+export function confidenceOf(paid: number, probes: number): "low" | "medium" | "high" {
+  return paid < 5 || probes < 10 ? "low" : paid < 20 ? "medium" : "high";
+}
+
+/** Neutral comparison of two medians; "insufficient data" below `min` samples on either side. */
+function compare(recent: number[], previous: number[], unit: string, min = 10) {
+  const a = median(recent);
+  const b = median(previous);
+  if (recent.length < min || previous.length < min || a == null || b == null) {
+    return { recent_median: a == null ? null : Math.round(a), previous_median: b == null ? null : Math.round(b), recent_samples: recent.length, previous_samples: previous.length, direction: "insufficient data", unit };
+  }
+  const change = a - b;
+  const rel = b ? change / b : 0;
+  return {
+    recent_median: Math.round(a),
+    previous_median: Math.round(b),
+    recent_samples: recent.length,
+    previous_samples: previous.length,
+    change: Math.round(change),
+    change_pct: Math.round(rel * 1000) / 10,
+    direction: Math.abs(rel) < 0.1 ? "about the same" : change < 0 ? "lower" : "higher",
+    unit,
   };
 }
 
@@ -355,6 +419,186 @@ export function createTrust(deps: TrustDeps): Trust {
       right_to_reply: rightToReply(base),
       disclaimer: DISCLAIMER,
     };
+  }
+
+
+  async function vendorReport(id: string, base: string): Promise<VendorReportResult> {
+    const v = vendorById(id);
+    if (!v) return { ok: false, reason: "unknown_vendor" };
+    const t = now();
+    const [probes, obs, reports, replies] = await Promise.all([
+      store.probeHistory(v.id, t - REPORT_PROBE_DAYS * DAY, REPORT_MAX_PROBES),
+      store.observations(v.id, 0),
+      store.verifiedReports(v.id, 0),
+      store.verifiedReplies(v.id),
+    ]);
+    const last = Math.max(probes[0]?.ts ?? 0, obs[0]?.ts ?? 0);
+    if (!last || last < t - REPORT_FRESH_MS) return { ok: false, reason: "stale", last_observed_at: last ? iso(last) : null };
+    const g = await gather(v);
+
+    const windows = [1, 7, 30, 90].map((d) => {
+      const since = t - d * DAY;
+      const p = probes.filter((x) => x.ts >= since);
+      const o = obs.filter((x) => x.ts >= since);
+      const valid = p.filter((x) => x.ok).length;
+      const delivered = o.filter((x) => x.data_returned).length;
+      return {
+        window: d === 1 ? "24h" : `${d}d`,
+        probes: p.length,
+        valid_quotes: valid,
+        uptime_pct: pct(valid, p.length),
+        quote_latency: latencyStats(p.filter((x) => x.ok && x.latency_ms != null).map((x) => x.latency_ms!)),
+        paid_test_buys: o.length,
+        delivered,
+        delivery_pct: pct(delivered, o.length),
+        confidence: confidenceOf(o.length, p.length),
+      };
+    });
+
+    // UTC daily series over the probe retention window (oldest first).
+    const days = new Map<string, { probes: number; valid: number; lat: number[]; buys: number; delivered: number }>();
+    for (let d = REPORT_PROBE_DAYS - 1; d >= 0; d--) days.set(iso(t - d * DAY).slice(0, 10), { probes: 0, valid: 0, lat: [], buys: 0, delivered: 0 });
+    for (const p of probes) {
+      const k = days.get(iso(p.ts).slice(0, 10));
+      if (!k) continue;
+      k.probes++;
+      if (p.ok) { k.valid++; if (p.latency_ms != null) k.lat.push(p.latency_ms); }
+    }
+    for (const o of obs) {
+      const k = days.get(iso(o.ts).slice(0, 10));
+      if (!k) continue;
+      k.buys++;
+      if (o.data_returned) k.delivered++;
+    }
+    const daily = [...days.entries()]
+      .filter(([, k]) => k.probes || k.buys)
+      .map(([date, k]) => {
+        const m = median(k.lat);
+        return { date, probes: k.probes, valid_quotes: k.valid, uptime_pct: pct(k.valid, k.probes), quote_latency_p50_ms: m == null ? null : Math.round(m), paid_test_buys: k.buys, delivered: k.delivered };
+      });
+
+    const lat = (from: number, to: number) => probes.filter((p) => p.ok && p.latency_ms != null && p.ts >= from && p.ts < to).map((p) => p.latency_ms!);
+    const upDaily = (from: number, to: number) => daily.filter((d) => d.date >= iso(from).slice(0, 10) && d.date < iso(to).slice(0, 10) && d.uptime_pct != null).map((d) => d.uptime_pct!);
+    const w7 = t - 7 * DAY;
+    const w14 = t - 14 * DAY;
+    const latencyTrend = compare(lat(w7, t + 1), lat(w14, w7), "ms");
+    const uptimeTrend = compare(upDaily(w7, t + DAY), upDaily(w14, w7), "daily uptime %", 3);
+
+    // Per endpoint (listed endpoints first, then any older ones seen in the history).
+    const urls = [...new Set([...v.endpoints.map((e) => e.url), ...probes.map((p) => p.endpoint), ...obs.map((o) => o.endpoint)])];
+    const endpoints = urls.map((url) => {
+      const listed = v.endpoints.find((e) => e.url === url);
+      const p = probes.filter((x) => x.endpoint === url);
+      const o = obs.filter((x) => x.endpoint === url);
+      const valid = p.filter((x) => x.ok);
+      // Quoted price changes, oldest first.
+      const prices: { from: string; price: string | null; asset: string | null }[] = [];
+      for (const x of [...valid].reverse()) {
+        const prev = prices[prices.length - 1];
+        if (!prev || prev.price !== x.price || prev.asset !== x.asset) prices.push({ from: iso(x.ts), price: x.price, asset: x.asset });
+      }
+      const failures = new Map<string, number>();
+      for (const x of p) if (!x.ok) {
+        const key = x.error ? x.error.slice(0, 80) : `HTTP ${x.http_status ?? "none"}`;
+        failures.set(key, (failures.get(key) ?? 0) + 1);
+      }
+      return {
+        url,
+        listed: !!listed,
+        method: listed?.method ?? null,
+        listed_price: listed?.listed_price ?? null,
+        listed_asset: listed?.listed_asset ?? null,
+        daily_test_buy: !!listed?.test_buy,
+        probes: p.length,
+        valid_quotes: valid.length,
+        uptime_pct: pct(valid.length, p.length),
+        quote_latency: latencyStats(valid.filter((x) => x.latency_ms != null).map((x) => x.latency_ms!)),
+        quotes_with_source_tag: valid.filter((x) => x.source_tag).length,
+        quoted_price_history: prices,
+        probe_results_without_valid_quote: [...failures.entries()].map(([result, count]) => ({ result, count })).sort((a, b) => b.count - a.count),
+        paid_test_buys: o.length,
+        delivered: o.filter((x) => x.data_returned).length,
+      };
+    });
+    const epIndex = new Map(urls.map((u, i) => [u, i]));
+
+    const spent = new Map<string, number>();
+    for (const o of obs) spent.set(o.asset, (spent.get(o.asset) ?? 0) + Number(o.amount || 0));
+    const statuses = new Map<string, number>();
+    for (const o of obs) statuses.set(String(o.http_status ?? "none"), (statuses.get(String(o.http_status ?? "none")) ?? 0) + 1);
+    const delivered = obs.filter((o) => o.data_returned).length;
+
+    const confidence = g.score.confidence;
+    const doc = {
+      kind: "trust_vendor_report",
+      ...header(base),
+      report_version: "v1",
+      id: v.id,
+      name: v.name,
+      homepage: v.homepage,
+      pay_to: v.pay_to,
+      confidence_label:
+        confidence === "low"
+          ? "LOW CONFIDENCE: few samples (fewer than 5 paid test-buys or fewer than 10 probes in the last 30 days). Treat these numbers as early observations."
+          : confidence === "medium"
+          ? "Medium confidence: fewer than 20 paid test-buys in the last 30 days."
+          : "High confidence by Lumi's sample-size rule (20+ paid test-buys and 10+ probes in the last 30 days).",
+      score: { value: g.score.value, confidence, window_days: WINDOW_DAYS, components: g.score.components, samples: g.score.samples },
+      coverage: {
+        first_probe_at: probes.length ? iso(probes[probes.length - 1].ts) : null,
+        last_probe_at: probes.length ? iso(probes[0].ts) : null,
+        first_paid_test_buy_at: obs.length ? iso(obs[obs.length - 1].ts) : null,
+        last_paid_test_buy_at: obs.length ? iso(obs[0].ts) : null,
+        probe_retention_days: REPORT_PROBE_DAYS,
+        probes_in_report: probes.length,
+        probes_truncated: probes.length >= REPORT_MAX_PROBES,
+        paid_test_buys_in_report: obs.length,
+      },
+      windows,
+      trend: {
+        quote_latency: { ...latencyTrend, compares: "median time to a valid 402 quote, last 7 days vs the 7 days before" },
+        uptime: { ...uptimeTrend, compares: "median daily uptime %, last 7 days vs the 7 days before" },
+      },
+      daily,
+      endpoints,
+      paid_test_buys: {
+        count: obs.length,
+        delivered,
+        not_delivered: obs.length - delivered,
+        delivery_pct: pct(delivered, obs.length),
+        spent: [...spent.entries()].map(([asset, amount]) => ({ asset, amount: String(Math.round(amount * 1e6) / 1e6) })),
+        http_statuses: Object.fromEntries(statuses),
+        latency: latencyStats(obs.filter((o) => o.latency_ms != null).map((o) => o.latency_ms!)),
+        history: obs.map((o) => ({ ...obsView(o), delivered: o.data_returned ? "yes" : "no" })),
+      },
+      quote_checks: {
+        about: "Every free probe in the retention window, newest first. endpoint is an index into endpoints[]. valid_quote = a valid x402 402 quote with an XRPL option paying a listed address.",
+        columns: ["checked_at", "endpoint", "http_status", "valid_quote", "price", "asset", "source_tag_in_quote", "latency_ms", "note"],
+        rows: probes.map((p) => [iso(p.ts), epIndex.get(p.endpoint) ?? -1, p.http_status, p.ok, p.price, p.asset, p.source_tag, p.latency_ms, p.error]),
+      },
+      agent_reports: {
+        about: "Verified reports only (on-ledger payment + payer signature). Unverified submissions are never shown.",
+        count: reports.length,
+        delivered: reports.filter((r) => r.outcome === "delivered").length,
+        other_outcomes: reports.filter((r) => r.outcome !== "delivered").length,
+        history: reports.map((r) => ({
+          reported_at: iso(r.ts),
+          network: r.network,
+          tx_hash: r.tx_hash,
+          explorer: explorer(r.network, r.tx_hash),
+          amount: r.amount,
+          asset: r.asset,
+          http_status: r.http_status,
+          outcome: r.outcome,
+          counts_from: iso(r.ts + REPORT_HOLD_MS),
+        })),
+      },
+      vendor_replies: replies.map((r) => ({ replied_at: iso(r.ts), via: r.via, text: r.text })),
+      right_to_reply: rightToReply(base),
+      free_summary: `${base}/v1/trust/vendors/${v.id}`,
+      disclaimer: DISCLAIMER,
+    };
+    return { ok: true, doc };
   }
 
   // ---------------- probes (free, unpaid)
@@ -701,5 +945,5 @@ export function createTrust(deps: TrustDeps): Trust {
     return null;
   }
 
-  return { handle, runProbes, vendorsDoc, vendorDoc };
+  return { handle, runProbes, vendorsDoc, vendorDoc, vendorReport };
 }

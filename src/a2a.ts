@@ -15,6 +15,9 @@ import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { VERSION, paymentNetworks, settledIn } from "./docs";
 import { DISCLAIMER, type CoinRef } from "./views";
 import type { PaidRoute } from "./config";
+import { VENDORS } from "./vendors";
+
+const VENDOR_IDS = VENDORS.map((v) => v.id);
 
 export const A2A_VERSIONS = ["1.0", "0.3"];
 
@@ -34,6 +37,7 @@ interface SkillDef {
   /** Words that select this skill from free text. */
   match: RegExp;
   needsCoin?: boolean;
+  needsVendor?: boolean;
 }
 
 const SKILLS: SkillDef[] = [
@@ -57,6 +61,15 @@ const SKILLS: SkillDef[] = [
   { id: "macro_yen", route: "yen", name: "Yen carry-trade watch (USD/JPY, Nikkei)", tags: ["macro", "yen", "carry-trade", "japan", "paid"], examples: ["yen carry trade risk"], match: /\b(yen|jpy|usd\/?jpy|nikkei|carry|japan|boj)\b/i },
   { id: "sentiment", route: "sentiment", name: "Crypto sentiment (Fear & Greed, funding)", tags: ["crypto", "sentiment", "fear-greed", "funding", "paid"], examples: ["fear and greed"], match: /\b(sentiment|fear|greed|funding|mood)\b/i },
   { id: "events", route: "events", name: "Macro + crypto events calendar", tags: ["macro", "events", "calendar", "paid"], examples: ["upcoming events"], match: /\b(events?|calendar|fomc|cpi|schedule)\b/i },
+  {
+    id: "vendor_report",
+    route: "vendor_report",
+    name: "x402 vendor report: full observation history for one vendor (paid)",
+    tags: ["trust", "x402", "vendors", "observations", "report", "paid"],
+    examples: ["vendor report asksurf", "{\"skill\":\"vendor_report\",\"vendor_id\":\"asksurf\"}"],
+    match: /\b(vendor|trust)\s+report\b|\breport\b.*\bvendor\b/i,
+    needsVendor: true,
+  },
   { id: "trades", route: "trades", name: "Paper-trade history + track record", tags: ["crypto", "track-record", "paper-trading", "paid"], examples: ["your track record"], match: /\b(trades|history|track[- ]?record|win[- ]?rate|performance)\b/i },
 ];
 
@@ -275,6 +288,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   let skill: SkillDef | undefined = typeof data.skill === "string" ? SKILLS.find((s) => s.id === data.skill || s.route === data.skill) : undefined;
   const pathArg = typeof data.path === "string" ? data.path : text.match(/\/v1\/[A-Za-z0-9/_.?=&%-]+/)?.[0];
   if (!skill && /\bquote\b/i.test(text)) skill = SKILLS.find((s) => s.id === "quote");
+  if (!skill && /\b(vendor|trust)\s+report\b|\breport\b.*\bvendors?\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_report");
   if (!skill && /\b(vendors?|trust)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_trust");
   if (!skill) skill = SKILLS.filter((s) => s.route).find((s) => s.match.test(text)) ?? SKILLS.find((s) => !s.route && s.match.test(text));
   const coinArg =
@@ -328,10 +342,14 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   if (!path) {
     if (!target.route) return { skill: "quote", text: "Tell me which paid skill or path to quote, e.g. 'quote /v1/brief' or {\"skill\":\"quote\",\"path\":\"/v1/signal/XRP\"}.", data: { error: "missing_path" } };
     const ep = PAID_ENDPOINTS.find((e) => e.route === target.route)!;
-    if (target.needsCoin && !coinArg) {
+    if (target.needsVendor) {
+      const vendorArg = (typeof data.vendor_id === "string" && data.vendor_id) || VENDOR_IDS.find((v) => new RegExp(`(^|[^a-z0-9-])${v}([^a-z0-9-]|$)`, "i").test(text));
+      if (!vendorArg) return { skill: target.id, text: `Which vendor? ${target.id} needs a vendor_id: ${VENDOR_IDS.join(", ")}.`, data: { error: "missing_vendor_id", vendors: VENDOR_IDS } };
+      path = ep.template.replace("{id}", encodeURIComponent(String(vendorArg).toLowerCase()));
+    } else if (target.needsCoin && !coinArg) {
       return { skill: target.id, text: `Which coin? ${target.id} needs one of: ${coins.map((c) => c.symbol).join(", ")}.`, data: { error: "missing_coin", supported: coins.map((c) => c.symbol) } };
     }
-    path = ep.template.replace("{coin}", encodeURIComponent(String(coinArg ?? ""))) + ((target.route === "brief" || target.route === "institutional") && data.format === "md" ? "?format=md" : "");
+    if (!path) path = ep.template.replace("{coin}", encodeURIComponent(String(coinArg ?? ""))) + ((target.route === "brief" || target.route === "institutional") && data.format === "md" ? "?format=md" : "");
   }
   const q = await deps.quote(path);
   const url = `${base}${path}`;

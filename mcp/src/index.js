@@ -11,7 +11,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createClient, loadSettings } from "./lumi.js";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
 export const PAID_TOOLS = [
@@ -51,6 +51,15 @@ export const PAID_TOOLS = [
       "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
       "what to watch next. Refreshed daily; never sold stale. Paid (~0.19 XRP / 0.25 RLUSD / 0.25 USDC): raise LUMI_MAX_XRP_PER_CALL to 0.2+ " +
       "(or LUMI_MAX_USD_PER_CALL to 0.25+) to allow it. Not financial advice.",
+  },
+  {
+    name: "lumi_vendor_report",
+    path: (a) => `/v1/trust/vendors/${encodeURIComponent(a.vendor_id)}/report`,
+    input: { vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).describe("Vendor id from lumi_vendor_scores, e.g. asksurf") },
+    description:
+      "Detailed report on one x402 vendor from Lumi's trust list: full observation history (every free 402-quote check over 90 days, every paid test-buy with tx hash and delivered yes/no), " +
+      "latency stats and 7-day trend, uptime % (24h/7d/30d/90d) and daily series, quoted-price history, verified agent reports, vendor replies, sample sizes and confidence labels. " +
+      "Automated observations, not a rating. Paid ($0.02: ~0.015 XRP / 0.02 RLUSD / 0.02 USDC). The free summary is lumi_vendor_scores.",
   },
 ];
 
@@ -122,7 +131,7 @@ export function buildServer(client) {
         if (!r.paid) return { ...text(r), isError: r.status !== 402 || !!r.error };
         const receipt = { tx: r.receipt?.transaction, network: r.receipt?.network, spent_this_session: r.spent_this_session };
         if (typeof r.body === "string") return text(`${r.body}\n\n[x402 receipt: ${JSON.stringify(receipt)}]`);
-        return text({ ...r.body, mcp_receipt: receipt, note: DISCLAIMER });
+        return text({ ...r.body, mcp_receipt: receipt, ...(t.name === "lumi_vendor_report" ? {} : { note: DISCLAIMER }) });
       },
     );
   }

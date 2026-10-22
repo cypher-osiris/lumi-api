@@ -126,6 +126,20 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
       "JSON with a `markdown` field; ?format=md returns text/markdown. Neutral and apolitical; not financial advice.",
     example: "/v1/institutional",
   },
+  {
+    route: "vendor_report",
+    name: "Lumi x402 vendor report (full observation history)",
+    method: "GET",
+    path: "/v1/trust/vendors/{id}/report",
+    template: "/v1/trust/vendors/{id}/report",
+    summary:
+      "Detailed report for one x402 vendor on Lumi's trust list: Lumi's full observation history. Every free 402-quote check (90-day retention) " +
+      "with status, quoted price and latency; every paid test-buy with amount, ledger tx hash, explorer link and delivered yes/no; latency stats " +
+      "(min/p50/p90/p95/max) and the 7-day trend; uptime % over 24h/7d/30d/90d and a daily series; per-endpoint quoted-price history; verified " +
+      "agent reports; vendor replies; score components, sample sizes and confidence labels; methodology link. Automated observations, not a rating. " +
+      "Not sold (503, not charged) when the vendor has no observation in the last 48 h. The free summary is GET /v1/trust/vendors/{id}.",
+    example: "/v1/trust/vendors/asksurf/report",
+  },
 ];
 
 export function priceTable(cfg: Config) {

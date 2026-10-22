@@ -16,8 +16,9 @@ import {
 import { staleInputs, hasContent } from "./freshness";
 import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
 import { institutionalView } from "./institutional";
-import { handleMcp, MCP_CORS, type McpDeps } from "./mcp";
-import { createTrust, TRUST_POST_PATHS, type Trust } from "./trust";
+import { handleMcp, isOwnerKey, MCP_CORS, type McpDeps } from "./mcp";
+import { createTrust, TRUST_POST_PATHS, REPORT_FRESH_MS, type Trust } from "./trust";
+import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
 
@@ -59,6 +60,7 @@ const NEEDS: Record<PaidRoute, DataFile[]> = {
   events: ["analysis"],
   trades: ["trades"],
   institutional: ["institutional_brief"],
+  vendor_report: [], // trust-layer data (D1), checked in prepare()
 };
 /** Inputs that enrich a product but whose absence does not block it (the field is simply omitted). */
 const OPTIONAL: Partial<Record<PaidRoute, DataFile[]>> = {
@@ -116,7 +118,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
    * Shared by the x402 REST paywall and the remote MCP endpoint, so both enforce the same freshness rule:
    * a failure here is never charged.
    */
-  async function prepare(route: PaidRoute, coinArg?: string): Promise<Prepared> {
+  async function prepare(route: PaidRoute, coinArg?: string, base = config.publicBaseUrl ?? "https://api.lumitrades.io"): Promise<Prepared> {
+    if (route === "vendor_report") return prepareVendorReport(coinArg ?? "", base);
     let coin: CoinRef | undefined;
     if (coinArg !== undefined) {
       coin = resolveCoin(await coins(), coinArg);
@@ -154,6 +157,31 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         : { ok: false, status: 503, error: { error: "data_unavailable", detail: `no ${route} data published right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
     }
     return { ok: true, route, coin, body: body as Record<string, unknown> };
+  }
+
+  /** Paid vendor report: unknown vendor -> 404, no observation in 48 h -> 503; both before any 402 and never charged. */
+  async function prepareVendorReport(id: string, base: string): Promise<Prepared> {
+    const r = await trust.vendorReport(id.trim().toLowerCase(), base);
+    if (r.ok) {
+      return hasContent("vendor_report", r.doc)
+        ? { ok: true, route: "vendor_report", body: r.doc }
+        : { ok: false, status: 503, error: { error: "data_unavailable", detail: "no observations for this vendor yet", retryable: true, note: "Not charged." }, headers: { "Retry-After": "1800" } };
+    }
+    if (r.reason === "unknown_vendor") {
+      return { ok: false, status: 404, error: { error: "unknown_vendor", vendor_id: id.slice(0, 64), vendors: VENDORS.map((v) => v.id), note: "Not charged." } };
+    }
+    return {
+      ok: false,
+      status: 503,
+      error: {
+        error: "data_stale",
+        detail: `Lumi has no observation of this vendor (probe or paid test-buy) in the last ${REPORT_FRESH_MS / 3_600_000} h, so the report is not for sale right now.`,
+        last_observed_at: r.last_observed_at,
+        retryable: true,
+        note: "Not charged.",
+      },
+      headers: { "Retry-After": "1800" },
+    };
   }
 
   const mcpDeps: Omit<McpDeps, "quote"> = {
@@ -275,23 +303,33 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
 
     // ---------------- paid
-    const m = path.match(/^\/v1\/(signal|levels)\/([^/]+)$/) ?? (FIXED[path] ? [path, FIXED[path]] : null);
+    const vr = path.match(/^\/v1\/trust\/vendors\/([^/]{1,64})\/report$/);
+    const m = vr ? [path, "vendor_report", vr[1]] : path.match(/^\/v1\/(signal|levels)\/([^/]+)$/) ?? (FIXED[path] ? [path, FIXED[path]] : null);
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
-    const prep = await prepare(route, m[2]);
+    const prep = await prepare(route, m[2], base);
     if (!prep.ok) return json(prep.status, prep.error, prep.headers);
     const { coin, body } = prep;
+    // Owner key (Authorization: Bearer <OWNER_MCP_KEY>) reads the vendor report at no charge.
+    if (route === "vendor_report") {
+      const auth = request.headers.get("Authorization") ?? "";
+      const bearer = /^Bearer\s+(.+)$/i.exec(auth)?.[1]?.trim();
+      if (bearer && (await isOwnerKey(bearer, env.OWNER_MCP_KEY))) {
+        return json(200, { ...body, access: { mode: "owner", charged: false } }, { "Cache-Control": "no-store" });
+      }
+    }
+    const vendorId = route === "vendor_report" ? String(body.id) : undefined;
     const wantsMarkdown =
       (route === "brief" || route === "institutional") && (/^(md|markdown|text)$/i.test(url.searchParams.get("format") ?? "") || /text\/markdown/i.test(request.headers.get("Accept") ?? ""));
 
     const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
     const quote: Quote = {
-      routeKey: coin ? `${route}:${coin.symbol}` : route,
+      routeKey: coin ? `${route}:${coin.symbol}` : vendorId ? `${route}:${vendorId}` : route,
       amountDrops: config.pricesDrops[route],
       amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
       amountEvm: config.evm?.amounts[route],
-      description: `Lumi API ${endpoint.template.replace("{coin}", coin?.symbol ?? "")}: ${endpoint.summary}`,
+      description: `Lumi API ${endpoint.template.replace("{coin}", coin?.symbol ?? "").replace("{id}", vendorId ?? "")}: ${endpoint.summary}`,
       resourceUrl: `${base}${path}`,
     };
 
@@ -365,5 +403,7 @@ function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string
       return tradesView(d.trades, coins);
     case "institutional":
       return institutionalView(d.institutional_brief);
+    case "vendor_report":
+      return null; // built by prepareVendorReport()
   }
 }

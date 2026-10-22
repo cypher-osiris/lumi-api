@@ -81,6 +81,8 @@ export type InsertResult = "inserted" | "duplicate";
 export interface TrustStore {
   addProbes(rows: ProbeRow[]): Promise<void>;
   probeSummary(vendorId: string, since: number): Promise<ProbeSummary>;
+  /** Raw probes since `since`, newest first, at most `limit` rows (paid vendor report). */
+  probeHistory(vendorId: string, since: number, limit: number): Promise<ProbeRow[]>;
   addObservation(row: ObservationRow): Promise<InsertResult>;
   observations(vendorId: string, since: number): Promise<ObservationRow[]>;
   addReport(row: ReportRow): Promise<InsertResult>;
@@ -125,6 +127,9 @@ export class MemoryTrustStore implements TrustStore {
       latencies: rows.filter((r) => r.ok && r.latency_ms != null).slice(0, 500).map((r) => r.latency_ms!),
       latest: latestPerEndpoint(all),
     };
+  }
+  async probeHistory(vendorId: string, since: number, limit: number) {
+    return this.probes.filter((p) => p.vendor_id === vendorId && p.ts >= since).sort((a, b) => b.ts - a.ts).slice(0, limit);
   }
   async addObservation(row: ObservationRow): Promise<InsertResult> {
     if (this.obs.some((o) => o.tx_hash === row.tx_hash)) return "duplicate";
@@ -203,6 +208,10 @@ export class D1TrustStore implements TrustStore {
       latencies: lat.results.map((r) => Number(r.latency_ms)),
       latest: latestPerEndpoint(recent.results.map(probeFrom)),
     };
+  }
+  async probeHistory(vendorId: string, since: number, limit: number) {
+    const r = await this.db.prepare("SELECT * FROM probes WHERE vendor_id = ? AND ts >= ? ORDER BY ts DESC LIMIT ?").bind(vendorId, since, limit).all();
+    return r.results.map(probeFrom);
   }
   async addObservation(r: ObservationRow): Promise<InsertResult> {
     try {

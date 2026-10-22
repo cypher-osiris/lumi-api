@@ -32,7 +32,7 @@ export interface McpDeps {
   /** OWNER_MCP_KEY secret. Unset or short = owner access disabled. */
   ownerKey?: string;
   coins(): Promise<CoinRef[]>;
-  prepare(route: PaidRoute, coinArg?: string): Promise<Prepared>;
+  prepare(route: PaidRoute, coinArg?: string, base?: string): Promise<Prepared>;
   /** Unpaid internal GET of a paid path (returns the 402 terms, or a not-charged error). */
   quote(path: string): Promise<{ status: number; body: any }>;
   /** Trust layer (free vendor observations). */
@@ -47,6 +47,8 @@ interface PaidTool {
   description: string;
   inputSchema: Record<string, unknown>;
   coin?: (a: Args) => string | undefined;
+  /** Name of the required argument read by `coin` (default "coin"). */
+  argName?: string;
   path: (a: Args) => string;
 }
 
@@ -57,6 +59,11 @@ const COIN_ARG = (desc: string) => ({
   required: ["coin"],
 });
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+
+export const VENDOR_REPORT_TOOL_DESCRIPTION =
+  "Detailed report on one x402 vendor from Lumi's trust list: full observation history (every free 402-quote check over 90 days, every paid test-buy with tx hash and delivered yes/no), " +
+  "latency stats and 7-day trend, uptime % (24h/7d/30d/90d) and daily series, quoted-price history, verified agent reports, vendor replies, sample sizes and confidence labels. " +
+  "Automated observations, not a rating. Paid ($0.02: ~0.015 XRP / 0.02 RLUSD / 0.02 USDC). The free summary is lumi_vendor_scores.";
 
 export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "Daily Institutional & Policy Brief (premium): what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 " +
@@ -105,6 +112,19 @@ export const PAID_TOOLS: PaidTool[] = [
     inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "md"], description: "json (default) or md for ready-to-read markdown" } } },
     description: INSTITUTIONAL_TOOL_DESCRIPTION,
   },
+  {
+    name: "lumi_vendor_report",
+    route: "vendor_report",
+    argName: "vendor_id",
+    coin: (a) => str(a.vendor_id),
+    path: (a) => `/v1/trust/vendors/${encodeURIComponent(str(a.vendor_id) ?? "")}/report`,
+    inputSchema: {
+      type: "object",
+      properties: { vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Vendor id from lumi_vendor_scores, e.g. asksurf" } },
+      required: ["vendor_id"],
+    },
+    description: VENDOR_REPORT_TOOL_DESCRIPTION,
+  },
 ];
 
 const PAID_SUFFIX =
@@ -151,7 +171,7 @@ function toolList() {
 const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate and track record, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins, plus a premium daily Institutional & Policy Brief " +
-  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free. " +
+  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
   "Paid tools cost a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
@@ -451,24 +471,26 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
     let coinArg: string | undefined;
     if (tool.coin) {
       coinArg = tool.coin(args)?.trim();
-      if (!coinArg) return text({ error: "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
+      if (!coinArg) {
+        return text({ error: tool.argName === "vendor_id" ? "missing required argument: vendor_id (e.g. asksurf; list with lumi_vendor_scores)" : "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
+      }
     }
     if ((tool.name === "lumi_brief" || tool.name === "lumi_institutional_brief") && args.format !== undefined && args.format !== "json" && args.format !== "md") {
       return text({ error: "format must be json or md" }, true);
     }
 
     // Freshness gate first (same as the REST paywall): missing/stale/empty data is an error and is never charged.
-    const prep = await deps.prepare(tool.route, coinArg);
+    const prep = await deps.prepare(tool.route, coinArg, base);
     deps.log({ event: "mcp_tool_call", tool: name, access, ok: prep.ok, ...(prep.ok ? {} : { status: prep.status }) });
     if (!prep.ok) return text({ status: prep.status, ...prep.error }, true);
 
-    const restUrl = `${base}${tool.path({ ...args, coin: prep.coin?.symbol ?? coinArg })}`;
+    const restUrl = `${base}${tool.path({ ...args, coin: prep.coin?.symbol ?? coinArg, ...(tool.argName === "vendor_id" ? { vendor_id: String(prep.body.id ?? coinArg) } : {}) })}`;
     if (owner) {
       if ((tool.name === "lumi_brief" || tool.name === "lumi_institutional_brief") && args.format === "md") {
         const md = String((prep.body as { markdown?: string }).markdown ?? "");
         return text(`${md}\n\n_${DISCLAIMER}_`);
       }
-      return text({ ...prep.body, access: { mode: "owner", charged: false, via: "remote MCP" }, note: DISCLAIMER });
+      return text({ ...prep.body, access: { mode: "owner", charged: false, via: "remote MCP" }, ...(tool.route === "vendor_report" ? {} : { note: DISCLAIMER }) });
     }
     return paymentRequired(tool, restUrl, cfg, base);
   } catch (err) {

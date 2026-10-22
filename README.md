@@ -31,6 +31,7 @@ Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals
 | **paid** | `GET /v1/events` | **0.005 XRP** or **0.01 RLUSD / USDC** | Sourced upcoming macro/crypto events: timed releases (UTC + US Central, why it matters) and dated per-coin catalysts (Fed, BOJ, CPI, upgrades, conferences) |
 | **paid** | `GET /v1/trades` | **0.01 XRP** or **0.02 RLUSD / USDC** | Every paper trade ever posted (wins, losses, cancelled) + computed track record: win rate, sum/avg P&L, best/worst, by coin, by direction, equity curve, open unrealized P&L |
 | **paid** | `GET /v1/institutional` | **0.19 XRP** or **0.25 RLUSD / USDC** | **Institutional & Policy Brief** (daily, premium): sourced analysis of what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 and others are doing, mapped to XRP, XLM, XDC, QNT, AXL and HBAR. Each item: date, source URL, why it matters, coins, impact, confidence and `link_type` (`confirmed` / `indirect_alignment` = Lumi's analysis / `context`). Plus big picture, per-token map, connections, no-news notes, what to watch. JSON with `markdown`; `?format=md` returns `text/markdown`. Not sold if older than 36 h |
+| **paid** | `GET /v1/trust/vendors/{id}/report` | **0.015 XRP** or **0.02 RLUSD / USDC** (0.02 USDC on Base) | **x402 vendor report**: Lumi's full observation history for one vendor on the trust list: every free 402-quote check (90-day retention), every paid test-buy with amount, tx hash, explorer link and delivered yes/no, latency min/p50/p90/p95/max and 7-day trend, uptime % (24h/7d/30d/90d) and daily series, quoted-price history, verified agent reports, vendor replies, score components, sample sizes and confidence labels. Unknown vendor: 404; no observation in 48 h: 503 (both before any 402, never charged). Owner bearer key: free |
 
 Pricing rationale (Oct 2026, XRP ≈ $1.33): single data feeds on the XRPL AI Hub sell for 0.001-0.012 RLUSD (AskSurf, Heurist Mesh, KR Crypto) and composite reads for ~0.02-0.025 (Strale Fear & Greed via Monid, invinoveritas). Lumi's single feeds sit at 0.01 and the multi-source brief at 0.03. The Institutional & Policy Brief is a premium, researched daily product at $0.25: exactly 0.25 RLUSD / USDC (XRPL or Base) and a fixed **0.19 XRP**, set from XRP ≈ $1.32 on Oct 22 2026 (0.25 / 1.32 ≈ 0.189). XRP prices are fixed amounts, not repriced live; change `PRICE_INSTITUTIONAL_XRP` if XRP moves a lot.
 
@@ -301,6 +302,11 @@ answered before they pay it. These are observations with timestamps, tx hashes a
 
 Also as the MCP tool `lumi_vendor_scores` (optional `vendor_id`) and the A2A skill `vendor_trust`.
 
+**Paid detailed report (v0.7):** `GET /v1/trust/vendors/{id}/report`, $0.02 per call over x402 on every rail (0.015 XRP fixed at XRP ~= $1.32, like
+`PRICE_INSTITUTIONAL_XRP`; override with `PRICE_VENDOR_REPORT_XRP/_RLUSD/_USDC`). Full history instead of the free summary's last 50 test-buys and latest
+probes. Sold only when Lumi has observed the vendor (probe or test-buy) in the last 48 h; otherwise 503, not charged. `Authorization: Bearer <OWNER_MCP_KEY>`
+reads it free. MCP: `lumi_vendor_report` (`vendor_id`). A2A: `vendor_report`. The free endpoints above are unchanged.
+
 ### Methodology
 
 - **Free probes (every 30 min, Cron Trigger).** One unpaid request to each listed endpoint (`User-Agent: LumiTrustProbe/0.6`, 15 s timeout,
@@ -347,7 +353,7 @@ plus the legacy `initialize` handshake for `2024-11-05` .. `2025-11-25` clients)
 server URL (e.g. a Grok, Claude or ChatGPT connector, or `npx @modelcontextprotocol/inspector`).
 
 - Same tool names and descriptions as the stdio package below: free `lumi_catalog`, `lumi_coins`, `lumi_quote`, `lumi_vendor_scores`; paid `lumi_brief`,
-  `lumi_signal`, `lumi_levels`, `lumi_slate`, `lumi_market`, `lumi_macro_yen`, `lumi_sentiment`, `lumi_events`, `lumi_trades`, `lumi_institutional_brief`.
+  `lumi_signal`, `lumi_levels`, `lumi_slate`, `lumi_market`, `lumi_macro_yen`, `lumi_sentiment`, `lumi_events`, `lumi_trades`, `lumi_institutional_brief`, `lumi_vendor_report`.
 - A remote connector has no wallet, so a paid tool returns a normal tool result with the price and the two ways to pay: x402 at the
   REST endpoint, or the `lumi-trades-mcp` npm package with your own XRPL wallet. Nothing is charged.
 - The freshness rule still applies: stale or missing data is a tool error ("Not charged."), never a quote or data.
@@ -361,7 +367,7 @@ server URL (e.g. a Grok, Claude or ChatGPT connector, or `npx @modelcontextproto
 - **Agent card:** `https://api.lumitrades.io/.well-known/agent-card.json` (alias `/.well-known/agent.json`). A2A 1.0 shape
   (`supportedInterfaces`, `capabilities`, `skills`, `provider`) plus the 0.3 fields (`url`, `preferredTransport`, `protocolVersion`).
   Skills mirror the endpoints (free `catalog`, `coins`, `quote`, `vendor_trust`; paid `brief`, `signal`, `levels`, `slate`, `market`, `macro_yen`,
-  `sentiment`, `events`, `trades`, `institutional`). The x402 networks and prices and the MCP URL are in `capabilities.extensions`.
+  `sentiment`, `events`, `vendor_report`, `trades`, `institutional`). The x402 networks and prices and the MCP URL are in `capabilities.extensions`.
 - **JSON-RPC endpoint:** `POST https://api.lumitrades.io/a2a`, stateless. `SendMessage` (1.0) and `message/send` (0.3) take text such as
   "signal XRP" or a data part `{ "skill": "signal", "coin": "XRP" }` and reply with a direct Message. Free skills answer inline; paid skills
   answer with the live x402 terms (every network option) and the REST URL to pay at, and nothing is charged over A2A. No tasks, streaming

@@ -1,7 +1,7 @@
 {
   "name": "lumi-trades-mcp",
-  "version": "0.3.0",
-  "description": "MCP server for Lumi Trades (lumitrades.io): crypto market brief, signals, levels, yen carry-trade watch, sentiment, events, paper-trade track record and a daily Institutional & Policy Brief, paid per call via x402 on the XRP Ledger with your own wallet.",
+  "version": "0.4.0",
+  "description": "MCP server for Lumi Trades (lumitrades.io): crypto market brief, signals, levels, yen carry-trade watch, sentiment, events, paper-trade track record, a daily Institutional & Policy Brief and detailed x402 vendor reports, paid per call via x402 on the XRP Ledger with your own wallet.",
   "mcpName": "io.github.cypher-osiris/lumi-trades-mcp",
   "type": "module",
   "bin": { "lumi-trades-mcp": "src/index.js" },

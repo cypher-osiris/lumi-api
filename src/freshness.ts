@@ -87,6 +87,8 @@ export function hasContent(route: string, body: Json): boolean {
       return Array.isArray(body.trades) && body.trades.length > 0;
     case "institutional":
       return (body.items?.length ?? 0) + (body.no_notable_news?.length ?? 0) > 0 && (body.big_picture?.length ?? 0) > 0 && !!body.markdown;
+    case "vendor_report":
+      return body.kind === "trust_vendor_report" && ((body.quote_checks?.rows?.length ?? 0) + (body.paid_test_buys?.count ?? 0)) > 0;
     default:
       return false;
   }
