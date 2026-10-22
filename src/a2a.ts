@@ -70,7 +70,7 @@ const SKILLS: SkillDef[] = [
     match: /\b(vendor|trust)\s+report\b|\breport\b.*\bvendor\b/i,
     needsVendor: true,
   },
-  { id: "trades", route: "trades", name: "Paper-trade history + track record", tags: ["crypto", "track-record", "paper-trading", "paid"], examples: ["your track record"], match: /\b(trades|history|track[- ]?record|win[- ]?rate|performance)\b/i },
+  { id: "trades", route: "trades", name: "Paper-trade history", tags: ["crypto", "paper-trading", "paid"], examples: ["your paper-trade history"], match: /\b(trades|trade history|paper[- ]?trades?)\b/i },
 ];
 
 const FREE_DESCRIPTIONS: Record<string, string> = {
@@ -107,7 +107,7 @@ export function agentCard(cfg: Config, base: string) {
     name: "Lumi Trades",
     description:
       "Crypto market reads for AI agents from Lumi Trades (lumitrades.io): daily market brief, per-coin signals and support/resistance levels, " +
-      "paper-trade ideas and an honest track record, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar for 13 coins, " +
+      "paper-trade ideas, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar for 13 coins, " +
       "plus a premium daily Institutional & Policy Brief mapping BIS, IMF, US regulators, major banks and tokenization firms to XRP, XLM, XDC, QNT, AXL and HBAR. " +
       `Pay per call over x402 v2 with no API key or account, in ${settledIn(cfg)}. Also available as a remote MCP server. Analytics only, not financial advice.`,
     // A2A 1.0

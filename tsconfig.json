@@ -12,5 +12,6 @@
     "resolveJsonModule": true,
     "isolatedModules": true
   },
-  "include": ["src", "test", "scripts", "examples"]
+  "include": ["src", "test", "scripts", "examples"],
+  "exclude": ["examples/agentkit-direct-url.ts"]
 }

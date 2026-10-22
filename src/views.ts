@@ -191,24 +191,12 @@ export function slateView(trades: Json, coins: CoinRef[]) {
       noSetup[c ? c.symbol : id] = entry.note;
     }
   }
-  const st = trades?.stats ?? {};
   return envelope("slate", {
     as_of: trades?.slate?.as_of ?? null,
     rules: trades?.slate?.rules ?? null,
     ideas: active.map((t) => tradeView(t, coins)),
     no_setup_notes: noSetup,
     recently_closed: closed.map((t) => tradeView(t, coins)),
-    track_record: {
-      total: num(st.total),
-      open: num(st.open),
-      pending: num(st.pending),
-      closed: num(st.closed),
-      won: num(st.won),
-      lost_or_stopped: num(st.lost_or_stopped),
-      win_rate_pct: num(st.win_rate_pct),
-      cumulative_pnl_pct: num(st.cumulative_pnl_pct),
-      note: st.note ?? null,
-    },
     evaluated_utc: trades?.tracked_utc ?? trades?.evaluated_utc ?? null,
   });
 }

@@ -9,7 +9,7 @@ import { DataSource, type DataFile } from "./data";
 import { makeReplayGuard, json, requirePayment, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { bazaarExtension, resourceDescription } from "./bazaar";
-import { indexDoc, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
+import { indexDoc, indexHtml, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
 import { agentCard, handleA2a, A2A_CORS } from "./a2a";
 import {
   coinList, resolveCoin, signalView, levelsView, slateView, marketView, DISCLAIMER, SOURCE, type CoinRef,
@@ -262,7 +262,16 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     // ---------------- free
     switch (path) {
       case "/":
-        return json(200, indexDoc(config, base, await coins()));
+        if (/text\/html/i.test(request.headers.get("accept") ?? "")) {
+          return new Response(indexHtml(config, base, await coins()), {
+            headers: { "Content-Type": "text/html; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300", Vary: "Accept" },
+          });
+        }
+        {
+          const r = json(200, indexDoc(config, base, await coins()));
+          r.headers.set("Vary", "Accept");
+          return r;
+        }
       case "/health":
         return json(200, {
           status: "ok",

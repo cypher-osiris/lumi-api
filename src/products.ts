@@ -4,7 +4,7 @@
  *   /v1/macro/yen  USD/JPY + Nikkei 225 and a rule-based carry-trade risk read around the 155 line
  *   /v1/sentiment  Fear & Greed (CoinMarketCap) + BTC perp funding/OI + market-wide breadth
  *   /v1/events     sourced, dated macro/crypto events and per-coin catalysts
- *   /v1/trades     full paper-trade history and an honest, computed track record
+ *   /v1/trades     paper-trade history (raw list; no aggregate win/loss stats)
  * Rules: whitelist fields, omit anything that is missing (never invent), run through the privacy filter (envelope -> sanitize),
  * keep the disclaimer.
  */
@@ -290,63 +290,23 @@ export function eventsView(events: Json, analysis: Json, coins: CoinRef[], now: 
   }));
 }
 
-// ---------------------------------------------------------------- trades (track record)
+// ---------------------------------------------------------------- trades (paper-trade history)
 
-const CLOSED = ["won", "lost", "stopped"];
-
-function bucket(rows: Json[]) {
-  const pnl = rows.map((t) => num(t.pnl_pct)).filter((x): x is number => x !== null);
-  const won = rows.filter((t) => t.status === "won" || (num(t.pnl_pct) ?? 0) > 0).length;
-  return {
-    closed: rows.length,
-    won,
-    lost: rows.length - won,
-    win_rate_pct: rows.length ? round((won / rows.length) * 100, 1) : null,
-    sum_pnl_pct: pnl.length ? round(pnl.reduce((a, b) => a + b, 0)) : null,
-    avg_pnl_pct: pnl.length ? round(pnl.reduce((a, b) => a + b, 0) / pnl.length) : null,
-  };
-}
-
+/**
+ * The raw paper-trade list only. Aggregate win/loss statistics (win rate, P&L sums, best/worst, equity curve) are
+ * deliberately not published while the slate is still being built.
+ */
 export function tradesView(trades: Json, coins: CoinRef[]) {
   const all: Json[] = Array.isArray(trades?.trades) ? trades.trades : [];
   if (!all.length) return null;
-  const closed = all.filter((t) => CLOSED.includes(t.status));
-  const byCoin: Record<string, ReturnType<typeof bucket>> = {};
-  for (const id of [...new Set(closed.map((t) => t.coin))]) byCoin[sym(coins, id)] = bucket(closed.filter((t) => t.coin === id));
-  const byDir: Record<string, ReturnType<typeof bucket>> = {};
-  for (const d of [...new Set(closed.map((t) => t.direction))]) if (d) byDir[d] = bucket(closed.filter((t) => t.direction === d));
-  const sorted = [...closed].filter((t) => num(t.pnl_pct) !== null).sort((a, b) => a.pnl_pct - b.pnl_pct);
-  const live = all.filter((t) => t.status === "open");
-  const unreal = live.map((t) => num(t.unrealized_pnl_pct)).filter((x): x is number => x !== null);
-  const statusCounts: Record<string, number> = {};
-  for (const t of all) statusCounts[t.status] = (statusCounts[t.status] ?? 0) + 1;
-  const st = trades?.stats ?? {};
   const history = [...all]
     .sort((a, b) => String(b.opened_at ?? "").localeCompare(String(a.opened_at ?? "")))
     .map((t) => tradeView(t, coins));
   return envelope("trades", compact({
-    track_record: {
-      ideas_total: all.length,
-      by_status: statusCounts,
-      ...bucket(closed),
-      cumulative_pnl_pct: num(st.cumulative_pnl_pct),
-      best_closed: sorted.length ? { id: sorted[sorted.length - 1].id, pnl_pct: sorted[sorted.length - 1].pnl_pct } : null,
-      worst_closed: sorted.length ? { id: sorted[0].id, pnl_pct: sorted[0].pnl_pct } : null,
-      open_unrealized_pnl_pct: unreal.length ? round(unreal.reduce((a, b) => a + b, 0)) : null,
-      by_coin: byCoin,
-      by_direction: byDir,
-      equity_curve: Array.isArray(st.equity_curve)
-        ? st.equity_curve.map((p: Json) => ({ t: p.t, trade_id: p.trade_id, cum_pnl_pct: num(p.cum_pnl_pct) }))
-        : null,
-      method:
-        st.note ??
-        "P&L is the % return at each idea's leverage; cumulative is the simple sum (equal size per idea).",
-      honesty:
-        "Every idea on the public slate is listed here, including losers and cancelled ideas. Fills, stops and targets are evaluated " +
-        "mechanically from 5-minute candles by the site's tracker; paper trades only, no real money.",
-    },
+    count: all.length,
     rules: trades?.slate?.rules ?? null,
     trades: history,
+    note: "Paper trades only, no real money. Each idea is listed with its own entry, stop, targets, leverage and status.",
     evaluated_utc: trades?.tracked_utc ?? trades?.evaluated_utc ?? null,
   }));
 }
@@ -391,7 +351,6 @@ export function briefView(d: { prices: Json; context: Json; analysis: Json; sign
   const usdjpy = quoteBlock(freshQuote(d.context?.yen?.usd_jpy, now));
   const nikkei = quoteBlock(freshQuote(d.context?.yen?.nikkei, now));
   const tr: Json[] = Array.isArray(d.trades?.trades) ? d.trades.trades : [];
-  const st = d.trades?.stats ?? {};
   const nl = d.brief?.newsletter && fresh(d.brief.newsletter.date, now) ? d.brief.newsletter : null;
   const news = Array.isArray(d.brief?.news?.items) ? d.brief.news.items.filter((n: Json) => fresh(n.date, now) && n.source_url) : [];
   const nowIso = new Date(now).toISOString();
@@ -428,7 +387,6 @@ export function briefView(d: { prices: Json; context: Json; analysis: Json; sign
     paper_trades: {
       active: tr.filter((t) => t.status === "open" || t.status === "pending").map((t) =>
         compact({ id: t.id, coin: sym(coins, t.coin), direction: t.direction, leverage: t.leverage, status: t.status, entry: t.entry, stop: t.stop, targets: t.targets, unrealized_pnl_pct: num(t.unrealized_pnl_pct) })),
-      record: { closed: num(st.closed), won: num(st.won), lost_or_stopped: num(st.lost_or_stopped), win_rate_pct: num(st.win_rate_pct), cumulative_pnl_pct: num(st.cumulative_pnl_pct) },
     },
     what_happened: nl?.what_happened ?? null,
     news: news.map((n: Json) => ({ date: n.date, headline: n.headline, summary: n.summary, coins: n.coins, source: n.source_name, url: n.source_url })),
@@ -487,8 +445,6 @@ export function briefMarkdown(b: Json): string {
     for (const t of pt.active ?? []) {
       L.push(`- ${t.id} ${t.coin} ${t.direction}${t.leverage ? ` ${t.leverage}x` : ""} (${t.status})${t.entry !== undefined ? `: entry ${t.entry}` : ""}${t.stop !== undefined ? `, stop ${t.stop}` : ""}${t.targets ? `, targets ${t.targets.join(" / ")}` : ""}${t.unrealized_pnl_pct !== undefined ? `, now ${pct(t.unrealized_pnl_pct)}` : ""}`);
     }
-    const r = pt.record ?? {};
-    if (r.closed !== undefined) L.push(`- Record: ${r.won ?? 0} won / ${r.lost_or_stopped ?? 0} lost of ${r.closed} closed${r.cumulative_pnl_pct !== undefined ? `, cumulative ${pct(r.cumulative_pnl_pct)} (simple sum at each idea's leverage)` : ""}.`);
   }
   L.push("", `_Source: Lumi Trades (lumitrades.io), ${b.timestamp}. ${DISCLAIMER}_`, "");
   return L.join("\n");

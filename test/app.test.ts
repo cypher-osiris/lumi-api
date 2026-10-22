@@ -22,6 +22,22 @@ async function challenge(get: (p: string) => Promise<Response>, path: string) {
 }
 
 describe("free endpoints", () => {
+  it("serves a human quickstart at / for browsers and JSON otherwise", async () => {
+    const { get } = setup();
+    const r = await get("/", { Accept: "text/html,application/xhtml+xml" });
+    expect(r.headers.get("content-type")).toMatch(/text\/html/);
+    const html = await r.text();
+    expect(html).toMatch(/<title>Lumi API: pay-per-call crypto signals and x402 vendor trust scores/);
+    expect(html).toContain('<meta name="description"');
+    expect(html).toContain("/v1/trust/vendors");
+    expect(html).toContain("/v1/brief");
+    expect(html).toContain("lumi-trades-mcp");
+    expect(html).toContain("x402Fetch");
+    expect(html).not.toMatch(/win rate|track record/i);
+    const j = await get("/", { Accept: "application/json" });
+    expect(j.headers.get("content-type")).toMatch(/json/);
+    expect(j.headers.get("vary")).toBe("Accept");
+  });
   it("serves index, health, skill.md, discovery, openapi and coins", async () => {
     const { get } = setup();
     const index = await (await get("/")).json();
@@ -205,7 +221,8 @@ describe("paid payloads", () => {
     }
     const s = JSON.stringify(b);
     expect(s).not.toMatch(/my holdings|user-specified|canaryname/i);
-    expect(b.track_record).toHaveProperty("win_rate_pct");
+    expect(b).not.toHaveProperty("track_record");
+    expect(s).not.toMatch(/win_rate/);
   });
 
   it("market: BTC backdrop, macro with yen note, breadth", async () => {

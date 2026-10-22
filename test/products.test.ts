@@ -100,13 +100,13 @@ describe("new endpoints: payloads", () => {
     expect(JSON.stringify(b)).not.toMatch(/canaryname/i);
   });
 
-  it("trades: full history + computed track record, no private fields", async () => {
+  it("trades: full raw history, no aggregate win/loss stats, no private fields", async () => {
     const b = await (await paid("/v1/trades")).json();
     const t = fixture("trades");
     expect(b.trades).toHaveLength(t.trades.length);
-    expect(b.track_record.closed).toBe(t.trades.filter((x: any) => ["won", "lost", "stopped"].includes(x.status)).length);
-    expect(b.track_record.by_status.cancelled).toBe(1);
-    expect(b.track_record.worst_closed.pnl_pct).toBeLessThan(0);
+    expect(b.count).toBe(t.trades.length);
+    expect(b).not.toHaveProperty("track_record");
+    expect(JSON.stringify(b)).not.toMatch(/win_rate|equity_curve|cumulative_pnl/);
     for (const x of b.trades) expect(x).not.toHaveProperty("source");
     expect(JSON.stringify(b)).not.toMatch(/user-specified|canaryname/i);
   });

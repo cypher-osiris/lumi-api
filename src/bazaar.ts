@@ -83,12 +83,11 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   slate: {
     description:
       "Current crypto paper-trade ideas: direction, entry zone, stop, targets, leverage, conviction and status for each idea, " +
-      "plus no-setup notes and the public paper-trading track record. JSON.",
+      "plus no-setup notes. JSON.",
     example: {
       kind: "slate",
       as_of: "2026-10-22T11:05:00Z",
       ideas: [{ coin: "BTC", direction: "long", entry_zone: { low: 81800, high: 82300 }, stop: 80800, targets: [84500, 86000], leverage: 3, conviction: "medium", status: "open" }],
-      track_record: { total: 8, open: 3, closed: 3, won: 0, win_rate_pct: 0 },
       payment: PAYMENT_EXAMPLE,
     },
   },
@@ -162,11 +161,10 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   trades: {
     description:
-      "Full crypto paper-trade history (entry, stop, targets, leverage, outcome and reasoning for every idea) and a computed track " +
-      "record: win rate, sum and average P&L, best/worst trade, results by coin and direction, and open unrealized P&L. JSON.",
+      "Crypto paper-trade history as a raw list: entry, stop, targets, leverage, status and reasoning for every idea. JSON.",
     example: {
       kind: "trades",
-      track_record: { ideas_total: 8, closed: 3, won: 0, lost: 3, win_rate_pct: 0, sum_pnl_pct: -6.1 },
+      count: 8,
       trades: [{ id: "T007", coin: "BTC", direction: "long", entry: 82300, stop: 80800, targets: [84500, 86000], leverage: 3, status: "open" }],
       payment: PAYMENT_EXAMPLE,
     },

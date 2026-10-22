@@ -43,7 +43,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     path: "/v1/slate",
     template: "/v1/slate",
     summary:
-      "Current paper-trade ideas: direction, entry/entry zone, stop, targets, leverage, conviction, status, plus 'no setup' notes and the public track record.",
+      "Current paper-trade ideas: direction, entry/entry zone, stop, targets, leverage, conviction, status, plus 'no setup' notes.",
     example: "/v1/slate",
   },
   {
@@ -103,13 +103,12 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
   },
   {
     route: "trades",
-    name: "Lumi paper-trade history + track record",
+    name: "Lumi paper-trade history",
     method: "GET",
     path: "/v1/trades",
     template: "/v1/trades",
     summary:
-      "Lumi's full paper-trade history (every idea: entry, stop, targets, leverage, outcome, reasoning) and an honest computed track record: " +
-      "win rate, sum/avg P&L, best/worst, by coin, by direction, equity curve, open unrealized P&L.",
+      "Lumi's paper-trade history as a raw list: every idea with entry, stop, targets, leverage, status and reasoning.",
     example: "/v1/trades",
   },
   {

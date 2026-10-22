@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.8.0";
+export const VERSION = "0.9.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -16,7 +16,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       `No API keys or accounts: each paid call is settled in ${settledIn(cfg)} via the x402 protocol (HTTP 402, exact scheme).`,
     human_summary:
       "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins, plus a daily " +
-      "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its full paper-trade track record, " +
+      "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its raw paper-trade history, " +
       "plus a premium daily Institutional & Policy Brief (BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR). " +
       `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}` +
       `${cfg.evm ? ` or USDC on ${cfg.evm.networkName} (accepts[${cfg.ious.length + 1}])` : ""}, sign a small XRPL Payment${cfg.evm ? " or an EIP-3009 USDC authorization" : ""}, retry, and get JSON back.`,
@@ -73,7 +73,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate + track record, macro, daily brief, yen carry-trade watch, sentiment, events, daily Institutional & Policy Brief, plus a detailed x402 vendor report from Lumi's trust observations), settled in ${settledIn(cfg)}.`,
+    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate and history, macro, daily brief, yen carry-trade watch, sentiment, events, daily Institutional & Policy Brief, plus a detailed x402 vendor report from Lumi's trust observations), settled in ${settledIn(cfg)}.`,
     resources: PAID_ENDPOINTS.map((e) => ({
       name: e.name,
       url: `${base}${e.example}`,
@@ -215,7 +215,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
         "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
         "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives CoinMarketCap Fear & Greed, funding and breadth; " +
-        "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the full paper-trade history and track record; " +
+        "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the raw paper-trade history; " +
         "GET /v1/institutional gives the daily Institutional & Policy Brief (BIS, IMF, US regulators, banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR, confirmed vs indirect-alignment links). Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
         (cfg.ious.length
           ? "in XRP (accepts[0])" + cfg.ious.map((o, i) => ` or ${o.symbol} (accepts[${i + 1}], issuer ${o.issuer})`).join("") + " "
@@ -390,7 +390,7 @@ export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const maxDrops = Math.max(...Object.values(cfg.pricesDrops).map(Number));
   return `---
 name: lumi-api
-description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas + track record, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar, daily Institutional & Policy Brief) for ${coins.length} coins, paid in ${settledIn(cfg)} via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
+description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas and history, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar, daily Institutional & Policy Brief) for ${coins.length} coins, paid in ${settledIn(cfg)} via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
 ---
 
 # Lumi API (agent guide)
@@ -417,7 +417,7 @@ Which one to call:
 - Mood/positioning only? \`GET /v1/sentiment\`. What's scheduled? \`GET /v1/events\`.
 - What are central banks, regulators and big banks doing, and what does it mean for XRP, XLM, XDC, QNT, AXL, HBAR? \`GET /v1/institutional\`
   (daily, sourced; each link labelled \`confirmed\`, \`indirect_alignment\` (Lumi's analysis) or \`context\`; \`?format=md\` for markdown).
-- Is Lumi any good? \`GET /v1/trades\` (every paper trade, wins and losses). Current ideas only? \`GET /v1/slate\`.
+- Every past paper-trade idea as a raw list? \`GET /v1/trades\`. Current ideas only? \`GET /v1/slate\`.
 - One coin? \`GET /v1/signal/{coin}\` + \`GET /v1/levels/{coin}\`.
 - Checking an x402 vendor before you pay it? \`GET /v1/trust/vendors/{id}\` is the free summary; \`GET /v1/trust/vendors/{id}/report\` ($0.02)
   is the full observation history (every quote check and paid test-buy with tx hashes, latency stats and trend, uptime %, verified reports, replies).
@@ -513,6 +513,36 @@ console.log(res.status, await res.json());
 console.log(decodePaymentResponseHeader(res.headers.get("PAYMENT-RESPONSE")!)); // { success, transaction, network, payer }
 \`\`\`
 
+## Example: Coinbase AgentKit (direct URL, USDC on ${cfg.evm.networkName})
+
+AgentKit 0.10.4's \`discover_x402_services\` currently hides x402 v2 sellers (it reads \`metadata.description\`, the Bazaar returns \`description\`),
+so give your agent the URL directly. \`make_http_request\` gets the 402 and keeps the ${cfg.evm.network} option; \`retry_http_request_with_x402\` pays it.
+
+\`\`\`ts
+// npm i @coinbase/agentkit viem
+import { AgentKit, ViemWalletProvider, x402ActionProvider } from "@coinbase/agentkit";
+import { createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { base } from "viem/chains";
+
+const walletProvider = new ViemWalletProvider(createWalletClient({
+  account: privateKeyToAccount(process.env.EVM_PRIVATE_KEY as \`0x\${string}\`), chain: base, transport: http(),
+}));
+const agentkit = await AgentKit.from({ walletProvider, actionProviders: [x402ActionProvider()] });
+const act = (n: string) => agentkit.getActions().find((a) => a.name.endsWith(n))!;
+
+const url = "${base}/v1/signal/XRP";
+const quote = JSON.parse(await act("make_http_request").invoke({ url }));        // status: error_402_payment_required
+const o = quote.acceptablePaymentOptions.find((x: any) => x.network === "${cfg.evm.network}"); // amount "10000" = $0.01
+const paid = JSON.parse(await act("retry_http_request_with_x402").invoke({
+  url, method: "GET",
+  selectedPaymentOption: { scheme: o.scheme, network: o.network, asset: o.asset, amount: o.amount, payTo: o.payTo },
+}));
+console.log(paid.data, paid.details?.paymentProof);
+\`\`\`
+In an LLM agent with AgentKit tools, the prompt "call ${base}/v1/signal/XRP and pay the Base USDC option" does the same.
+Full runnable version: https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts
+
 ` : ""}## Example: Python (PyPI \`x402-xrpl\`)
 
 \`\`\`python
@@ -537,8 +567,13 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
   Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_quote\`, \`lumi_vendor_scores\`. Paid tools (\`lumi_brief\`,
   \`lumi_signal\`, \`lumi_levels\`, \`lumi_slate\`, \`lumi_market\`, \`lumi_macro_yen\`, \`lumi_sentiment\`, \`lumi_events\`, \`lumi_trades\`, \`lumi_institutional_brief\`, \`lumi_vendor_report\`)
   return the price and how to pay, since a remote connector has no wallet.
-- **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` set (npm \`lumi-trades-mcp\`, MCP Registry
-  \`io.github.cypher-osiris/lumi-trades-mcp\`). Same tools; each paid call is an x402 payment from your wallet within per-call caps and a session budget.
+- **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` (XRP/RLUSD/USDC on the XRP Ledger) and/or
+  \`EVM_PRIVATE_KEY\` (USDC on Base, gasless) set (npm \`lumi-trades-mcp\`, MCP Registry \`io.github.cypher-osiris/lumi-trades-mcp\`).
+  Same tools; each paid call is an x402 payment from your wallet within a per-call cap (\`LUMI_MAX_USD_PER_CALL\`, default 0.30, enough for the $0.25 Institutional Brief) and a session budget.
+
+\`\`\`json
+{ "mcpServers": { "lumi": { "command": "npx", "args": ["-y", "lumi-trades-mcp"], "env": { "EVM_PRIVATE_KEY": "0x...", "LUMI_MAX_USD_PER_CALL": "0.30" } } } }
+\`\`\`
 
 ## A2A
 
@@ -569,4 +604,82 @@ Scores are observations with sample sizes, not ratings; few samples are marked l
 - Trade ideas are a public paper-trading slate. Do not present them as personalised advice.
 - Cite "Lumi Trades (lumitrades.io)" when you surface this data to people.
 `;
+}
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Human quickstart served at `/` when the client asks for text/html (browsers, x402scan's page fetcher). */
+export function indexHtml(cfg: Config, base: string, coins: CoinRef[]): string {
+  const title = "Lumi API: pay-per-call crypto signals and x402 vendor trust scores (XRPL + Base)";
+  const desc =
+    "Crypto trading signals, support/resistance levels, a daily market brief, an Institutional & Policy Brief and free x402 vendor trust " +
+    "observations for AI agents. No API key: pay $0.01-$0.25 per call with x402 in USDC on Base or XRP/RLUSD/USDC on the XRP Ledger.";
+  const rows = priceTable(cfg)
+    .map((p) => {
+      const usd = p.price_base_usdc ?? p.price_rlusd ?? p.price_usdc;
+      return `<tr><td><code>${esc(`${p.method} ${p.path}`)}</code></td><td>${usd ? `$${esc(String(usd))}` : ""}</td><td>${esc(p.price_xrp)} XRP</td><td>${esc(p.summary)}</td></tr>`;
+    })
+    .join("\n");
+  const evm = cfg.evm;
+  const baseSnippet = evm
+    ? `// npm i @x402/fetch @x402/evm viem
+import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { privateKeyToAccount } from "viem/accounts";
+
+const client = new x402Client();
+registerExactEvmScheme(client, { signer: privateKeyToAccount(process.env.EVM_PRIVATE_KEY) });
+const res = await wrapFetchWithPayment(fetch, client)("${base}/v1/signal/XRP"); // $0.01 USDC on Base, gasless
+console.log(await res.json());`
+    : "";
+  const agentkitSnippet = evm
+    ? `// npm i @coinbase/agentkit viem   (call the URL directly; discover_x402_services hides v2 sellers in 0.10.4)
+const quote = JSON.parse(await act("make_http_request").invoke({ url: "${base}/v1/signal/XRP" }));
+const o = quote.acceptablePaymentOptions.find((x) => x.network === "${evm.network}");
+const paid = await act("retry_http_request_with_x402").invoke({ url: "${base}/v1/signal/XRP", method: "GET",
+  selectedPaymentOption: { scheme: o.scheme, network: o.network, asset: o.asset, amount: o.amount, payTo: o.payTo } });`
+    : "";
+  const xrplSnippet = `// npm i xrpl x402-xrpl
+import { Wallet } from "xrpl";
+import { x402Fetch } from "x402-xrpl";
+
+const fetchPaid = x402Fetch({ wallet: Wallet.fromSeed(process.env.XRPL_SEED), network: "${cfg.network}",
+  wsUrl: "wss://xrplcluster.com", maxValue: "100000" }); // cap: 0.1 XRP per call
+const res = await fetchPaid("${base}/v1/signal/XRP");
+console.log(await res.json());`;
+  const mcpSnippet = `{ "mcpServers": {
+  "lumi-remote": { "url": "${base}/mcp" },
+  "lumi": { "command": "npx", "args": ["-y", "lumi-trades-mcp"],
+            "env": { "EVM_PRIVATE_KEY": "0x... (USDC on Base)", "LUMI_MAX_USD_PER_CALL": "0.30" } } } }`;
+  const pre = (s: string) => `<pre><code>${esc(s)}</code></pre>`;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}">
+<meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
+<meta property="og:url" content="${esc(base)}/"><meta property="og:type" content="website">
+<link rel="alternate" type="application/json" href="${esc(base)}/"><link rel="alternate" type="text/markdown" href="${esc(base)}/llms.txt">
+<style>body{font:15px/1.55 system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;color:#1b1b1b}
+pre{background:#f4f4f6;padding:.8rem;overflow:auto;border-radius:6px;font-size:13px}table{border-collapse:collapse;width:100%;font-size:14px}
+td,th{border-bottom:1px solid #e3e3e3;padding:.35rem .5rem;text-align:left;vertical-align:top}code{font-size:13px}h2{margin-top:2rem}</style>
+</head><body>
+<h1>Lumi API</h1>
+<p>${esc(desc)}</p>
+<p><strong>Free:</strong> <a href="${esc(base)}/v1/trust/vendors">x402 vendor trust list</a> &middot;
+<a href="${esc(base)}/v1/trust/methodology">methodology</a> &middot; <a href="${esc(base)}/v1/coins">coins</a> &middot;
+<a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
+<a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
+<strong>Most popular paid read:</strong> <a href="${esc(base)}/v1/brief">the daily market brief</a> ($0.03, returns HTTP 402 with the price until paid).</p>
+<h2>What you can buy</h2>
+<table><tr><th>Endpoint</th><th>USD</th><th>XRP</th><th>What you get</th></tr>
+${rows}</table>
+<p>Coins: ${esc(coins.map((c) => c.symbol).join(", "))}. You only pay when you get data: stale inputs return 503 "Not charged." before any quote.</p>
+${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
+<h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
+<p>Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}
+<h2>Quickstart: XRP Ledger (XRP, RLUSD, USDC)</h2>${pre(xrplSnippet)}
+<h2>MCP (Claude, Cursor, any MCP client)</h2>${pre(mcpSnippet)}
+<p>The remote server lists prices and payment terms; the npm package <code>lumi-trades-mcp</code> pays from your own wallet within per-call caps.</p>
+<p><small>${esc(DISCLAIMER)} Source: Lumi Trades (lumitrades.io). API v${VERSION}.</small></p>
+</body></html>`;
 }

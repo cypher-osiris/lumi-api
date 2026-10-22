@@ -71,7 +71,7 @@ export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "Every item is dated and sourced, with why it matters, impact and confidence, and a link_type that separates confirmed links from Lumi's " +
   "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
   "what to watch next. Use it when you need the institutional/regulatory picture behind these tokens without reading dozens of releases. " +
-  "Refreshed daily; never sold stale. Paid (~0.19 XRP / 0.25 RLUSD / 0.25 USDC). Not financial advice.";
+  "Refreshed daily; never sold stale. Paid: $0.25 per call (USDC/RLUSD, or the XRP equivalent). Not financial advice.";
 
 /** Same names and descriptions as mcp/src/index.js (PAID_TOOLS). */
 export const PAID_TOOLS: PaidTool[] = [
@@ -81,7 +81,7 @@ export const PAID_TOOLS: PaidTool[] = [
     path: (a) => `/v1/brief${a.format === "md" ? "?format=md" : ""}`,
     inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "md"], description: "json (default) or md for ready-to-post markdown" } } },
     description:
-      "Today's crypto market brief from Lumi: BTC price/levels/signal, CoinMarketCap Fear & Greed, funding, top/bottom movers, key levels for 13 coins, yen watch, events in the next 48h, Lumi's paper trades and record, sourced news. Paid (~0.02 XRP / 0.03 RLUSD).",
+      "Today's crypto market brief from Lumi: BTC price/levels/signal, CoinMarketCap Fear & Greed, funding, top/bottom movers, key levels for 13 coins, yen watch, events in the next 48h, Lumi's active paper trades, sourced news. Paid: $0.03 per call (USDC/RLUSD, or the XRP equivalent).",
   },
   {
     name: "lumi_signal",
@@ -89,7 +89,7 @@ export const PAID_TOOLS: PaidTool[] = [
     coin: (a) => str(a.coin),
     path: (a) => `/v1/signal/${encodeURIComponent(str(a.coin) ?? "")}`,
     inputSchema: COIN_ARG("Ticker or CoinGecko id: XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI"),
-    description: "Mechanical buy/sell read for one coin: overall label + score, 1h/4h/1d labels and indicators (RSI, MACD, EMA, Bollinger, StochRSI, volume). Paid (~0.005 XRP).",
+    description: "Mechanical buy/sell read for one coin: overall label + score, 1h/4h/1d labels and indicators (RSI, MACD, EMA, Bollinger, StochRSI, volume). Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent).",
   },
   {
     name: "lumi_levels",
@@ -97,14 +97,14 @@ export const PAID_TOOLS: PaidTool[] = [
     coin: (a) => str(a.coin),
     path: (a) => `/v1/levels/${encodeURIComponent(str(a.coin) ?? "")}`,
     inputSchema: COIN_ARG("Ticker or CoinGecko id, e.g. XRP"),
-    description: "Lumi's support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and sources for one coin. Paid (~0.005 XRP).",
+    description: "Lumi's support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and sources for one coin. Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent).",
   },
-  { name: "lumi_slate", route: "slate", path: () => "/v1/slate", inputSchema: NO_ARGS, description: "Lumi's current paper-trade ideas (entry, stop, targets, leverage, conviction) and 'no setup' notes. Paid (~0.01 XRP)." },
-  { name: "lumi_market", route: "market", path: () => "/v1/market", inputSchema: NO_ARGS, description: "BTC backdrop (levels, projection, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid (~0.01 XRP)." },
-  { name: "lumi_macro_yen", route: "yen", path: () => "/v1/macro/yen", inputSchema: NO_ARGS, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid (~0.01 XRP)." },
-  { name: "lumi_sentiment", route: "sentiment", path: () => "/v1/sentiment", inputSchema: NO_ARGS, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid (~0.005 XRP)." },
-  { name: "lumi_events", route: "events", path: () => "/v1/events", inputSchema: NO_ARGS, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid (~0.005 XRP)." },
-  { name: "lumi_trades", route: "trades", path: () => "/v1/trades", inputSchema: NO_ARGS, description: "Lumi's full paper-trade history and honest computed track record (win rate, P&L, by coin/direction, equity curve). Paid (~0.01 XRP)." },
+  { name: "lumi_slate", route: "slate", path: () => "/v1/slate", inputSchema: NO_ARGS, description: "Lumi's current paper-trade ideas (entry, stop, targets, leverage, conviction) and 'no setup' notes. Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_market", route: "market", path: () => "/v1/market", inputSchema: NO_ARGS, description: "BTC backdrop (levels, projection, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_macro_yen", route: "yen", path: () => "/v1/macro/yen", inputSchema: NO_ARGS, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid: $0.015 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_sentiment", route: "sentiment", path: () => "/v1/sentiment", inputSchema: NO_ARGS, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_events", route: "events", path: () => "/v1/events", inputSchema: NO_ARGS, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_trades", route: "trades", path: () => "/v1/trades", inputSchema: NO_ARGS, description: "Lumi's paper-trade history as a raw list (entry, stop, targets, leverage, status, reasoning). Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent)." },
   {
     name: "lumi_institutional_brief",
     route: "institutional",
@@ -169,7 +169,7 @@ function toolList() {
 }
 
 const INSTRUCTIONS =
-  "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate and track record, " +
+  "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins, plus a premium daily Institutional & Policy Brief " +
   "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
   "Paid tools cost a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
