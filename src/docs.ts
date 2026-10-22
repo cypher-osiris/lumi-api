@@ -132,10 +132,12 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     required: true,
     description: "Ticker or CoinGecko id (case-insensitive)",
     schema: { type: "string", enum: coins.map((c) => c.symbol) },
+    example: "xrp",
+    examples: { xrp: { value: "xrp" }, btc: { value: "btc" } },
   };
   const paths: Record<string, unknown> = {
-    "/v1/coins": { get: { summary: "List supported coins (free)", responses: { "200": { description: "OK" } } } },
-    "/health": { get: { summary: "Health (free)", responses: { "200": { description: "OK" } } } },
+    "/v1/coins": { get: { summary: "List supported coins (free)", security: [], responses: { "200": { description: "OK" } } } },
+    "/health": { get: { summary: "Health (free)", security: [], responses: { "200": { description: "OK" } } } },
     ...trustPaths(),
   };
   for (const e of PAID_ENDPOINTS) {
@@ -147,10 +149,15 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         parameters: e.template.includes("{coin}")
           ? [coinParam]
           : e.template.includes("{id}")
-          ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" } }]
+          ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "scalpstream", examples: { scalpstream: { value: "scalpstream" } } }]
           : e.route === "brief" || e.route === "institutional"
             ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
             : [],
+        ...(e.template.includes("{coin}")
+          ? { "x-example-url": `${base}${e.template.replace("{coin}", "xrp")}` }
+          : e.template.includes("{id}")
+          ? { "x-example-url": `${base}${e.template.replace("{id}", "scalpstream")}` }
+          : {}),
         "x-payment-info": {
           protocols: ["x402"],
           price: { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
@@ -186,6 +193,9 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         responses: {
           "200": { description: "Paid data (JSON). Settlement receipt in the PAYMENT-RESPONSE header." },
           "402": { description: "Payment required. x402 v2 PaymentRequired in the body and the PAYMENT-REQUIRED header." },
+          ...(e.template.includes("{")
+            ? { "400": { description: "Path template not filled in (a literal {coin} or {id}); the body gives an example URL (never charged)." } }
+            : {}),
           "404": { description: e.template.includes("{id}") ? "Unknown vendor (never charged)." : "Unknown coin (never charged)." },
           "503": { description: e.route === "vendor_report" ? "No observation of this vendor in the last 48 h, so the report is not sold (never charged)." : "Inputs missing or stale (never charged)." },
         },
@@ -197,6 +207,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     info: {
       title: "Lumi API",
       version: VERSION,
+      contact: { name: "Lumi Trades", url: "https://lumitrades.io", email: "hello@lumitrades.io" },
       description: `Pay-per-call crypto market reads from lumitrades.io, paid in ${settledIn(cfg)} via x402.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
@@ -216,6 +227,11 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     servers: [{ url: base }],
     externalDocs: { description: "Agent guide", url: `${base}/skill.md` },
     paths,
+    components: {
+      securitySchemes: {
+        bearer: { type: "http", scheme: "bearer", description: "Owner key, only for owner-only endpoints. Paid endpoints use x402 (see x-payment-info); free endpoints need no auth." },
+      },
+    },
   };
 }
 
@@ -224,13 +240,14 @@ function trustPaths(): Record<string, unknown> {
   const r = (codes: Record<string, string>) => Object.fromEntries(Object.entries(codes).map(([k, v]) => [k, { description: v }]));
   const tag = ["trust"];
   return {
-    "/v1/trust/vendors": { get: { tags: tag, summary: "x402 vendor observations (free)", description: "Lumi's automated observations of other x402 sellers: free 402-quote checks every 30 min and small paid test-buys, with timestamps, tx hashes and sample sizes. Listed in allowlist order, not ranked. Observations, not ratings.", responses: r({ "200": "OK" }) } },
-    "/v1/trust/vendors/{id}": { get: { tags: tag, summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" } }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
-    "/v1/trust/methodology": { get: { tags: tag, summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
+    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 vendor observations (free)", description: "Lumi's automated observations of other x402 sellers: free 402-quote checks every 30 min and small paid test-buys, with timestamps, tx hashes and sample sizes. Listed in allowlist order, not ranked. Observations, not ratings.", responses: r({ "200": "OK" }) } },
+    "/v1/trust/vendors/{id}": { get: { tags: tag, security: [], summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "scalpstream" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
+    "/v1/trust/methodology": { get: { tags: tag, security: [], summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
     "/v1/reports": {
       post: {
         tags: tag,
         summary: "Report a paid call to a listed vendor",
+        security: [],
         description: "Counts only when verified: the payment must be validated on-ledger (sent by `reporter` to a listed pay-to address, within 7 days) and `signature` must sign `lumi-report:<network>:<tx_hash>` with the payer's key. Unverified submissions are stored privately and never shown. 5/min and 20/day per IP.",
         requestBody: json({
           vendor_id: { type: "string" }, network: { type: "string", enum: ["xrpl:0", "eip155:8453"], default: "xrpl:0" }, tx_hash: { type: "string" }, reporter: { type: "string" }, signature: { type: "string" },
@@ -243,6 +260,7 @@ function trustPaths(): Record<string, unknown> {
       post: {
         tags: tag,
         summary: "Private tip to Lumi",
+        security: [],
         description: "Stored privately. Never shown, published, or returned by any endpoint. 3/min and 10/day per IP.",
         requestBody: json({ text: { type: "string", minLength: 10, maxLength: 1000 }, coins: { type: "array", items: { type: "string" }, maxItems: 10 }, source_urls: { type: "array", items: { type: "string", format: "uri" }, maxItems: 5 } }, ["text"]),
         responses: r({ "202": "Received", "400": "Invalid input", "429": "Rate limited" }),
@@ -252,6 +270,7 @@ function trustPaths(): Record<string, unknown> {
       post: {
         tags: tag,
         summary: "Vendor right to reply",
+        security: [],
         description: "Sign `lumi-reply:<vendor_id>:<sha256 hex of text>` with the key of a pay-to address listed for the vendor (XRPL: master key or RegularKey, include public_key; Base: EIP-191). Verified replies are shown with the vendor entry. Or email hello@lumitrades.io.",
         requestBody: json({ vendor_id: { type: "string" }, text: { type: "string", maxLength: 1000 }, network: { type: "string", enum: ["xrpl:0", "eip155:8453"] }, address: { type: "string" }, public_key: { type: "string" }, signature: { type: "string" } }, ["vendor_id", "text", "address", "signature"]),
         responses: r({ "201": "Verified and shown", "400": "Invalid input", "404": "Unknown vendor", "422": "Signature or address not verified (not stored)", "429": "Rate limited" }),

@@ -308,6 +308,20 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
+    // A scanner probing the OpenAPI template literally (/v1/signal/{coin}, /v1/trust/vendors/{id}/report) gets a
+    // helpful 400 with a concrete example URL instead of a bare 404. Nothing is quoted or charged.
+    const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
+    if (rawArg !== undefined && /^\{(coin|id)\}$/.test(rawArg)) {
+      const example = route === "vendor_report" ? `${base}/v1/trust/vendors/scalpstream/report` : `${base}/v1/${route}/xrp`;
+      return json(400, {
+        error: "path_template_not_filled",
+        detail: `Replace ${rawArg} with a real value. ${route === "vendor_report" ? "Vendor ids: GET /v1/trust/vendors (free)." : "Coins: GET /v1/coins (free)."}`,
+        example,
+        openapi: `${base}/openapi.json`,
+        note: "Not charged.",
+      });
+    }
+
     const prep = await prepare(route, m[2], base);
     if (!prep.ok) return json(prep.status, prep.error, prep.headers);
     const { coin, body } = prep;
@@ -405,5 +419,13 @@ function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string
       return institutionalView(d.institutional_brief);
     case "vendor_report":
       return null; // built by prepareVendorReport()
+  }
+}
+
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
   }
 }

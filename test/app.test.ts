@@ -216,3 +216,31 @@ describe("paid payloads", () => {
     expect(b.breadth.coins_tracked).toBe(13);
   });
 });
+
+describe("openapi scanner hints", () => {
+  it("has contact email, security: [] on free endpoints and path-param examples", async () => {
+    const { get } = setup();
+    const oa = await (await get("/openapi.json")).json();
+    expect(oa.info.contact.email).toBe("hello@lumitrades.io");
+    expect(oa.paths["/v1/coins"].get.security).toEqual([]);
+    expect(oa.paths["/v1/trust/vendors"].get.security).toEqual([]);
+    expect(oa.paths["/v1/trust/replies"].post.security).toEqual([]);
+    expect(oa.paths["/v1/trust/observations"].post.security).toEqual([{ bearer: [] }]);
+    expect(oa.components.securitySchemes.bearer.scheme).toBe("bearer");
+    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("xrp");
+    expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("scalpstream");
+    expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/xrp");
+  });
+
+  it("answers a literally probed path template with a helpful 400, never a quote", async () => {
+    const { get } = setup();
+    for (const [p, ex] of [["/v1/signal/{coin}", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp"], ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/scalpstream/report"]]) {
+      const r = await get(p);
+      expect(r.status).toBe(400);
+      expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
+      const b = await r.json();
+      expect(b.error).toBe("path_template_not_filled");
+      expect(b.example).toBe(BASE + ex);
+    }
+  });
+});
