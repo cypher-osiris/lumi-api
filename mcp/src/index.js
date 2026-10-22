@@ -103,6 +103,22 @@ export function buildServer(client) {
   );
 
   server.registerTool(
+    "lumi_samples",
+    {
+      title: "Lumi: free samples of every paid product",
+      description:
+        "Free. A truncated, clearly labelled SAMPLE of each paid product (signal, levels, slate, market, brief, yen, sentiment, events, trades, institutional brief, vendor report) with its USD price and full URL, so you can judge it before paying. Lists are cut to 2 entries; up to 10 minutes old. Pass route to get one product.",
+      inputSchema: { route: z.string().regex(/^[a-z_]{1,32}$/).optional().describe("Optional product route, e.g. institutional or signal") },
+    },
+    async ({ route }) => {
+      const r = await client.free("/v1/samples");
+      if (!route || r.status !== 200) return text(r.body);
+      const one = (r.body?.products || []).find((p) => p.route === route);
+      return text(one ? { label: r.body.label, ...one } : { error: "unknown route", routes: (r.body?.products || []).map((p) => p.route) });
+    },
+  );
+
+  server.registerTool(
     "lumi_quote",
     {
       title: "Lumi: price check without paying (free)",

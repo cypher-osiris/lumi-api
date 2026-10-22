@@ -47,6 +47,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/.well-known/agent-card.json", summary: "A2A agent card (alias /.well-known/agent.json)" },
       { method: "GET", path: "/openapi.json", summary: "OpenAPI 3.1 description with x-payment-info" },
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
+      { method: "GET", path: "/v1/samples", summary: "Free truncated SAMPLE of every paid product (lists cut to 2, up to 10 min old) with USD price and full URL" },
       { method: "GET", path: "/v1/trust/vendors", summary: "Lumi's automated observations of other x402 vendors (402-quote checks every 30 min, paid test-buys with tx evidence, sample sizes)" },
       { method: "GET", path: "/v1/trust/vendors/{id}", summary: "One vendor: observations with evidence, latest probes, verified agent reports, vendor replies" },
       { method: "GET", path: "/v1/trust/vendors/{id}/report", summary: "Paid ($0.02, x402): full observation history for one vendor; listed under paid_endpoints" },
@@ -137,6 +138,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   };
   const paths: Record<string, unknown> = {
     "/v1/coins": { get: { summary: "List supported coins (free)", security: [], responses: { "200": { description: "OK" } } } },
+    "/v1/samples": { get: { summary: "Free truncated samples of every paid product (labelled SAMPLE)", security: [], responses: { "200": { description: "OK" } } } },
     "/health": { get: { summary: "Health (free)", security: [], responses: { "200": { description: "OK" } } } },
     ...trustPaths(),
   };
@@ -211,7 +213,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
       description: `Pay-per-call crypto market reads from lumitrades.io, paid in ${settledIn(cfg)} via x402.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
-        "GET /v1/coins (free) lists supported coins. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
+        "GET /v1/coins (free) lists supported coins; GET /v1/samples (free) previews every paid product, truncated. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
         "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
         "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives CoinMarketCap Fear & Greed, funding and breadth; " +
@@ -286,7 +288,7 @@ function mcpInfo(base: string) {
     stdio: { package: "lumi-trades-mcp", command: "npx -y lumi-trades-mcp", pays_with: "your XRPL wallet (XRPL_SEED), within per-call caps and a session budget" },
     registry: "io.github.cypher-osiris/lumi-trades-mcp",
     tools: {
-      free: ["lumi_catalog", "lumi_coins", "lumi_quote", "lumi_vendor_scores"],
+      free: ["lumi_catalog", "lumi_coins", "lumi_samples", "lumi_quote", "lumi_vendor_scores"],
       paid: ["lumi_brief", "lumi_signal", "lumi_levels", "lumi_slate", "lumi_market", "lumi_macro_yen", "lumi_sentiment", "lumi_events", "lumi_trades", "lumi_institutional_brief", "lumi_vendor_report"],
     },
     note: "On the remote server, paid tools return the price and how to pay (x402 at the REST endpoint, or the npm package with your wallet). Stale data is never sold.",
@@ -430,7 +432,7 @@ Fields that are not available at request time are omitted, never filled with gue
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/trust/vendors\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
 Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`.
 Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day; the Institutional & Policy Brief once a day (not sold if older than 36 h).
@@ -564,7 +566,7 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 ## MCP
 
 - **Remote MCP server:** \`${base}/mcp\` (Streamable HTTP, stateless; protocol 2026-07-28 and 2025-03-26 .. 2025-11-25).
-  Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_quote\`, \`lumi_vendor_scores\`. Paid tools (\`lumi_brief\`,
+  Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_samples\`, \`lumi_quote\`, \`lumi_vendor_scores\`. Paid tools (\`lumi_brief\`,
   \`lumi_signal\`, \`lumi_levels\`, \`lumi_slate\`, \`lumi_market\`, \`lumi_macro_yen\`, \`lumi_sentiment\`, \`lumi_events\`, \`lumi_trades\`, \`lumi_institutional_brief\`, \`lumi_vendor_report\`)
   return the price and how to pay, since a remote connector has no wallet.
 - **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` (XRP/RLUSD/USDC on the XRP Ledger) and/or
@@ -666,7 +668,7 @@ td,th{border-bottom:1px solid #e3e3e3;padding:.35rem .5rem;text-align:left;verti
 <h1>Lumi API</h1>
 <p>${esc(desc)}</p>
 <p><strong>Free:</strong> <a href="${esc(base)}/v1/trust/vendors">x402 vendor trust list</a> &middot;
-<a href="${esc(base)}/v1/trust/methodology">methodology</a> &middot; <a href="${esc(base)}/v1/coins">coins</a> &middot;
+<a href="${esc(base)}/v1/trust/methodology">methodology</a> &middot; <a href="${esc(base)}/v1/coins">coins</a> &middot; <a href="${esc(base)}/v1/samples">free samples</a> &middot;
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
 <strong>Most popular paid read:</strong> <a href="${esc(base)}/v1/brief">the daily market brief</a> ($0.03, returns HTTP 402 with the price until paid).</p>

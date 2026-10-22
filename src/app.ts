@@ -22,6 +22,7 @@ import { createTrust, TRUST_POST_PATHS, REPORT_FRESH_MS, type Trust } from "./tr
 import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
+import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
 export interface AppOptions {
@@ -142,6 +143,36 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     baseRpc: env.BASE_RPC_URL ?? "https://mainnet.base.org",
     buyers: split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo],
   });
+
+  /** Free samples of every paid product, rebuilt at most every 10 minutes per isolate. */
+  let samplesCache: { at: number; base: string; body: Record<string, unknown> } | undefined;
+  async function samplesDoc(base: string): Promise<Record<string, unknown>> {
+    if (samplesCache && samplesCache.base === base && now() - samplesCache.at < 600_000) return samplesCache.body;
+    const products = await Promise.all(
+      PAID_ENDPOINTS.map(async (e) => {
+        const entry = sampleEntry(config, base, e.route);
+        try {
+          const prep = await prepare(e.route, SAMPLE_ARGS[e.route], base);
+          if (!prep.ok) return { ...entry, available: false, reason: String((prep.error as any)?.error ?? prep.status) };
+          return { ...entry, available: true, ...productSample(e.route, prep.body) };
+        } catch {
+          return { ...entry, available: false, reason: "unavailable" };
+        }
+      }),
+    );
+    const body = {
+      kind: "samples",
+      is_sample: true,
+      label: SAMPLE_LABEL,
+      generated_at: new Date(now()).toISOString(),
+      note: "Each entry is a truncated preview of the paid response (lists cut to 2 entries, long text clipped). It may be up to 10 minutes old. Free, no payment.",
+      count: products.length,
+      products,
+      disclaimer: DISCLAIMER,
+    };
+    samplesCache = { at: now(), base, body };
+    return body;
+  }
 
   async function coins(): Promise<CoinRef[]> {
     try {
@@ -344,6 +375,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         return json(200, wellKnownX402(config, base), { "Cache-Control": "public, max-age=300" });
       case "/openapi.json":
         return json(200, openApi(config, base, await coins()), { "Cache-Control": "public, max-age=300" });
+      case "/v1/samples":
+        return json(200, await samplesDoc(base), { "Cache-Control": "public, max-age=600" });
       case "/v1/coins": {
         const list = await coins();
         return json(200, {

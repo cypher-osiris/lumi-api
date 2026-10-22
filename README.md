@@ -8,7 +8,7 @@ Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals
 
 ## Quickstart
 
-Free first: [`/v1/trust/vendors`](https://api.lumitrades.io/v1/trust/vendors) (x402 vendor trust observations), [`/v1/coins`](https://api.lumitrades.io/v1/coins),
+Free first: [`/v1/trust/vendors`](https://api.lumitrades.io/v1/trust/vendors) (x402 vendor trust observations), [`/v1/samples`](https://api.lumitrades.io/v1/samples) (truncated samples of every paid product), [`/v1/coins`](https://api.lumitrades.io/v1/coins),
 [`/llms.txt`](https://api.lumitrades.io/llms.txt). Open [api.lumitrades.io](https://api.lumitrades.io/) in a browser for the human quickstart.
 
 **USDC on Base, official x402 fetch SDK** ([examples/base-x402-fetch.ts](examples/base-x402-fetch.ts)):
@@ -73,6 +73,7 @@ console.log(paid.data);
 | free | `GET /.well-known/x402` | – | x402 discovery manifest ([draft-hawkins-x402-dns-discovery](https://datatracker.ietf.org/doc/draft-hawkins-x402-dns-discovery/) shape) |
 | free | `GET /openapi.json` | – | OpenAPI 3.1 with `x-payment-info` per paid route (x402scan-style discovery) |
 | free | `GET /v1/coins` | – | Supported coins |
+| free | `GET /v1/samples` | – | Truncated, labelled SAMPLE of every paid product (lists cut to 2, signal shows one timeframe, institutional = headline + big picture + 2 items + sources); cached 10 min |
 | free | `POST /mcp` | – | Remote MCP server (Streamable HTTP): free tools for everyone; paid tools explain the price and how to pay |
 | free | `GET /.well-known/agent-card.json` (also `/.well-known/agent.json`) | – | A2A agent card (A2A 1.0, with 0.3 compatibility fields): skills mirroring the endpoints, MCP URL, x402 payment networks |
 | free | `POST /a2a` | – | A2A JSON-RPC (`SendMessage` 1.0, `message/send` 0.3): free skills answer inline; paid skills return the live x402 terms |
@@ -435,7 +436,7 @@ The Worker serves a remote MCP endpoint (Streamable HTTP, stateless, JSON respon
 plus the legacy `initialize` handshake for `2024-11-05` .. `2025-11-25` clients). Paste the URL into any client that takes a remote MCP
 server URL (e.g. a Grok, Claude or ChatGPT connector, or `npx @modelcontextprotocol/inspector`).
 
-- Same tool names and descriptions as the stdio package below: free `lumi_catalog`, `lumi_coins`, `lumi_quote`, `lumi_vendor_scores`; paid `lumi_brief`,
+- Same tool names and descriptions as the stdio package below: free `lumi_catalog`, `lumi_coins`, `lumi_samples`, `lumi_quote`, `lumi_vendor_scores`; paid `lumi_brief`,
   `lumi_signal`, `lumi_levels`, `lumi_slate`, `lumi_market`, `lumi_macro_yen`, `lumi_sentiment`, `lumi_events`, `lumi_trades`, `lumi_institutional_brief`, `lumi_vendor_report`.
 - A remote connector has no wallet, so a paid tool returns a normal tool result with the price and the two ways to pay: x402 at the
   REST endpoint, or the `lumi-trades-mcp` npm package with your own XRPL wallet. Nothing is charged.

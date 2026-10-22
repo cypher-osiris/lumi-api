@@ -16,6 +16,7 @@ use this package when you want paid tools to pay automatically from your own wal
 | Tool | Paid? | Price (USD / XRP) | What you get |
 |---|---|---|---|
 | `lumi_catalog` | free | – | Endpoints, live prices, this server's wallet + spend caps |
+| `lumi_samples` | free | `route?` | Truncated, labelled samples of every paid product with USD price and full URL |
 | `lumi_coins` | free | – | The 13 coins covered (XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI) |
 | `lumi_quote` | free | – | The x402 quote for any paid path, without paying |
 | `lumi_vendor_scores` | free | – | Lumi's automated observations of other x402 vendors (402-quote checks, paid test-buys, tx evidence, sample sizes); optional `vendor_id` |

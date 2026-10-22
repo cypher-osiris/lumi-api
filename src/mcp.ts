@@ -128,7 +128,7 @@ export const PAID_TOOLS: PaidTool[] = [
 ];
 
 const PAID_SUFFIX =
-  " On this remote MCP server: returns the data for the owner key; otherwise returns the price and how to pay (x402 at the REST endpoint, or the lumi-trades-mcp npm package with your XRPL wallet). Never charged when data is stale.";
+  " On this remote MCP server: returns the data for the owner key; otherwise returns the price and how to pay (x402 at the REST endpoint, or the lumi-trades-mcp npm package with your XRPL or Base wallet). Never charged when data is stale.";
 
 function toolList() {
   const ro = { readOnlyHint: true, openWorldHint: true };
@@ -141,6 +141,14 @@ function toolList() {
       annotations: ro,
     },
     { name: "lumi_coins", title: "Lumi: supported coins (free)", description: "Free. The 13 coins Lumi covers (tickers and CoinGecko ids).", inputSchema: NO_ARGS, annotations: ro },
+    {
+      name: "lumi_samples",
+      title: "Lumi: free samples of every paid product",
+      description:
+        "Free. A truncated, clearly labelled SAMPLE of each paid product (signal, levels, slate, market, brief, yen, sentiment, events, trades, institutional brief, vendor report) with its USD price and full URL, so you can see the shape and quality before paying. Lists are cut to 2 entries; up to 10 minutes old. Pass route to get one product.",
+      inputSchema: { type: "object", properties: { route: { type: "string", pattern: "^[a-z_]{1,32}$", description: "Optional product route, e.g. institutional or signal" } } },
+      annotations: ro,
+    },
     {
       name: "lumi_quote",
       title: "Lumi: price check without paying (free)",
@@ -171,7 +179,7 @@ function toolList() {
 const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins, plus a premium daily Institutional & Policy Brief " +
-  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
+  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_samples (truncated previews of every paid product), lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
   "Paid tools cost a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
@@ -434,6 +442,14 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
           guarantee: idx.guarantee,
         });
       }
+      case "lumi_samples": {
+        const r = await deps.quote("/v1/samples");
+        if (r.status !== 200) return text({ status: r.status, body: r.body }, true);
+        const route = str(args.route);
+        if (!route) return text(r.body);
+        const one = (r.body?.products || []).find((p: any) => p.route === route);
+        return one ? text({ label: r.body.label, ...one }) : text({ error: "unknown route", routes: (r.body?.products || []).map((p: any) => p.route) }, true);
+      }
       case "lumi_coins": {
         const list = await deps.coins();
         return text(list.map((c) => ({ symbol: c.symbol, id: c.id, name: c.name, group: (c as any).group })));
@@ -543,7 +559,8 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
               note: "Runs locally over stdio and pays from your wallet within per-call caps and a session budget.",
             },
           ],
-          free_tools: ["lumi_catalog", "lumi_coins", "lumi_quote", "lumi_vendor_scores"],
+          free_tools: ["lumi_catalog", "lumi_coins", "lumi_samples", "lumi_quote", "lumi_vendor_scores"],
+          free_sample: `${base}/v1/samples`,
           disclaimer: DISCLAIMER,
         },
         null,
