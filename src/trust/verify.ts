@@ -66,7 +66,14 @@ async function rpc(f: Fetch, url: string, body: unknown): Promise<any> {
 }
 
 /** Public Base RPCs tried after the configured one (some refuse or rate-limit requests from Workers). */
-export const BASE_RPC_FALLBACKS = ["https://base-rpc.publicnode.com", "https://1rpc.io/base"];
+export const BASE_RPC_FALLBACKS = [
+  "https://base.drpc.org",
+  "https://gateway.tenderly.co/public/base",
+  "https://1rpc.io/base",
+  "https://base-mainnet.public.blastapi.io",
+  "https://base.meowrpc.com",
+  "https://base-rpc.publicnode.com", // last: refuses older-tx ("archive") lookups without a token
+];
 
 /** JSON-RPC against each URL in turn; a reply with a JSON-RPC error also moves on to the next URL. */
 async function rpcAny(f: Fetch, urls: string[], body: unknown): Promise<any> {
