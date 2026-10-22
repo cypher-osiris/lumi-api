@@ -92,9 +92,21 @@ database_name = "lumi_trust"
 database_id = "7ddfc495-8500-40cf-88eb-6d7d4121f19b"
 migrations_dir = "migrations"
 
-# Free 402-quote checks of allowlisted vendors (no payment).
+# Free 402-quote checks of allowlisted vendors and the x402 catalog (no payment).
 [triggers]
 crons = ["*/30 * * * *"]
+
+# x402 catalog work fan-out (Bazaar ingest pages + quote-check batches), one small job per invocation so each
+# stays inside the Workers Free limits (50 subrequests, 10 ms CPU). Roughly 1.6k messages/day.
+[[queues.producers]]
+binding = "TRUST_QUEUE"
+queue = "lumi-trust-jobs"
+
+[[queues.consumers]]
+queue = "lumi-trust-jobs"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 1
 
 [env.testnet]
 name = "lumi-api-testnet"

@@ -12,6 +12,9 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createClient, loadSettings, assetLabel } from "./lumi.js";
 
+const VENDOR_LOOKUP_DESCRIPTION =
+  "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs a free, unpaid 402-quote check of every listing at least daily (valid quote, price and payTo vs the listing, latency, domain age), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
+
 export const VERSION = "0.5.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
@@ -132,13 +135,24 @@ export function buildServer(client) {
     "lumi_vendor_scores",
     {
       title: "Lumi: x402 vendor observations (free)",
-      description:
-        "Free. Lumi's x402 vendor trust observations: free 402-quote checks every 30 min plus small paid test-buys, " +
-        "with timestamps, tx hashes and sample sizes. Scores are observations, not ratings; few samples = low confidence. Pass vendor_id for one vendor's full evidence.",
-      inputSchema: { vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).optional().describe("Optional vendor id from the list, e.g. asksurf") },
+      description: VENDOR_LOOKUP_DESCRIPTION,
+      inputSchema: {
+        url: z.string().max(500).optional().describe("Resource URL you are about to pay, e.g. https://example.com/api/data"),
+        domain: z.string().max(253).optional().describe("Seller host or domain, e.g. example.com"),
+        payTo: z.string().max(120).optional().describe("payTo address from the seller's 402 quote (0x... or r...)"),
+        vendor_id: z.string().regex(/^[a-z0-9-]{1,64}$/).optional().describe("Optional curated vendor id, e.g. asksurf"),
+      },
     },
-    async ({ vendor_id }) => {
-      const r = await client.free(vendor_id ? `/v1/trust/vendors/${encodeURIComponent(vendor_id)}` : "/v1/trust/vendors");
+    async ({ url, domain, payTo, vendor_id }) => {
+      let path = "/v1/trust/vendors";
+      if (url || domain || payTo) {
+        const q = new URLSearchParams();
+        if (url) q.set("url", url);
+        if (domain) q.set("domain", domain);
+        if (payTo) q.set("payTo", payTo);
+        path += "?" + q.toString();
+      } else if (vendor_id) path += "/" + encodeURIComponent(vendor_id);
+      const r = await client.free(path);
       return r.status === 200 ? text(r.body) : { ...text({ status: r.status, body: r.body }), isError: true };
     },
   );

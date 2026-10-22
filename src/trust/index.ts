@@ -13,6 +13,8 @@ import { json } from "../x402";
 import { isOwnerKey } from "../mcp";
 import { scrubText } from "../sanitize";
 import { VENDORS, vendorById, type Vendor, type VendorEndpoint } from "../vendors";
+import type { Catalog } from "./catalog_service";
+import type { LookupQuery } from "./catalog";
 import type { ObservationRow, ProbeRow, ProbeSummary, ReportRow, TrustStore } from "./store";
 import {
   lookupXrplPayment, lookupBaseUsdc, verifyXrplSignature, xrplAddressOf, xrplRegularKey, recoverEvmSigner, sha256Hex,
@@ -46,6 +48,8 @@ export interface TrustDeps {
   baseRpc: string;
   /** XRPL addresses whose payments are Lumi's own test-buys. */
   buyers: string[];
+  /** x402 catalog (CDP Bazaar) with free quote checks; absent = curated list only. */
+  catalog?: Catalog;
 }
 
 export interface Trust {
@@ -55,6 +59,15 @@ export interface Trust {
   vendorDoc(id: string, base: string): Promise<Record<string, unknown> | null>;
   /** Paid detailed report: full observation history. Unknown vendor and stale data are never sold. */
   vendorReport(id: string, base: string): Promise<VendorReportResult>;
+  /** Lookup by resource URL, domain or payTo across the curated list and the catalog. */
+  lookup(q: LookupQuery, base: string): Promise<Record<string, unknown>>;
+}
+
+/** Read url / domain / payTo lookup parameters (payTo matched case-insensitively). */
+export function lookupQuery(sp: URLSearchParams): LookupQuery | null {
+  const get = (...ks: string[]) => { for (const k of ks) { const v = sp.get(k); if (v && v.trim()) return v.trim().slice(0, 500); } return undefined; };
+  const q: LookupQuery = { url: get("url", "resource"), domain: get("domain", "host"), payTo: get("payTo", "payto", "pay_to") };
+  return q.url || q.domain || q.payTo ? q : null;
 }
 
 export type VendorReportResult =
@@ -252,6 +265,20 @@ export function methodologyDoc(base: string) {
       "Paid test-buys: Lumi buys one call per vendor per day from its own XRPL wallet (hard caps: 0.15 RLUSD + 0.05 XRP per day in total, and no endpoint priced above 0.05). Each record shows the amount, asset, ledger tx hash, HTTP status, whether the response contained data, and latency. Every test-buy tx is checked on the XRPL ledger before it is stored.",
       "Agent reports: any agent that paid a listed vendor can POST /v1/reports. A report counts only if the payment is validated on-ledger (tesSUCCESS, sent by the reporter, delivered to a pay-to address listed for that vendor, within the last 7 days) AND the payer signs the challenge `lumi-report:<network>:<tx_hash>`. Unverified submissions are stored privately for abuse review and are never shown or scored.",
     ],
+    x402_catalog: {
+      source: "CDP x402 Bazaar discovery API (free), ingested daily at 02:00 UTC. x402scan's resource API is paid, so it is not ingested.",
+      lookup: `${base}/v1/trust/vendors?url=<resource> | ?domain=<host> | ?payTo=<address> (case-insensitive)`,
+      quote_checks: "Every catalogued http resource gets one free, unpaid request at least once a day (rotating slices every 30 minutes, fanned out over a queue). Recorded: HTTP status, whether a readable x402 quote came back, whether it pays an address in the listing, quoted price vs listed price, latency, and the last 30 results. MCP listings are not probed. The registrable domain's registration date is read from RDAP about monthly (shared hosting hosts such as workers.dev are skipped). TLS certificate age is not measured.",
+      tiers: {
+        "catalogued, not yet checked": "Listed in the Bazaar; no quote check yet.",
+        "quote-verified, low confidence": "A valid x402 quote in the last 48 h. This shows the endpoint is up and asks for payment as listed; it says nothing about what a paid call returns.",
+        "quote-checked: no valid x402 quote at the last check": "The last free request did not return a readable 402 quote (e.g. it answered 200, 404, timed out, or quoted a different payTo). Often a parameter issue; not a judgment of the seller.",
+        "purchase-verified": "Lumi paid for one call from its own wallet (Base USDC or XRPL); the payment is confirmed on-chain before it is stored, with HTTP status, data returned yes/no and latency.",
+        "self, not scored": "Lumi's own endpoints.",
+      },
+      no_match: "{observed:false, note}: Lumi has not seen this seller. No observation is not a negative signal.",
+      not_scored: "Catalog entries get labels, not scores; scores apply only to the curated XRPL list below.",
+    },
     score: {
       range: "0-100, over the last 30 days",
       weights: WEIGHTS,
@@ -384,6 +411,8 @@ export function createTrust(deps: TrustDeps): Trust {
       count: rows.length,
       ordering: "allowlist order (not ranked)",
       vendors: rows,
+      self: { name: "Lumi Trades API", url: base, label: "self, not scored", note: "Lumi's own endpoints are listed for completeness; Lumi does not score or quote-check itself." },
+      ...(deps.catalog ? { catalog: await deps.catalog.summary(base) } : {}),
       right_to_reply: rightToReply(base),
       disclaimer: DISCLAIMER,
     };
@@ -915,11 +944,24 @@ export function createTrust(deps: TrustDeps): Trust {
     return json(201, { recorded: true, observation: obsView(row) });
   }
 
+  async function lookup(q: LookupQuery, base: string): Promise<Record<string, unknown>> {
+    if (deps.catalog) return deps.catalog.lookupDoc(q, base);
+    return { kind: "trust_lookup", query: q, observed: false, note: "Catalog lookups are unavailable on this deployment." };
+  }
+
   async function handle(request: Request, path: string, base: string): Promise<Response | null> {
     const method = request.method;
+    if (deps.catalog && path.startsWith("/v1/trust/catalog")) {
+      const r = await deps.catalog.handle(request, new URL(request.url), base);
+      if (r) return r;
+    }
     if (method === "GET" || method === "HEAD") {
       if (path === "/v1/trust/methodology") return json(200, methodologyDoc(base), { "Cache-Control": "public, max-age=3600" });
-      if (path === "/v1/trust/vendors") return json(200, await vendorsDoc(base), { "Cache-Control": "public, max-age=120" });
+      if (path === "/v1/trust/vendors") {
+        const q = lookupQuery(new URL(request.url).searchParams);
+        if (q) return json(200, await lookup(q, base), { "Cache-Control": "public, max-age=300" });
+        return json(200, await vendorsDoc(base), { "Cache-Control": "public, max-age=120" });
+      }
       const m = path.match(/^\/v1\/trust\/vendors\/([a-z0-9-]{1,64})$/);
       if (m) {
         const doc = await vendorDoc(m[1], base);
@@ -945,5 +987,5 @@ export function createTrust(deps: TrustDeps): Trust {
     return null;
   }
 
-  return { handle, runProbes, vendorsDoc, vendorDoc, vendorReport };
+  return { handle, runProbes, vendorsDoc, vendorDoc, vendorReport, lookup };
 }

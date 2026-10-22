@@ -49,6 +49,8 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
       { method: "GET", path: "/v1/samples", summary: "Free truncated SAMPLE of every paid product (lists cut to 2, up to 10 min old) with USD price and full URL" },
       { method: "GET", path: "/v1/trust/vendors", summary: "Lumi's automated observations of other x402 vendors (402-quote checks every 30 min, paid test-buys with tx evidence, sample sizes)" },
+      { method: "GET", path: "/v1/trust/vendors?url=|domain=|payTo=", summary: "Look up any x402 seller before you pay it: the full CDP Bazaar catalog with a free daily 402-quote check of every listing ('quote-verified, low confidence') and Lumi's on-chain-confirmed test-buys ('purchase-verified')" },
+      { method: "GET", path: "/v1/trust/catalog", summary: "Browse the ingested x402 catalog (?after=&limit=, or ?popular=1&max_usd=0.05), with counts by tier" },
       { method: "GET", path: "/v1/trust/vendors/{id}", summary: "One vendor: observations with evidence, latest probes, verified agent reports, vendor replies" },
       { method: "GET", path: "/v1/trust/vendors/{id}/report", summary: "Paid ($0.02, x402): full observation history for one vendor; listed under paid_endpoints" },
       { method: "GET", path: "/v1/trust/methodology", summary: "How trust observations and scores are computed; how to report and how vendors reply" },
@@ -242,7 +244,17 @@ function trustPaths(): Record<string, unknown> {
   const r = (codes: Record<string, string>) => Object.fromEntries(Object.entries(codes).map(([k, v]) => [k, { description: v }]));
   const tag = ["trust"];
   return {
-    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 vendor observations (free)", description: "Lumi's automated observations of other x402 sellers: free 402-quote checks every 30 min and small paid test-buys, with timestamps, tx hashes and sample sizes. Listed in allowlist order, not ranked. Observations, not ratings.", responses: r({ "200": "OK" }) } },
+    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 seller lookup and vendor observations (free)", description: "With url, domain or payTo (case-insensitive): matches across the full CDP x402 Bazaar catalog (ingested daily; every listing gets a free, unpaid 402-quote check at least daily: valid quote, price and payTo vs the listing, latency, domain age) and Lumi's on-chain-confirmed test-buys. Tiers: 'catalogued, not yet checked', 'quote-verified, low confidence', 'quote-checked: no valid x402 quote at the last check', 'purchase-verified'. No match returns {observed:false, note}; that is not a negative signal. Without parameters: the curated XRPL vendor list (allowlist order, not ranked) plus catalog counts. Observations, not ratings.", parameters: [
+      { name: "url", in: "query", required: false, description: "Resource URL you are about to pay", schema: { type: "string", maxLength: 500 } },
+      { name: "domain", in: "query", required: false, description: "Seller host or registrable domain", schema: { type: "string", maxLength: 253 } },
+      { name: "payTo", in: "query", required: false, description: "payTo address from the seller's 402 quote (case-insensitive)", schema: { type: "string", maxLength: 120 } },
+    ], responses: r({ "200": "OK" }) } },
+    "/v1/trust/catalog": { get: { tags: tag, security: [], summary: "Browse the ingested x402 catalog (free)", parameters: [
+      { name: "after", in: "query", required: false, schema: { type: "integer", minimum: 0 } },
+      { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100 } },
+      { name: "popular", in: "query", required: false, description: "1 = most-used Bazaar listings first", schema: { type: "string", enum: ["1"] } },
+      { name: "max_usd", in: "query", required: false, schema: { type: "number" } },
+    ], responses: r({ "200": "OK" }) } },
     "/v1/trust/vendors/{id}": { get: { tags: tag, security: [], summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "scalpstream" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
     "/v1/trust/methodology": { get: { tags: tag, security: [], summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
     "/v1/reports": {
@@ -421,7 +433,7 @@ Which one to call:
   (daily, sourced; each link labelled \`confirmed\`, \`indirect_alignment\` (Lumi's analysis) or \`context\`; \`?format=md\` for markdown).
 - Every past paper-trade idea as a raw list? \`GET /v1/trades\`. Current ideas only? \`GET /v1/slate\`.
 - One coin? \`GET /v1/signal/{coin}\` + \`GET /v1/levels/{coin}\`.
-- Checking an x402 vendor before you pay it? \`GET /v1/trust/vendors/{id}\` is the free summary; \`GET /v1/trust/vendors/{id}/report\` ($0.02)
+- Checking any x402 seller before you pay it? \`GET /v1/trust/vendors?url=<resource>\` (or \`?domain=\`, \`?payTo=\`) is free and covers the whole CDP Bazaar catalog. For curated vendors, \`GET /v1/trust/vendors/{id}\` is the free summary; \`GET /v1/trust/vendors/{id}/report\` ($0.02)
   is the full observation history (every quote check and paid test-buy with tx hashes, latency stats and trend, uptime %, verified reports, replies).
   Unknown vendor: 404; no observation in the last 48 h: 503. Both before any 402, never charged.
 
@@ -432,7 +444,7 @@ Fields that are not available at request time are omitted, never filled with gue
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\` (\`?url=|domain=|payTo=\` lookup), \`GET /v1/trust/catalog\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
 Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`.
 Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day; the Institutional & Policy Brief once a day (not sold if older than 36 h).
@@ -590,6 +602,7 @@ Lumi publishes its automated observations of other x402 sellers on the XRP Ledge
 and one small paid test-buy per vendor per day from Lumi's own wallet, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
 Scores are observations with sample sizes, not ratings; few samples are marked low confidence; vendors are listed in allowlist order, not ranked.
 
+- Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free daily quote checks = "quote-verified, low confidence"; on-chain test-buys = "purchase-verified"; no match = \`{observed:false}\`, not a negative signal). Browse: \`GET ${base}/v1/trust/catalog\`.
 - \`GET ${base}/v1/trust/vendors\`, \`GET ${base}/v1/trust/vendors/{id}\`, method: \`GET ${base}/v1/trust/methodology\`. MCP: \`lumi_vendor_scores\`. A2A: \`vendor_trust\`.
 - **Paid detailed report ($0.02 per call, x402 on every rail):** \`GET ${base}/v1/trust/vendors/{id}/report\`: full observation history (every free quote
   check over 90 days, every paid test-buy with tx hash and delivered yes/no), latency min/p50/p90/p95/max and 7-day trend, uptime % for 24h/7d/30d/90d and a

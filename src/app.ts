@@ -22,6 +22,8 @@ import { createTrust, TRUST_POST_PATHS, REPORT_FRESH_MS, type Trust } from "./tr
 import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
+import { D1CatalogStore, MemoryCatalogStore, type CatalogStore } from "./trust/catalog";
+import { createCatalog, type Catalog, type CatalogJob, type QueueLike } from "./trust/catalog_service";
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
@@ -34,7 +36,14 @@ export interface AppOptions {
   trustStore?: TrustStore;
   /** Sales ledger override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   salesStore?: SalesStore;
+  /** x402 catalog store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  catalogStore?: CatalogStore;
+  /** Queue override (tests). Default: env.TRUST_QUEUE; absent = jobs run inline. */
+  queue?: QueueLike;
 }
+
+/** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
+const DEFAULT_EVM_BUYERS = ["0x5E617bac19912e6d212CB303ae84655E9E203532", "0x7722DfAE6bbed2Fd02Dc07455c2f5BF14bE25E4a"];
 
 /** The subset of the Workers ExecutionContext the app uses. */
 export interface WaitUntil {
@@ -53,10 +62,13 @@ export type Prepared =
 
 export interface App {
   fetch(request: Request, ctx?: WaitUntil): Promise<Response>;
-  /** Cron entry: free, unpaid 402-quote probes of the trust allowlist. */
-  scheduled(): Promise<{ probes: number; ok: number }>;
+  /** Cron entry: free, unpaid 402-quote probes of the trust allowlist + the x402 catalog slice. */
+  scheduled(): Promise<{ probes: unknown; catalog: unknown }>;
+  /** Queue consumer: one catalog ingest page or quote-check batch. */
+  queue(job: CatalogJob): Promise<unknown>;
   config: Config;
   trust: Trust;
+  catalog: Catalog;
   sales: SalesStore;
 }
 
@@ -132,6 +144,29 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       }
     },
   });
+  const xrplRpc = split(env.XRPL_RPC_URLS).length ? split(env.XRPL_RPC_URLS) : DEFAULT_XRPL_RPC[config.network] ?? DEFAULT_XRPL_RPC["xrpl:0"];
+  const baseRpc = env.BASE_RPC_URL ?? "https://mainnet.base.org";
+  const xrplBuyers = split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo];
+  const catalog = createCatalog({
+    store: opts.catalogStore ?? (env.TRUST_DB ? new D1CatalogStore(env.TRUST_DB) : new MemoryCatalogStore()),
+    fetch: doFetch,
+    now,
+    log: (e) => deps.log?.(e),
+    queue: opts.queue ?? (env.TRUST_QUEUE as QueueLike | undefined),
+    xrplRpc,
+    baseRpc,
+    buyers: { xrpl: xrplBuyers, evm: split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS },
+    self: {
+      name: "Lumi Trades API",
+      url: config.publicBaseUrl || "https://api.lumitrades.io",
+      domains: ["lumitrades.io", "api.lumitrades.io"],
+      pay_to: [config.payTo, ...(config.evm ? [config.evm.payTo] : []), ...DEFAULT_EVM_BUYERS],
+    },
+    isOwner: async (request) => {
+      const m = (request.headers.get("Authorization") ?? "").match(/^Bearer\s+(\S+)$/i);
+      return isOwnerKey(m?.[1], env.OWNER_MCP_KEY);
+    },
+  });
   const trust = createTrust({
     store: opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS)),
     fetch: doFetch,
@@ -139,9 +174,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     ownerKey: env.OWNER_MCP_KEY,
     ipSecret: config.invoiceSecret,
     log: (e) => deps.log?.(e),
-    xrplRpc: split(env.XRPL_RPC_URLS).length ? split(env.XRPL_RPC_URLS) : DEFAULT_XRPL_RPC[config.network] ?? DEFAULT_XRPL_RPC["xrpl:0"],
-    baseRpc: env.BASE_RPC_URL ?? "https://mainnet.base.org",
-    buyers: split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo],
+    xrplRpc,
+    baseRpc,
+    buyers: xrplBuyers,
+    catalog,
   });
 
   /** Free samples of every paid product, rebuilt at most every 10 minutes per isolate. */
@@ -484,7 +520,12 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     config,
     trust,
     sales,
-    scheduled: () => trust.runProbes(),
+    catalog,
+    async scheduled() {
+      const [probes, cat] = await Promise.allSettled([trust.runProbes(), catalog.cron()]);
+      return { probes: probes.status === "fulfilled" ? probes.value : { error: String(probes.reason) }, catalog: cat.status === "fulfilled" ? cat.value : { error: String(cat.reason) } };
+    },
+    queue: (job: CatalogJob) => catalog.consume(job),
     async fetch(request: Request, ctx?: WaitUntil): Promise<Response> {
       try {
         return await handle(request, ctx);

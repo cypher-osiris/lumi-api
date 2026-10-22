@@ -91,6 +91,10 @@ export interface Env {
   BASE_RPC_URL?: string;
   /** Comma-separated XRPL addresses whose payments count as Lumi test-buys (default: PAY_TO). Addresses only. */
   TRUST_BUYER_ADDRESSES?: string;
+  /** Comma-separated Base (EVM) addresses whose payments count as Lumi test-buys (default: Lumi's two Base wallets). */
+  TRUST_BUYER_EVM?: string;
+  /** Cloudflare Queue producer for catalog ingest / quote-check jobs (Workers Free: fan-out keeps each invocation small). */
+  TRUST_QUEUE?: { sendBatch(messages: { body: unknown }[]): Promise<unknown> };
   /** Sales alert (optional, off unless set): incoming-webhook URL (Slack/Discord/generic JSON POST). */
   SALES_WEBHOOK_URL?: string;
   /** Sales alert by email (optional): recipient; needs the SALES_EMAIL send_email binding and SALES_ALERT_FROM. */

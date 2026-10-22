@@ -36,7 +36,7 @@ export interface McpDeps {
   /** Unpaid internal GET of a paid path (returns the 402 terms, or a not-charged error). */
   quote(path: string): Promise<{ status: number; body: any }>;
   /** Trust layer (free vendor observations). */
-  trust?: Pick<Trust, "vendorsDoc" | "vendorDoc">;
+  trust?: Pick<Trust, "vendorsDoc" | "vendorDoc" | "lookup">;
   log(event: Record<string, unknown>): void;
 }
 
@@ -72,6 +72,9 @@ export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
   "what to watch next. Use it when you need the institutional/regulatory picture behind these tokens without reading dozens of releases. " +
   "Refreshed daily; never sold stale. Paid: $0.25 per call (USDC/RLUSD, or the XRP equivalent). Not financial advice.";
+
+export const VENDOR_LOOKUP_DESCRIPTION =
+  "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs a free, unpaid 402-quote check of every listing at least daily (valid quote, price and payTo vs the listing, latency, domain age), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
 
 /** Same names and descriptions as mcp/src/index.js (PAID_TOOLS). */
 export const PAID_TOOLS: PaidTool[] = [
@@ -161,9 +164,16 @@ function toolList() {
       name: "lumi_vendor_scores",
       title: "Lumi: x402 vendor observations (free)",
       description:
-        "Free. Lumi's automated observations of other x402 sellers on the XRP Ledger: free 402-quote checks every 30 min plus small paid test-buys, " +
-        "with timestamps, tx hashes and sample sizes. Scores are observations, not ratings; few samples = low confidence. Pass vendor_id for one vendor's full evidence.",
-      inputSchema: { type: "object", properties: { vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Optional vendor id from the list, e.g. asksurf" } } },
+        VENDOR_LOOKUP_DESCRIPTION,
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: { type: "string", maxLength: 500, description: "Resource URL you are about to pay, e.g. https://example.com/api/data" },
+          domain: { type: "string", maxLength: 253, description: "Seller host or domain, e.g. example.com" },
+          payTo: { type: "string", maxLength: 120, description: "payTo address from the seller's 402 quote (0x... or r...)" },
+          vendor_id: { type: "string", pattern: "^[a-z0-9-]{1,64}$", description: "Optional curated vendor id, e.g. asksurf" },
+        },
+      },
       annotations: ro,
     },
     ...PAID_TOOLS.map((t) => ({
@@ -456,6 +466,8 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
       }
       case "lumi_vendor_scores": {
         if (!deps.trust) return text({ error: "trust layer unavailable" }, true);
+        const lq = { url: str(args.url), domain: str(args.domain), payTo: str(args.payTo) ?? str(args.pay_to) };
+        if (lq.url || lq.domain || lq.payTo) return text(await deps.trust.lookup(lq, base));
         const id = str(args.vendor_id);
         if (id) {
           const doc = await deps.trust.vendorDoc(id, base);

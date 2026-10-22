@@ -43,7 +43,7 @@ interface SkillDef {
 const SKILLS: SkillDef[] = [
   { id: "catalog", name: "Catalog: endpoints, prices, payment networks (free)", tags: ["catalog", "pricing", "x402", "free"], examples: ["catalog", "what do you sell and how much?"], match: /\b(catalog|prices?|pricing|endpoints?|help|menu)\b/i },
   { id: "coins", name: "Supported coins (free)", tags: ["coins", "free"], examples: ["list coins"], match: /\b(coins|supported|tickers)\b/i },
-  { id: "vendor_trust", name: "x402 vendor observations (free)", tags: ["trust", "x402", "vendors", "observations", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"asksurf\"}"], match: /\b(vendors?|trust)\b/i },
+  { id: "vendor_trust", name: "x402 seller lookup and observations (free)", tags: ["trust", "x402", "vendors", "observations", "lookup", "bazaar", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"url\":\"https://example.com/api/x402\"}", "{\"skill\":\"vendor_trust\",\"payTo\":\"0x...\"}", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"asksurf\"}"], match: /\b(vendors?|trust)\b/i },
   { id: "quote", name: "Price quote for a paid call, without paying (free)", tags: ["quote", "x402", "free"], examples: ["quote /v1/brief"], match: /\bquote\b/i },
   {
     id: "institutional",
@@ -77,7 +77,7 @@ const FREE_DESCRIPTIONS: Record<string, string> = {
   catalog: "Lists every Lumi endpoint with live prices on every payment network (XRP Ledger, Base), the MCP and A2A endpoints, and the no-charge-when-stale guarantee.",
   coins: "The 13 coins Lumi covers (tickers and CoinGecko ids).",
   vendor_trust:
-    "Lumi's automated observations of other x402 sellers on the XRP Ledger (free 402-quote checks every 30 min plus small paid test-buys), with timestamps, tx hashes and sample sizes. Observations, not ratings; few samples = low confidence. Optional {\"vendor_id\":\"...\"} for one vendor's evidence.",
+    "Check an x402 seller before paying it: {\"url\":\"...\"}, {\"domain\":\"...\"} or {\"payTo\":\"...\"} (case-insensitive) looks it up in the full CDP x402 Bazaar catalog (free quote check of every listing at least daily: 'quote-verified, low confidence') and Lumi's on-chain-confirmed test-buys ('purchase-verified'). With no arguments: curated XRPL vendor observations; {\"vendor_id\":\"...\"} for one vendor's evidence. Observations, not ratings; no match is not a negative signal.",
   quote: "Live x402 v2 quote (all accepts options) for a paid skill or path, e.g. {\"skill\":\"signal\",\"coin\":\"XRP\"} or \"quote /v1/brief\". A 503 means the data is not fresh right now and would not be sold.",
 };
 
@@ -166,7 +166,7 @@ export interface A2aDeps {
   /** Unpaid internal GET of a paid path (returns the 402 terms, or a not-charged error). */
   quote(path: string): Promise<{ status: number; body: any }>;
   /** Trust layer (free vendor observations). */
-  trust?: Pick<Trust, "vendorsDoc" | "vendorDoc">;
+  trust?: Pick<Trust, "vendorsDoc" | "vendorDoc" | "lookup">;
   log(event: Record<string, unknown>): void;
 }
 
@@ -290,6 +290,8 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   if (!skill && /\bquote\b/i.test(text)) skill = SKILLS.find((s) => s.id === "quote");
   if (!skill && /\b(vendor|trust)\s+report\b|\breport\b.*\bvendors?\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_report");
   if (!skill && /\b(vendors?|trust)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_trust");
+  if (!skill && (["url", "domain", "payTo", "pay_to"].some((k) => typeof data[k] === "string") || (/\b(check|verify|seller|safe|legit|payto)\b/i.test(text) && /https?:\/\/|\b0x[0-9a-fA-F]{40}\b/.test(text))))
+    skill = SKILLS.find((s) => s.id === "vendor_trust");
   if (!skill) skill = SKILLS.filter((s) => s.route).find((s) => s.match.test(text)) ?? SKILLS.find((s) => !s.route && s.match.test(text));
   const coinArg =
     (typeof data.coin === "string" && data.coin) ||
@@ -314,6 +316,21 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   }
   if (skill.id === "vendor_trust") {
     if (!deps.trust) return { skill: "vendor_trust", text: "The trust layer is unavailable right now.", data: { error: "unavailable" } };
+    const sv = (k: string) => (typeof data[k] === "string" && (data[k] as string).trim() ? (data[k] as string).trim().slice(0, 500) : undefined);
+    const lq = {
+      url: sv("url") ?? text.match(/https?:\/\/[^\s"'<>]+/)?.[0],
+      domain: sv("domain"),
+      payTo: sv("payTo") ?? sv("pay_to") ?? text.match(/\b0x[0-9a-fA-F]{40}\b/)?.[0] ?? text.match(/\br[1-9A-HJ-NP-Za-km-z]{24,34}\b/)?.[0],
+    };
+    if (lq.url || lq.domain || lq.payTo) {
+      const doc: any = await deps.trust.lookup(lq, base);
+      const summary = doc.self
+        ? `${doc.self.name}: ${doc.self.label}.`
+        : !doc.observed
+          ? `No Lumi observations for ${JSON.stringify(lq).slice(0, 200)}. No observation is not a negative signal.`
+          : `${doc.catalog?.total_matches ?? 0} catalog match(es)${doc.curated?.length ? ` + ${doc.curated.length} curated vendor(s)` : ""}; tiers: ${Object.entries(doc.catalog?.tiers_shown ?? {}).map(([k, v]) => `${v} ${k}`).join(", ") || "n/a"}. Observations, not ratings.`;
+      return { skill: "vendor_trust", text: `${summary} Methodology: ${base}/v1/trust/methodology`, data: doc };
+    }
     const id = typeof data.vendor_id === "string" ? data.vendor_id : undefined;
     if (id) {
       const doc = await deps.trust.vendorDoc(id, base);
