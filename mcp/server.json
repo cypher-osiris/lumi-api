@@ -2,42 +2,55 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cypher-osiris/lumi-trades-mcp",
   "title": "Lumi Trades",
-  "description": "Crypto signals, levels, market and institutional briefs for agents. Pay per call via x402: XRPL/Base",
+  "description": "x402 trust score lookups, crypto signals and daily briefs for agents. Pay per call: XRPL or Base",
   "repository": {
     "url": "https://github.com/cypher-osiris/lumi-api",
     "source": "github",
     "subfolder": "mcp"
   },
   "websiteUrl": "https://api.lumitrades.io/skill.md",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "lumi-trades-mcp",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
+          "name": "EVM_PRIVATE_KEY",
+          "description": "0x private key of your Base wallet that pays in USDC (gasless, signed locally)",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
           "name": "XRPL_SEED",
-          "description": "Seed of your XRPL wallet that pays for calls (signed locally)",
+          "description": "Seed of your XRPL wallet that pays in XRP/RLUSD/USDC (signed locally)",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "LUMI_PAY_ASSET",
-          "description": "XRP, RLUSD or USDC",
+          "description": "BASE_USDC, XRP, RLUSD or USDC (XRPL). Default: XRP if XRPL_SEED set, else BASE_USDC",
           "isRequired": false,
-          "default": "XRP",
+          "format": "string"
+        },
+        {
+          "name": "LUMI_MAX_USD_PER_CALL",
+          "description": "Per-call cap in USD for stablecoins (covers the $0.25 brief)",
+          "isRequired": false,
+          "default": "0.30",
           "format": "string"
         },
         {
           "name": "LUMI_MAX_XRP_PER_CALL",
           "description": "Per-call cap in XRP",
           "isRequired": false,
-          "default": "0.05",
+          "default": "0.25",
           "format": "string"
         },
         {

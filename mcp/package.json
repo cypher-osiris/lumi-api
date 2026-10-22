@@ -1,23 +1,56 @@
 {
   "name": "lumi-trades-mcp",
-  "version": "0.4.0",
-  "description": "MCP server for Lumi Trades (lumitrades.io): crypto market brief, signals, levels, yen carry-trade watch, sentiment, events, paper-trade track record, a daily Institutional & Policy Brief and detailed x402 vendor reports, paid per call via x402 on the XRP Ledger with your own wallet.",
+  "version": "0.5.0",
+  "description": "Free x402 vendor trust score lookups and a daily crypto market brief + Institutional & Policy Brief for AI agents, plus crypto signals (XRP and 12 more coins: buy/sell score, support/resistance levels), sentiment, yen carry-trade watch and events. Pay per call via x402 with your own wallet: USDC on Base (gasless) or XRP/RLUSD/USDC on the XRPL. MCP server for Claude, Cursor and any MCP client.",
   "mcpName": "io.github.cypher-osiris/lumi-trades-mcp",
   "type": "module",
-  "bin": { "lumi-trades-mcp": "src/index.js" },
+  "bin": {
+    "lumi-trades-mcp": "src/index.js"
+  },
   "main": "src/index.js",
-  "files": ["src", "README.md", "LICENSE"],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test test/"
   },
-  "keywords": ["mcp", "model-context-protocol", "x402", "xrpl", "xrp", "rlusd", "crypto", "trading", "market-data", "agents"],
-  "repository": { "type": "git", "url": "git+https://github.com/cypher-osiris/lumi-api.git", "directory": "mcp" },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "x402",
+    "trust-score",
+    "x402-trust",
+    "crypto-signals",
+    "crypto",
+    "trading-signals",
+    "xrpl",
+    "xrp",
+    "base",
+    "usdc",
+    "rlusd",
+    "market-brief",
+    "institutional",
+    "agents",
+    "ai-agents"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cypher-osiris/lumi-api.git",
+    "directory": "mcp"
+  },
   "homepage": "https://api.lumitrades.io/skill.md",
   "license": "MIT",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@x402/evm": "^2.28.0",
+    "@x402/fetch": "^2.28.0",
+    "viem": "^2.57.10",
     "x402-xrpl": "^0.3.4",
     "xrpl": "^4.7.0",
     "zod": "^3.25.0"
