@@ -13,7 +13,7 @@
  */
 
 import type { Config, PaidRoute } from "./config";
-import { dropsToXrp } from "./config";
+import { atomicToUsdc, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS } from "./catalog";
 import { indexDoc, VERSION } from "./docs";
 import { DISCLAIMER, type CoinRef } from "./views";
@@ -98,7 +98,7 @@ function toolList() {
     {
       name: "lumi_catalog",
       title: "Lumi: endpoints and prices (free)",
-      description: "Free. Lists Lumi API endpoints, live prices (XRP / RLUSD / USDC), payment settings of this MCP server and the caller wallet address.",
+      description: "Free. Lists Lumi API endpoints, live prices (XRP / RLUSD / USDC on the XRP Ledger, USDC on Base), payment settings of this MCP server and the caller wallet address.",
       inputSchema: NO_ARGS,
       annotations: ro,
     },
@@ -107,7 +107,7 @@ function toolList() {
       name: "lumi_quote",
       title: "Lumi: price check without paying (free)",
       description:
-        "Free. Shows the x402 price quote (XRP / RLUSD / USDC) for any Lumi paid path, e.g. /v1/brief, without paying. A 503 means the data is not fresh right now and the call would not be sold.",
+        "Free. Shows the x402 price quote (XRP / RLUSD / USDC on the XRP Ledger, USDC on Base) for any Lumi paid path, e.g. /v1/brief, without paying. A 503 means the data is not fresh right now and the call would not be sold.",
       inputSchema: { type: "object", properties: { path: { type: "string", pattern: "^/v1/", description: "Paid API path, e.g. /v1/brief or /v1/signal/XRP" } }, required: ["path"] },
       annotations: ro,
     },
@@ -124,7 +124,7 @@ function toolList() {
 const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate and track record, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins. lumi_catalog, lumi_coins and lumi_quote are free. " +
-  "Paid tools cost a few XRP cents per call via x402 on the XRP Ledger; without access they return the price and how to pay. " +
+  "Paid tools cost a few cents per call via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
 // ---------------------------------------------------------------- auth
@@ -379,7 +379,8 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
           network: cfg.network,
           access: owner ? "owner key: paid tools return data at no charge" : "public: free tools only; paid tools return the price and how to pay",
           ...(ctx.bearerRejected ? { auth_note: "The Authorization bearer token was not recognised; serving public access." } : {}),
-          pay_with: ["XRP", ...cfg.ious.map((o) => o.symbol)],
+          pay_with: ["XRP", ...cfg.ious.map((o) => o.symbol), ...(cfg.evm ? [`USDC on ${cfg.evm.networkName} (${cfg.evm.network})`] : [])],
+          a2a: `${base}/.well-known/agent-card.json`,
           wallet: "none (remote server; pay via x402 at the REST endpoint or run the lumi-trades-mcp npm package with your own XRPL wallet)",
           endpoints: idx.paid_endpoints.map((e) => ({ path: e.path, prices: e.prices, summary: e.summary })),
           guarantee: idx.guarantee,
@@ -400,9 +401,10 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
           description: r.body?.resource?.description,
           options: (r.body?.accepts || []).map((a: any) => ({
             asset: a.asset === "XRP" ? "XRP" : a.extra?.symbol ?? a.asset,
-            amount: a.asset === "XRP" ? dropsToXrp(String(a.amount)) : a.amount,
+            amount: a.asset === "XRP" ? dropsToXrp(String(a.amount)) : String(a.network).startsWith("eip155:") ? atomicToUsdc(String(a.amount)) : a.amount,
             network: a.network,
             payTo: a.payTo,
+            ...(String(a.network).startsWith("eip155:") ? { token: a.asset } : {}),
           })),
         });
       }
@@ -441,10 +443,15 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
 function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: string): ToolResult {
   const endpoint = PAID_ENDPOINTS.find((e) => e.route === tool.route)!;
   const xrp = dropsToXrp(cfg.pricesDrops[tool.route]);
-  const prices = [{ asset: "XRP", amount: xrp }, ...cfg.ious.map((o) => ({ asset: o.symbol, amount: o.prices[tool.route], issuer: o.issuer }))];
-  const priceText = prices.map((p) => `${p.amount} ${p.asset}`).join(" or ");
+  const prices: Record<string, unknown>[] = [
+    { asset: "XRP", amount: xrp, network: cfg.network },
+    ...cfg.ious.map((o) => ({ asset: o.symbol, amount: o.prices[tool.route], issuer: o.issuer, network: cfg.network })),
+  ];
+  if (cfg.evm) prices.push({ asset: "USDC", amount: cfg.evm.prices[tool.route], network: cfg.evm.network, token: cfg.evm.asset });
+  const xrplText = prices.filter((p) => p.network === cfg.network).map((p) => `${p.amount} ${p.asset}`).join(" or ");
+  const priceText = `${xrplText} on the XRP Ledger${cfg.evm ? `, or ${cfg.evm.prices[tool.route]} USDC on ${cfg.evm.networkName}` : ""}`;
   const summary =
-    `${tool.name} is a paid Lumi tool: ${priceText} per call on the XRP Ledger (x402). ` +
+    `${tool.name} is a paid Lumi tool: ${priceText} per call (x402). ` +
     "This remote MCP connection has no wallet, so nothing was charged and no data was returned. " +
     "The data is fresh and available right now. To get it, either pay per call via x402 at the REST endpoint below, " +
     `or install the ${NPM_PACKAGE} MCP server (npm) with your own XRPL wallet so it can pay automatically within spend caps.`;
@@ -460,13 +467,14 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
           price: prices,
           network: cfg.network,
           pay_to: cfg.payTo,
+          ...(cfg.evm ? { base: { network: cfg.evm.network, pay_to: cfg.evm.payTo, asset: cfg.evm.asset } } : {}),
           how_to_pay: [
             {
               option: "x402 REST call",
               url: restUrl,
               steps:
-                "GET the URL -> HTTP 402 with x402 v2 terms (PAYMENT-REQUIRED); sign an XRPL Payment for the quoted amount; retry with the PAYMENT-SIGNATURE header -> 200 with the data. " +
-                "The x402-xrpl SDK (npm or PyPI) does this in one call.",
+                "GET the URL -> HTTP 402 with x402 v2 terms (PAYMENT-REQUIRED); sign an XRPL Payment (or, on Base, an EIP-3009 USDC authorization) for the quoted amount; " +
+                "retry with the PAYMENT-SIGNATURE header -> 200 with the data. The x402-xrpl SDK (npm or PyPI) or @x402/fetch + @x402/evm (Base) does this in one call.",
               guide: `${base}/skill.md`,
             },
             {

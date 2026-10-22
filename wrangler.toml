@@ -61,6 +61,11 @@ DATA_BASE_URL = "https://lumitrades.io/data"
 DATA_TTL_SECONDS = "60"
 INVOICE_TTL_SECONDS = "300"
 PUBLIC_BASE_URL = "https://api.lumitrades.io"
+# Base (EVM) USDC over x402: offered as the last accepts[] entry, after every XRPL option. Address only; the key is never here.
+EVM_NETWORK = "eip155:8453"                               # Base mainnet
+EVM_PAY_TO = "0x5E617bac19912e6d212CB303ae84655E9E203532" # Lumi's Base receiving wallet (address only)
+EVM_FACILITATOR_URL = "https://facilitator.payai.network" # keyless public facilitator (free credits per receiving wallet)
+ACCEPT_BASE_USDC = "true"                                 # "false" turns the Base option off; prices follow PRICE_<ROUTE>_USDC
 
 # One-time invoice redemption across all isolates/PoPs (required for correctness:
 # the facilitator does not reject a replayed, already-settled payment).
@@ -100,3 +105,6 @@ DATA_BASE_URL = "https://lumitrades.io/data"
 DATA_TTL_SECONDS = "60"
 INVOICE_TTL_SECONDS = "300"
 PUBLIC_BASE_URL = ""   # empty = use the request origin (workers.dev / localhost)
+EVM_NETWORK = "eip155:84532"                              # Base Sepolia
+EVM_PAY_TO = "0x5E617bac19912e6d212CB303ae84655E9E203532"
+EVM_FACILITATOR_URL = "https://x402.org/facilitator"      # x402.org public testnet facilitator

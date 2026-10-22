@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createApp } from "../src/app";
 import { DATA, FACILITATOR, PAY_TO, fakeDurableObjectNamespace, happyFacilitator, jsonResponse, makeFetch, paymentHeaderFor, decodeB64Json, type FakeFacilitator , NOW } from "./helpers";
 
-const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret", PRIVATE_NAMES: "Casey" };
+const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret", PRIVATE_NAMES: "Canaryname" };
 const BASE = "http://lumi.test";
 
 function setup(fac: FakeFacilitator = happyFacilitator(), opts: { dataDown?: boolean } = {}) {
@@ -187,7 +187,7 @@ describe("paid payloads", () => {
     expect(b.support.length).toBeGreaterThan(0);
     expect(b.resistance.length).toBeGreaterThan(0);
     expect(b.projection).toHaveProperty("bull");
-    expect(JSON.stringify(b)).not.toMatch(/casey/i);
+    expect(JSON.stringify(b)).not.toMatch(/canaryname/i);
     expect(b.commentary).toContain("XRP held $1.30.");
   });
 
@@ -203,7 +203,7 @@ describe("paid payloads", () => {
       expect(i).not.toHaveProperty("source");
     }
     const s = JSON.stringify(b);
-    expect(s).not.toMatch(/my holdings|user-specified|casey/i);
+    expect(s).not.toMatch(/my holdings|user-specified|canaryname/i);
     expect(b.track_record).toHaveProperty("win_rate_pct");
   });
 

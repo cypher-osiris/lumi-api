@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -13,11 +13,12 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
     version: VERSION,
     description:
       "Pay-per-call crypto market reads from Lumi Trades (lumitrades.io) for AI agents. " +
-      `No API keys or accounts: each paid call is settled in XRP${orIous(cfg)} on the XRP Ledger via the x402 protocol (HTTP 402, exact scheme).`,
+      `No API keys or accounts: each paid call is settled in ${settledIn(cfg)} via the x402 protocol (HTTP 402, exact scheme).`,
     human_summary:
       "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins, plus a daily " +
       "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its full paper-trade track record. " +
-      `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}, sign a small XRPL Payment, retry, and get JSON back.`,
+      `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}` +
+      `${cfg.evm ? ` or USDC on ${cfg.evm.networkName} (accepts[${cfg.ious.length + 1}])` : ""}, sign a small XRPL Payment${cfg.evm ? " or an EIP-3009 USDC authorization" : ""}, retry, and get JSON back.`,
     source: SOURCE,
     payment: {
       protocol: "x402",
@@ -32,6 +33,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       source_tag: cfg.sourceTag,
       headers: { challenge: "PAYMENT-REQUIRED", payment: "PAYMENT-SIGNATURE", receipt: "PAYMENT-RESPONSE" },
       explorer: EXPLORERS[cfg.network],
+      networks: paymentNetworks(cfg),
     },
     guarantee:
       "You only pay when you get data: inputs are fetched and validated (present, non-empty, fresh) before any 402 quote; " +
@@ -41,11 +43,14 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/health", summary: "Liveness + config summary" },
       { method: "GET", path: "/skill.md", summary: "Agent guide: what is offered, prices, how to pay, example code" },
       { method: "GET", path: "/.well-known/x402", summary: "x402 discovery manifest" },
+      { method: "GET", path: "/.well-known/agent-card.json", summary: "A2A agent card (alias /.well-known/agent.json)" },
       { method: "GET", path: "/openapi.json", summary: "OpenAPI 3.1 description with x-payment-info" },
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
       { method: "POST", path: "/mcp", summary: "Remote MCP server (Streamable HTTP): free tools for everyone; paid tools return the price and how to pay" },
+      { method: "POST", path: "/a2a", summary: "A2A JSON-RPC endpoint (SendMessage / message/send): free skills answered inline, paid skills return x402 terms" },
     ],
     mcp: mcpInfo(base),
+    a2a: { agent_card: `${base}/.well-known/agent-card.json`, endpoint: `${base}/a2a`, protocol_versions: ["1.0", "0.3"], binding: "JSONRPC" },
     paid_endpoints: priceTable(cfg),
     coins: coins.map((c) => c.symbol),
     docs: `${base}/skill.md`,
@@ -60,7 +65,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate + track record, macro, daily brief, yen carry-trade watch, sentiment, events), settled in XRP${orIous(cfg)} on the XRP Ledger.`,
+    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate + track record, macro, daily brief, yen carry-trade watch, sentiment, events), settled in ${settledIn(cfg)}.`,
     resources: PAID_ENDPOINTS.map((e) => ({
       name: e.name,
       url: `${base}${e.example}`,
@@ -86,9 +91,23 @@ export function wellKnownX402(cfg: Config, base: string) {
           amount: o.prices[e.route],
           payTo: cfg.payTo,
         })),
+        ...(cfg.evm
+          ? [{
+              scheme: "exact",
+              network: cfg.evm.network,
+              asset: cfg.evm.asset,
+              asset_symbol: "USDC",
+              amount: cfg.evm.amounts[e.route],
+              amount_usdc: cfg.evm.prices[e.route],
+              payTo: cfg.evm.payTo,
+              extra: { name: cfg.evm.eip712.name, version: cfg.evm.eip712.version },
+            }]
+          : []),
       ],
     })),
-    facilitators: [cfg.facilitatorUrl],
+    facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [cfg.evm.facilitatorUrl] : [])],
+    networks: paymentNetworks(cfg),
+    agent_card: `${base}/.well-known/agent-card.json`,
     openapi: `${base}/openapi.json`,
     docs: `${base}/skill.md`,
     mcp: { url: `${base}/mcp`, transport: "streamable-http" },
@@ -129,14 +148,27 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           asset: "XRP",
           amount_drops: cfg.pricesDrops[e.route],
           payTo: cfg.payTo,
-          ...(cfg.ious.length
+          ...(cfg.ious.length || cfg.evm
             ? {
-                alternatives: cfg.ious.map((o) => ({
-                  price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
-                  asset: o.currency,
-                  issuer: o.issuer,
-                  amount: o.prices[e.route],
-                })),
+                alternatives: [
+                  ...cfg.ious.map((o) => ({
+                    price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
+                    network: cfg.network,
+                    asset: o.currency,
+                    issuer: o.issuer,
+                    amount: o.prices[e.route],
+                  })),
+                  ...(cfg.evm
+                    ? [{
+                        price: { mode: "fixed", currency: "USDC", amount: cfg.evm.prices[e.route] },
+                        scheme: "exact",
+                        network: cfg.evm.network,
+                        asset: cfg.evm.asset,
+                        amount: cfg.evm.amounts[e.route],
+                        payTo: cfg.evm.payTo,
+                      }]
+                    : []),
+                ],
               }
             : {}),
         },
@@ -153,7 +185,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     info: {
       title: "Lumi API",
       version: VERSION,
-      description: `Pay-per-call crypto market reads from lumitrades.io, paid in XRP${orIous(cfg)} via x402.`,
+      description: `Pay-per-call crypto market reads from lumitrades.io, paid in ${settledIn(cfg)} via x402.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
         "GET /v1/coins (free) lists supported coins. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
@@ -164,9 +196,12 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         (cfg.ious.length
           ? "in XRP (accepts[0])" + cfg.ious.map((o, i) => ` or ${o.symbol} (accepts[${i + 1}], issuer ${o.issuer})`).join("") + " "
           : "in XRP ") +
-        `(${cfg.network}); unknown coins return 404 before any payment is requested. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
+        `(${cfg.network})` +
+        (cfg.evm ? `, or one x402 v2 'exact' payment in USDC on ${cfg.evm.networkName} (${cfg.evm.network}, token ${cfg.evm.asset}, last accepts entry)` : "") +
+        `; unknown coins return 404 before any payment is requested. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
     },
     servers: [{ url: base }],
+    externalDocs: { description: "Agent guide", url: `${base}/skill.md` },
     paths,
   };
 }
@@ -190,8 +225,46 @@ function orIous(cfg: Config): string {
   return cfg.ious.map((o) => ` or ${o.symbol}`).join("");
 }
 
+/** "XRP or RLUSD or USDC on the XRP Ledger, or USDC on Base" */
+export function settledIn(cfg: Config): string {
+  return `XRP${orIous(cfg)} on the XRP Ledger${cfg.evm ? `, or USDC on ${cfg.evm.networkName}` : ""}`;
+}
+
+/** Every payment network, in `accepts` order (XRPL first). */
+export function paymentNetworks(cfg: Config) {
+  const out: Record<string, unknown>[] = [
+    {
+      network: cfg.network,
+      name: cfg.networkName === "mainnet" ? "XRP Ledger" : `XRP Ledger ${cfg.networkName}`,
+      scheme: "exact",
+      assets: ["XRP", ...cfg.ious.map((o) => o.symbol)],
+      accepts_index: cfg.ious.length ? `0-${cfg.ious.length}` : "0",
+      pay_to: cfg.payTo,
+      facilitator: cfg.facilitatorUrl,
+      source_tag: cfg.sourceTag,
+      payload: "presigned XRPL Payment blob (x402-xrpl)",
+    },
+  ];
+  if (cfg.evm) {
+    out.push({
+      network: cfg.evm.network,
+      name: cfg.evm.networkName,
+      scheme: "exact",
+      assets: ["USDC"],
+      token: cfg.evm.asset,
+      decimals: cfg.evm.decimals,
+      accepts_index: String(cfg.ious.length + 1),
+      pay_to: cfg.evm.payTo,
+      facilitator: cfg.evm.facilitatorUrl,
+      payload: "EIP-3009 transferWithAuthorization (gasless for the payer; @x402/evm, @x402/fetch)",
+    });
+  }
+  return out;
+}
+
 function assetsInfo(cfg: Config) {
   const out: Record<string, unknown>[] = [{ symbol: "XRP", asset: "XRP", unit: "drops in accepts[].amount", accepts_index: 0 }];
+
   cfg.ious.forEach((o, i) =>
     out.push({
       symbol: o.symbol,
@@ -203,6 +276,18 @@ function assetsInfo(cfg: Config) {
       note: `Payer needs a ${o.symbol} trust line to ${o.issuer} and a balance.`,
     }),
   );
+  if (cfg.evm) {
+    out.push({
+      symbol: "USDC",
+      name: `Circle USDC on ${cfg.evm.networkName}`,
+      network: cfg.evm.network,
+      asset: cfg.evm.asset,
+      unit: 'atomic units (6 decimals) in accepts[].amount (e.g. "10000" = 0.01 USDC)',
+      accepts_index: cfg.ious.length + 1,
+      pay_to: cfg.evm.payTo,
+      note: "EIP-3009 signature only; the facilitator pays gas. Payer needs USDC on Base, no ETH.",
+    });
+  }
   return out;
 }
 
@@ -222,7 +307,7 @@ function iouNote(cfg: Config): string {
 
 export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const rows = priceTable(cfg)
-    .map((p) => `| \`${p.method} ${p.path}\` | ${p.price_xrp} XRP (${p.price_drops} drops)${p.prices.slice(1).map((x) => ` or ${x.amount} ${x.asset}`).join("")} | ${p.summary} |`)
+    .map((p) => `| \`${p.method} ${p.path}\` | ${p.price_xrp} XRP (${p.price_drops} drops)${p.prices.slice(1).map((x) => ` or ${x.amount} ${x.asset}${"chain" in x ? ` on ${x.chain}` : ""}`).join("")} | ${p.summary} |`)
     .join("\n");
   const net = cfg.network;
   const wsUrl = net === "xrpl:0" ? "wss://xrplcluster.com" : "wss://s.altnet.rippletest.net:51233";
@@ -230,15 +315,17 @@ export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const maxDrops = Math.max(...Object.values(cfg.pricesDrops).map(Number));
   return `---
 name: lumi-api
-description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas + track record, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar) for ${coins.length} coins, paid in XRP${orIous(cfg)} on the XRP Ledger via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
+description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas + track record, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar) for ${coins.length} coins, paid in ${settledIn(cfg)} via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
 ---
 
 # Lumi API (agent guide)
 
 Base URL: ${base}
 Network: \`${net}\` (${cfg.networkName}). Assets: XRP${cfg.ious.map((o) => ` or ${o.symbol} (${IOU_NAMES[o.symbol]}, issuer \`${o.issuer}\`, currency \`${o.currency}\`)`).join("")}. Pay to: \`${cfg.payTo}\`.
-Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call).
+${cfg.evm ? `Also: \`${cfg.evm.network}\` (${cfg.evm.networkName}). Asset: USDC \`${cfg.evm.asset}\`. Pay to: \`${cfg.evm.payTo}\`. Facilitator: ${cfg.evm.facilitatorUrl}.
+` : ""}Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call${cfg.evm ? ", or one EIP-3009 USDC authorization on Base" : ""}).
 No API key, no account, no sign-up.
+A2A agent card: ${base}/.well-known/agent-card.json. MCP: ${base}/mcp.
 
 ## What you can buy
 
@@ -263,9 +350,9 @@ Fields that are not available at request time are omitted, never filled with gue
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /openapi.json\`, \`POST /mcp\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
-Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (tx hash, explorer link) and a \`disclaimer\`.
+Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`.
 Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day.
 
 ## How payment works
@@ -282,6 +369,14 @@ Quotes expire after ${cfg.invoiceTtlSeconds}s and each invoice can be paid once.
 503 with \`retryable: true, settlementAttempted: false\` is safe to retry with the same header. 409 \`settlement_status_unknown\`: look up your tx on the ledger before paying again.
 
 The x402-xrpl SDKs (T54, the reference XRPL implementation) do all of this for you.
+${cfg.evm ? `
+### Paying with USDC on ${cfg.evm.networkName} instead
+
+The same 402 also lists \`accepts[${cfg.ious.length + 1}]\` = \`{ scheme: "exact", network: "${cfg.evm.network}", asset: "${cfg.evm.asset}", amount: "<atomic USDC, 6 decimals: 10000 = 0.01>", payTo: "${cfg.evm.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { name: "${cfg.evm.eip712.name}", version: "${cfg.evm.eip712.version}", invoiceId, symbol: "USDC", decimals: 6 } }\`.
+Sign an EIP-3009 \`transferWithAuthorization\` for exactly \`amount\` to \`payTo\` and retry with \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <that entry, unchanged>, payload: { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } })\`.
+Lumi's facilitator (${cfg.evm.facilitatorUrl}) verifies it and submits it on ${cfg.evm.networkName}, paying the gas: your wallet needs USDC only, no ETH. Same rules: one invoice, one payment, never charged when data is stale.
+The official x402 client packages (\`@x402/fetch\` + \`@x402/evm\`) do this for you and skip the XRPL options automatically.
+` : ""}
 
 ## Example: TypeScript / Node (npm \`x402-xrpl\`)
 
@@ -322,7 +417,23 @@ const fetchStable = x402Fetch({
 Note: the SDK's numeric \`maxValue\` compares raw \`amount\` strings across assets (drops for XRP, a decimal value for stablecoins), so use a selector like the one above when paying in a stablecoin.
 ` : ""}
 
-## Example: Python (PyPI \`x402-xrpl\`)
+${cfg.evm ? `## Example: USDC on ${cfg.evm.networkName} (npm \`@x402/fetch\`, \`@x402/evm\`, \`viem\`)
+
+\`\`\`ts
+import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from "@x402/fetch";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { privateKeyToAccount } from "viem/accounts";
+
+const client = new x402Client();
+registerExactEvmScheme(client, { signer: privateKeyToAccount(process.env.EVM_PRIVATE_KEY as \`0x\${string}\`) });
+const fetchPaid = wrapFetchWithPayment(fetch, client);   // picks the ${cfg.evm.network} USDC option
+
+const res = await fetchPaid("${base}/v1/brief");
+console.log(res.status, await res.json());
+console.log(decodePaymentResponseHeader(res.headers.get("PAYMENT-RESPONSE")!)); // { success, transaction, network, payer }
+\`\`\`
+
+` : ""}## Example: Python (PyPI \`x402-xrpl\`)
 
 \`\`\`python
 import os
@@ -348,6 +459,13 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
   return the price and how to pay, since a remote connector has no wallet.
 - **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` set (npm \`lumi-trades-mcp\`, MCP Registry
   \`io.github.cypher-osiris/lumi-trades-mcp\`). Same tools; each paid call is an x402 payment from your wallet within per-call caps and a session budget.
+
+## A2A
+
+- **Agent card:** \`${base}/.well-known/agent-card.json\` (alias \`/.well-known/agent.json\`), A2A protocol 1.0 with 0.3 compatibility fields.
+- **JSON-RPC endpoint:** \`POST ${base}/a2a\` with \`SendMessage\` (A2A 1.0) or \`message/send\` (0.3). Send text such as "list coins", "catalog" or
+  "signal XRP", or a data part \`{ "skill": "signal", "coin": "XRP" }\`. Free skills (\`catalog\`, \`coins\`, \`quote\`) answer inline. Paid skills answer with
+  the live x402 terms (every network option) and the REST URL to pay at; nothing is charged over A2A.
 
 ## Rules of use
 

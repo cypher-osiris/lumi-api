@@ -61,6 +61,14 @@ export interface Env {
   OWNER_MCP_KEY?: string;
   /** Public base URL used in docs/discovery (e.g. https://api.lumitrades.io). */
   PUBLIC_BASE_URL?: string;
+  /** EVM (Base) receiving address for USDC over x402 (address only, never a key). Unset = Base payments off. */
+  EVM_PAY_TO?: string;
+  /** CAIP-2 EVM network: eip155:8453 (Base mainnet, default) or eip155:84532 (Base Sepolia). */
+  EVM_NETWORK?: string;
+  /** x402 facilitator for the EVM option. Defaults: PayAI on Base mainnet, x402.org on Base Sepolia. */
+  EVM_FACILITATOR_URL?: string;
+  /** "false" disables the Base USDC option even when EVM_PAY_TO is set. Default on. */
+  ACCEPT_BASE_USDC?: string;
   /** Durable Object namespace for the strongly-consistent invoice replay guard (recommended). */
   INVOICE_GUARD?: DurableObjectNamespaceLike;
   /** Optional KV namespace used as a weaker (eventually consistent) replay guard. */
@@ -115,6 +123,87 @@ export interface Config {
   dataMaxAgeHours: number;
   invoiceTtlSeconds: number;
   publicBaseUrl?: string;
+  /** Base USDC option (x402 `exact`, EIP-3009), offered after every XRPL option. Undefined = off. */
+  evm?: EvmOption;
+}
+
+export type EvmNetwork = "eip155:8453" | "eip155:84532";
+export interface EvmOption {
+  network: EvmNetwork;
+  networkName: "Base" | "Base Sepolia";
+  payTo: string;
+  /** USDC token contract. */
+  asset: string;
+  /** EIP-712 domain of the token (x402 `extra.name` / `extra.version`). */
+  eip712: { name: string; version: string };
+  decimals: 6;
+  facilitatorUrl: string;
+  explorer: string;
+  /** Decimal USDC prices per route (same as the XRPL stablecoin prices). */
+  prices: Record<PaidRoute, string>;
+  /** Atomic USDC amounts (6 decimals) per route, as sent in accepts[].amount. */
+  amounts: Record<PaidRoute, string>;
+}
+
+/** Circle USDC on Base (https://developers.circle.com/stablecoins/usdc-contract-addresses), with its EIP-712 domain. */
+export const EVM_NETWORKS: Record<EvmNetwork, Omit<EvmOption, "payTo" | "prices" | "amounts" | "facilitatorUrl"> & { facilitatorUrl: string }> = {
+  "eip155:8453": {
+    network: "eip155:8453",
+    networkName: "Base",
+    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    eip712: { name: "USD Coin", version: "2" },
+    decimals: 6,
+    facilitatorUrl: "https://facilitator.payai.network",
+    explorer: "https://basescan.org/tx/",
+  },
+  "eip155:84532": {
+    network: "eip155:84532",
+    networkName: "Base Sepolia",
+    asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    eip712: { name: "USDC", version: "2" },
+    decimals: 6,
+    facilitatorUrl: "https://x402.org/facilitator",
+    explorer: "https://sepolia.basescan.org/tx/",
+  },
+};
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+/** Decimal USDC string ("0.015") to atomic units with 6 decimals ("15000"), no floats. */
+export function usdcToAtomic(v: string): string {
+  const s = iouValue(v);
+  const [whole, frac = ""] = s.split(".");
+  return (BigInt(whole) * 1_000_000n + BigInt((frac + "000000").slice(0, 6))).toString();
+}
+
+export function atomicToUsdc(a: string): string {
+  const d = BigInt(a);
+  const frac = (d % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
+  return frac ? `${d / 1_000_000n}.${frac}` : (d / 1_000_000n).toString();
+}
+
+function evmConfig(env: Env): EvmOption | undefined {
+  const e = env as Record<string, string | undefined>;
+  const payTo = (env.EVM_PAY_TO || "").trim();
+  if (!payTo || (env.ACCEPT_BASE_USDC ?? "true").trim().toLowerCase() === "false") return undefined;
+  if (!EVM_ADDRESS.test(payTo) || /^0x0{40}$/.test(payTo)) throw new Error("EVM_PAY_TO must be a 0x EVM address");
+  const network = (env.EVM_NETWORK || "eip155:8453").trim() as EvmNetwork;
+  const net = EVM_NETWORKS[network];
+  if (!net) throw new Error(`unsupported EVM_NETWORK: ${network} (use eip155:8453 or eip155:84532)`);
+  const prices = {} as Record<PaidRoute, string>;
+  const amounts = {} as Record<PaidRoute, string>;
+  for (const r of PAID_ROUTES) {
+    const R = r.toUpperCase();
+    prices[r] = iouValue(e[`PRICE_${R}_BASE_USDC`] || e[`PRICE_${R}_USDC`] || DEFAULT_PRICES[r].usd);
+    amounts[r] = usdcToAtomic(prices[r]);
+  }
+  return {
+    ...net,
+    payTo,
+    facilitatorUrl: (env.EVM_FACILITATOR_URL || net.facilitatorUrl).replace(/\/+$/, ""),
+    prices,
+    amounts,
+  };
 }
 
 export type IouSymbol = "RLUSD" | "USDC";
@@ -235,6 +324,7 @@ export function loadConfig(env: Env): Config {
     dataMaxAgeHours: Number(env.DATA_MAX_AGE_HOURS || 12) > 0 ? Number(env.DATA_MAX_AGE_HOURS || 12) : 12,
     invoiceTtlSeconds: Number(env.INVOICE_TTL_SECONDS || 300),
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/+$/, "") || undefined,
+    evm: evmConfig(env),
   };
 }
 

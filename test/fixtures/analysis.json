@@ -145,7 +145,7 @@
     "base": 1.33,
     "bear": 1.27
    },
-   "commentary": "Morning (6 AM CT, Oct 22): XRP ~$1.33 (24h $1.32-$1.40), holding up better than most alts in the risk-off move (-2.2% vs. a ~5% drop in total crypto market cap). It sits on the $1.32-1.33 pivot, which FXStreet ties to the 100-day EMA (~$1.337), with the 50/200-day EMA cluster at ~$1.374-1.375 overhead; $1.30 is the next floor and a daily close below it would expose the Oct 18-20 lows ($1.255-1.29). Signals: 1h Sell (RSI 34), 4h Neutral, 1d Strong Sell. Derivatives lean short: CoinGlass's XRP long/short ratio is 0.67, near a one-month low (FXStreet). Network: the XRPL fixCleanup3_4_0 security fix will no longer activate Oct 23; validator support briefly dipped to 26 of 35, which reset the 14-day clock, and it's now slated for Nov 4 with 31 of 35 votes (CoinDesk). The lending amendments still lack the support to start a countdown. Adoption: FX Leaders reports Cross River is integrating Ripple's RLUSD stablecoin into its banking stack for FedNow settlement. Policy: the OCC's final GENIUS Act rule (effective Jan 18, 2027) keeps stablecoin rewards on a case-by-case basis, and the American Bankers Association pushed back on that (Roll Call); that's a months-long story for RLUSD, not a price driver today. No new idea: a long at $1.33 with a stop under $1.29 has only ~1:1 to the EMA cluster, and a short into $1.30-1.33 support has no room. Casey added to his XRP stack this morning. XRP held $1.30.",
+   "commentary": "Morning (6 AM CT, Oct 22): XRP ~$1.33 (24h $1.32-$1.40), holding up better than most alts in the risk-off move (-2.2% vs. a ~5% drop in total crypto market cap). It sits on the $1.32-1.33 pivot, which FXStreet ties to the 100-day EMA (~$1.337), with the 50/200-day EMA cluster at ~$1.374-1.375 overhead; $1.30 is the next floor and a daily close below it would expose the Oct 18-20 lows ($1.255-1.29). Signals: 1h Sell (RSI 34), 4h Neutral, 1d Strong Sell. Derivatives lean short: CoinGlass's XRP long/short ratio is 0.67, near a one-month low (FXStreet). Network: the XRPL fixCleanup3_4_0 security fix will no longer activate Oct 23; validator support briefly dipped to 26 of 35, which reset the 14-day clock, and it's now slated for Nov 4 with 31 of 35 votes (CoinDesk). The lending amendments still lack the support to start a countdown. Adoption: FX Leaders reports Cross River is integrating Ripple's RLUSD stablecoin into its banking stack for FedNow settlement. Policy: the OCC's final GENIUS Act rule (effective Jan 18, 2027) keeps stablecoin rewards on a case-by-case basis, and the American Bankers Association pushed back on that (Roll Call); that's a months-long story for RLUSD, not a price driver today. No new idea: a long at $1.33 with a stop under $1.29 has only ~1:1 to the EMA cluster, and a short into $1.30-1.33 support has no room. Canaryname added to his XRP stack this morning. XRP held $1.30.",
    "sources": [
     {
      "title": "CoinDesk: XRP Ledger bug fix moved to November after validator support dipped (Oct 22 2026)",
@@ -200,7 +200,7 @@
      "url": "https://x.com/i/trending/2112637283748966756"
     }
    ],
-   "casey_notes": "private"
+   "canaryname_notes": "private"
   },
   "hedera-hashgraph": {
    "bias": "bearish: at a 30-day low under falling EMAs",

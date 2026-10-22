@@ -4,11 +4,12 @@
  */
 
 import { setPrivateNames } from "./sanitize";
-import { loadConfig, EXPLORERS, dropsToXrp, type Config, type Env, type PaidRoute } from "./config";
+import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
-import { makeReplayGuard, json, requirePayment, assetLabel, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
+import { makeReplayGuard, json, requirePayment, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { indexDoc, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
+import { agentCard, handleA2a, A2A_CORS } from "./a2a";
 import {
   coinList, resolveCoin, signalView, levelsView, slateView, marketView, DISCLAIMER, SOURCE, type CoinRef,
 } from "./views";
@@ -143,6 +144,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         status: 204,
         headers: path === "/mcp" || path.startsWith("/mcp/")
           ? MCP_CORS
+          : path === "/a2a"
+          ? A2A_CORS
           : {
               "Access-Control-Allow-Origin": "*",
               "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -164,6 +167,21 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         },
       });
     }
+    // A2A JSON-RPC (A2A 1.0 `SendMessage` and 0.3 `message/send`): free skills answered inline, paid skills return x402 terms.
+    if (path === "/a2a") {
+      return handleA2a(request, base, {
+        config,
+        coins,
+        quote: async (p: string) => {
+          const r = await handle(new Request(url.origin + p, { headers: { Accept: "application/json" } }));
+          const t = await r.text();
+          let body: unknown = t;
+          try { body = JSON.parse(t); } catch { /* text */ }
+          return { status: r.status, body };
+        },
+        log: (e) => deps.log?.(e),
+      });
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return json(405, { error: "method_not_allowed" }, { Allow: "GET, OPTIONS" });
     }
@@ -179,6 +197,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           network: config.network,
           pay_to: config.payTo,
           facilitator: config.facilitatorUrl,
+          ...(config.evm ? { evm: { network: config.evm.network, pay_to: config.evm.payTo, asset: config.evm.asset, facilitator: config.evm.facilitatorUrl } } : {}),
           timestamp: new Date().toISOString(),
         });
       case "/skill.md":
@@ -187,6 +206,9 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         return new Response(skillMd(config, base, await coins()), {
           headers: { "Content-Type": "text/markdown; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300" },
         });
+      case "/.well-known/agent-card.json":
+      case "/.well-known/agent.json":
+        return json(200, agentCard(config, base), { "Cache-Control": "public, max-age=300" });
       case "/.well-known/x402":
         return json(200, wellKnownX402(config, base), { "Cache-Control": "public, max-age=300" });
       case "/openapi.json":
@@ -224,20 +246,33 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       routeKey: coin ? `${route}:${coin.symbol}` : route,
       amountDrops: config.pricesDrops[route],
       amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
+      amountEvm: config.evm?.amounts[route],
       description: `Lumi API ${endpoint.template.replace("{coin}", coin?.symbol ?? "")}: ${endpoint.summary}`,
       resourceUrl: `${base}${path}`,
     };
 
     return requirePayment(request, config, deps, quote, (s: Settlement, paid: PaymentRequirements) => {
-      const payment = {
-        transaction: s.transaction,
-        network: s.network,
-        payer: s.payer ?? null,
-        asset: assetLabel(paid),
-        amount: paid.asset === "XRP" ? dropsToXrp(paid.amount) : paid.amount,
-        ...(paid.asset === "XRP" ? { amount_drops: paid.amount } : { issuer: paid.extra?.issuer }),
-        explorer: s.transaction ? `${EXPLORERS[config.network]}${s.transaction}` : null,
-      };
+      const evm = isEvmRequirement(paid);
+      const payment = evm
+        ? {
+            transaction: s.transaction,
+            network: s.network,
+            payer: s.payer ?? null,
+            asset: "USDC",
+            amount: atomicToUsdc(paid.amount),
+            amount_atomic: paid.amount,
+            token: paid.asset,
+            explorer: s.transaction ? `${config.evm!.explorer}${s.transaction}` : null,
+          }
+        : {
+            transaction: s.transaction,
+            network: s.network,
+            payer: s.payer ?? null,
+            asset: assetLabel(paid),
+            amount: paid.asset === "XRP" ? dropsToXrp(paid.amount) : paid.amount,
+            ...(paid.asset === "XRP" ? { amount_drops: paid.amount } : { issuer: paid.extra?.issuer }),
+            explorer: s.transaction ? `${EXPLORERS[config.network]}${s.transaction}` : null,
+          };
       if (wantsMarkdown) {
         const md = String((body as { markdown?: string }).markdown ?? "");
         return new Response(`${md}\n_Paid: ${payment.amount} ${payment.asset}, tx ${payment.explorer ?? payment.transaction}_\n`, {

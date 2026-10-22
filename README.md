@@ -1,8 +1,8 @@
 # Lumi API
 
-**Pay-per-call crypto market reads for AI agents, settled in XRP, RLUSD or USDC on the XRP Ledger via [x402](https://xrpl.org/docs/agents/agentic-payments-x402).**
+**Pay-per-call crypto market reads for AI agents, settled in XRP, RLUSD or USDC on the XRP Ledger, or in USDC on Base, via [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2. Discoverable over x402, OpenAPI, MCP and A2A.**
 
-Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals, support/resistance levels, a public paper-trade slate and track record, a BTC/macro backdrop, a daily market brief, a yen carry-trade watch, a sentiment snapshot and an events calendar for 13 coins. Lumi API puts those reads behind HTTP 402. An agent calls an endpoint, gets a price in XRP, signs one small XRP `Payment`, retries, and receives JSON. There are no API keys, accounts or invoices to reconcile. The payment *is* the authentication, and every call leaves an auditable on-ledger record.
+Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals, support/resistance levels, a public paper-trade slate and track record, a BTC/macro backdrop, a daily market brief, a yen carry-trade watch, a sentiment snapshot and an events calendar for 13 coins. Lumi API puts those reads behind HTTP 402. An agent calls an endpoint, gets a price in XRP (or a stablecoin, on the XRP Ledger or on Base), signs one small payment, retries, and receives JSON. XRPL is the home network and stays first in every quote; Base USDC is the bridge for EVM agents that already speak standard x402. There are no API keys, accounts or invoices to reconcile. The payment *is* the authentication, and every call leaves an auditable on-ledger record.
 
 > Analytics and education only. Not financial advice. Trade ideas are paper trades.
 
@@ -19,6 +19,8 @@ Lumi Trades ([lumitrades.io](https://lumitrades.io)) publishes indicator signals
 | free | `GET /openapi.json` | – | OpenAPI 3.1 with `x-payment-info` per paid route (x402scan-style discovery) |
 | free | `GET /v1/coins` | – | Supported coins |
 | free | `POST /mcp` | – | Remote MCP server (Streamable HTTP): free tools for everyone; paid tools explain the price and how to pay |
+| free | `GET /.well-known/agent-card.json` (also `/.well-known/agent.json`) | – | A2A agent card (A2A 1.0, with 0.3 compatibility fields): skills mirroring the endpoints, MCP URL, x402 payment networks |
+| free | `POST /a2a` | – | A2A JSON-RPC (`SendMessage` 1.0, `message/send` 0.3): free skills answer inline; paid skills return the live x402 terms |
 | **paid** | `GET /v1/signal/{coin}` | **0.005 XRP** or **0.01 RLUSD / USDC** | Buy/sell label + score, 1h/4h/1d labels, indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) |
 | **paid** | `GET /v1/levels/{coin}` | **0.005 XRP** or **0.01 RLUSD / USDC** | Support/resistance, bias, 7-day bull/base/bear projection, commentary, catalysts, sources |
 | **paid** | `GET /v1/slate` | **0.01 XRP** or **0.02 RLUSD / USDC** | Active paper-trade ideas (entry/zone, stop, targets, leverage, conviction, status), "no setup" notes, track record |
@@ -43,23 +45,26 @@ Other x402 vendors have taken payment and then returned an upstream error or an 
 Fields that are unavailable are omitted, never guessed. Tests: `test/products.test.ts` ("you only pay when you get data").
 
 `{coin}`: `XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI`. Tickers or CoinGecko ids work, case-insensitive.
-Prices are configurable (`PRICE_*_XRP`, `PRICE_*_RLUSD`, `PRICE_*_USDC` in `wrangler.toml`).
+Every RLUSD / USDC price above is also payable as **USDC on Base** (same amount). Prices are configurable (`PRICE_*_XRP`, `PRICE_*_RLUSD`, `PRICE_*_USDC` in `wrangler.toml`; Base follows `PRICE_*_USDC` unless `PRICE_*_BASE_USDC` is set).
 
 ### Accepted assets
 
-Every 402 offers the same quote in three assets, all sharing one invoice id (one payment per invoice):
+Every 402 offers the same quote in four options on two networks, all sharing one invoice id (one payment per invoice):
 
 | `accepts[]` | Asset | `asset` field | Issuer (`extra.issuer`) | `amount` unit |
 |---|---|---|---|---|
 | 0 | XRP | `XRP` | – | drops |
 | 1 | RLUSD (Ripple USD) | `524C555344000000000000000000000000000000` | `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De` ([docs.ripple.com](https://docs.ripple.com/products/stablecoin/developer-resources/rlusd-on-the-xrpl)) | IOU value, e.g. `"0.01"` |
 | 2 | USDC (Circle) | `5553444300000000000000000000000000000000` | `rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE` ([developers.circle.com](https://developers.circle.com/stablecoins/usdc-contract-addresses)) | IOU value, e.g. `"0.01"` |
+| 3 | USDC on **Base** (`network: "eip155:8453"`) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | – (`extra: { name: "USD Coin", version: "2" }`, the EIP-712 domain) | atomic units, 6 decimals, e.g. `"10000"` = 0.01 |
+
+Options 0-2 are on `xrpl:0` and pay `rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM`; option 3 pays Lumi's Base address `0x5E617bac19912e6d212CB303ae84655E9E203532`.
 
 XRP stays first, so clients that take `accepts[0]` keep paying in XRP. Stablecoin prices are fixed in USD cents. At XRP ≈ $1.33 (Oct 22 2026), 0.01 USD ≈ 0.0075 XRP and 0.02 USD ≈ 0.015 XRP, so the XRP prices are slightly cheaper. Payers need a trust line to the issuer and a balance. The Payment is same-asset (`SendMax` = `Amount`, no path or conversion). Turn off either stablecoin with `ACCEPT_RLUSD=false` / `ACCEPT_USDC=false`. Testnet uses the official testnet issuers (`rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV`, `rHuGNhqTG32mfmAvWA8hUyWRLV3tCSwKQt`), and `RLUSD_ISSUER` / `USDC_ISSUER` override them.
 
 To pay in a stablecoin with `x402Fetch`, pass a `paymentRequirementsSelector` that picks the option by `asset` and `extra.issuer`. The SDK's numeric `maxValue` compares raw `amount` strings across assets, so it is not a meaningful cap for IOUs. See `/skill.md`.
 
-Every paid response includes `timestamp`, `source: "lumitrades.io"`, a `payment` block (tx hash, payer, explorer link) and a `disclaimer`.
+Every paid response includes `timestamp`, `source: "lumitrades.io"`, a `payment` block (network, tx hash, payer, explorer link) and a `disclaimer`.
 
 **You are never charged for a failed request.** Unknown coins return 404 and upstream outages return 503 *before* any payment is requested. Data is only served after a validated `tesSUCCESS` settlement.
 
@@ -113,6 +118,37 @@ print(s.get("https://api.lumitrades.io/v1/market", timeout=180).json())
 
 See `examples/agent-client.ts`, `examples/agent_client.py` and the live `/skill.md`.
 
+### Paying with USDC on Base (x402 v2, `exact` scheme on EVM)
+
+The last `accepts[]` entry is a standard x402 v2 EVM requirement, so the official x402 clients work unchanged and skip the XRPL options:
+
+```json
+{ "scheme": "exact", "network": "eip155:8453", "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "amount": "10000",
+  "payTo": "0x5E617bac19912e6d212CB303ae84655E9E203532", "maxTimeoutSeconds": 300,
+  "extra": { "name": "USD Coin", "version": "2", "invoiceId": "lumi1.signal:XRP.<exp>.<nonce>.<mac>", "symbol": "USDC", "decimals": 6 } }
+```
+
+The agent signs an EIP-3009 `transferWithAuthorization` (no gas, no ETH needed) and retries with
+`PAYMENT-SIGNATURE: base64({ x402Version: 2, accepted, payload: { signature, authorization } })`. Lumi API checks the invoice and the
+authorization locally (recipient, exact amount, validity window), has the [PayAI facilitator](https://facilitator.payai.network) verify
+it, claims the invoice **and** the authorization nonce in the Durable Object guard, then settles. Same receipt, same error semantics,
+same "never charged on stale data" rule as XRPL.
+
+```ts
+import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { privateKeyToAccount } from "viem/accounts";
+
+const client = new x402Client();
+registerExactEvmScheme(client, { signer: privateKeyToAccount(process.env.EVM_PRIVATE_KEY as `0x${string}`) });
+const res = await wrapFetchWithPayment(fetch, client)("https://api.lumitrades.io/v1/brief");
+console.log(await res.json());
+```
+
+Why PayAI: it is listed on [docs.x402.org/dev-tools/facilitators](https://docs.x402.org/dev-tools/facilitators), supports x402 v2 `exact`
+on `eip155:8453`, and needs no API key or sign-up (each receiving wallet gets 1,000 free credits, about 2 credits per Base settlement at
+current gas). The `x402.org` facilitator is testnet only, and Coinbase CDP's needs CDP API keys. `EVM_FACILITATOR_URL` switches facilitator.
+
 ### Error semantics (same as the reference middleware)
 
 | Status | Meaning | Agent action |
@@ -124,7 +160,8 @@ See `examples/agent-client.ts`, `examples/agent_client.py` and the live `/skill.
 
 ## Design notes
 
-- **Runs on Cloudflare Workers** (`src/index.ts`) and on **plain Node** (`src/node.ts`) from the same `createApp()` (`src/app.ts`). The Worker bundle has no dependencies and is about 13 KiB gzipped.
+- **Runs on Cloudflare Workers** (`src/index.ts`) and on **plain Node** (`src/node.ts`) from the same `createApp()` (`src/app.ts`). The only runtime dependency in the Worker bundle is `@x402/core` (its x402 v2 schemas validate Base payment payloads); the bundle is about 62 KiB gzipped.
+- **Two payment networks, one invoice.** XRPL options come first and use the unchanged T54 flow; the Base option (`src/x402.ts`, `requireEvmPayment`) uses its own facilitator URL. Tests drive it with the official `@x402/fetch` + `@x402/evm` client and real EIP-3009 signatures against mocked facilitator responses, and check our requirement constants against `@x402/evm`'s own price parser.
 - **Wire-compatible with the XRPL reference implementation.** `src/x402.ts` mirrors T54's FastAPI/Express `require_payment` middleware (x402 v2 headers, `/verify` then `/settle`, typed 503/409 errors). The official npm and PyPI buyer SDKs work against it unchanged. Both were exercised on testnet.
 - **Stateless invoices.** Workers isolates share no memory, so the reference SDK's in-memory invoice store can't be used. Invoice ids are HMAC tokens (`INVOICE_SECRET`) that bind route, amount, network, `payTo` and expiry. Any isolate can validate them, and a quote for `/v1/signal/XRP` can't be redeemed on `/v1/slate`.
 - **One-time redemption via a Durable Object** (`src/invoice-guard.ts`). This is required. On testnet, the T54 facilitator returns `success: true` again when an already-settled blob is resubmitted, because XRPL submission is idempotent on the tx hash. `npm run probe:replay` reproduces this. Without a resource-server guard, one payment could be replayed for unlimited data. The guard atomically claims each invoice id before `/settle`. It is sharded 16 ways and expires entries with alarms. SQLite-backed DOs are on the Workers Free plan.
@@ -222,8 +259,12 @@ Settle latency was about 6 to 7 s per paid call, including XRPL validation. Full
 | `INVOICE_SECRET` | secret, required on mainnet (startup refuses without it) |
 | `PRIVATE_NAMES` | optional secret: comma-separated names scrubbed from paid responses (`npx wrangler secret put PRIVATE_NAMES`) |
 | `OWNER_MCP_KEY` | optional secret (32+ chars): operator key for the remote MCP endpoint; paid tools return data free (`npx wrangler secret put OWNER_MCP_KEY`) |
+| `EVM_NETWORK` | `eip155:8453` (Base mainnet; testnet env uses `eip155:84532`, Base Sepolia) |
+| `EVM_PAY_TO` | `0x5E617bac19912e6d212CB303ae84655E9E203532` (Lumi's Base receiving address; address only). Unset = no Base option |
+| `EVM_FACILITATOR_URL` | `https://facilitator.payai.network` (testnet: `https://x402.org/facilitator`) |
+| `ACCEPT_BASE_USDC` | `true`; `false` removes the Base option |
 
-The server never holds a private key. The payer signs, the facilitator submits, and XRP (or RLUSD/USDC) lands in `PAY_TO`. `PAY_TO` needs RLUSD and USDC trust lines to receive stablecoins. Lumi's mainnet wallet has both (limit 1,000,000 each).
+The server never holds a private key. The payer signs, the facilitator submits, and XRP (or RLUSD/USDC) lands in `PAY_TO`; Base USDC lands in `EVM_PAY_TO`. `PAY_TO` needs RLUSD and USDC trust lines to receive stablecoins. Lumi's mainnet wallet has both (limit 1,000,000 each).
 
 ## Data inputs
 
@@ -249,6 +290,17 @@ server URL (e.g. a Grok, Claude or ChatGPT connector, or `npx @modelcontextproto
   Compared in constant time and never logged; Workers invocation logs are off so request URLs are not recorded.
 - `GET`/`DELETE /mcp` return 405 (no sessions or standalone SSE stream). CORS is open (`*`) for browser-based MCP clients.
 
+## A2A
+
+- **Agent card:** `https://api.lumitrades.io/.well-known/agent-card.json` (alias `/.well-known/agent.json`). A2A 1.0 shape
+  (`supportedInterfaces`, `capabilities`, `skills`, `provider`) plus the 0.3 fields (`url`, `preferredTransport`, `protocolVersion`).
+  Skills mirror the endpoints (free `catalog`, `coins`, `quote`; paid `brief`, `signal`, `levels`, `slate`, `market`, `macro_yen`,
+  `sentiment`, `events`, `trades`). The x402 networks and prices and the MCP URL are in `capabilities.extensions`.
+- **JSON-RPC endpoint:** `POST https://api.lumitrades.io/a2a`, stateless. `SendMessage` (1.0) and `message/send` (0.3) take text such as
+  "signal XRP" or a data part `{ "skill": "signal", "coin": "XRP" }` and reply with a direct Message. Free skills answer inline; paid skills
+  answer with the live x402 terms (every network option) and the REST URL to pay at, and nothing is charged over A2A. No tasks, streaming
+  or push notifications (those methods return the spec errors).
+
 ### Local stdio: `lumi-trades-mcp`
 
 `mcp/` is a stdio MCP server ([`lumi-trades-mcp`](https://www.npmjs.com/package/lumi-trades-mcp) on npm, `io.github.cypher-osiris/lumi-trades-mcp` in the official MCP Registry) exposing every endpoint as a tool and paying per call with the user's own XRPL wallet
@@ -261,7 +313,7 @@ src/
   index.ts          Workers entry (+ exports the InvoiceGuard Durable Object)
   node.ts           Node HTTP adapter (npm start)
   app.ts            router, free/paid endpoints, "never charge on failure" ordering
-  x402.ts           x402 v2 merchant flow: challenge, HMAC invoices, verify/settle, replay guards
+  x402.ts           x402 v2 merchant flow: challenge, HMAC invoices, verify/settle (XRPL + Base), replay guards
   invoice-guard.ts  Durable Object: atomic one-time invoice redemption
   views.ts          whitelisted response shapes (signal, levels, slate, market)
   products.ts       brief, macro/yen, sentiment, events, trades (+ markdown brief, carry-trade + funding rules)
@@ -270,6 +322,7 @@ src/
   data.ts           cached fetch of lumitrades.io/data/*.json
   docs.ts           index, skill.md, /.well-known/x402, openapi.json
   mcp.ts            remote MCP endpoint (/mcp): Streamable HTTP JSON-RPC, tools, owner-key access
+  a2a.ts            A2A agent card + JSON-RPC endpoint (/a2a)
   catalog.ts        endpoint + price catalog
   config.ts         env parsing, XRP to drops, network defaults
 scripts/            testnet wallet setup, end-to-end demo, replay probe
@@ -281,7 +334,7 @@ demo/               recorded testnet transcripts
 ## Roadmap (XRPL Grants milestones)
 
 1. **Mainnet launch** on `api.lumitrades.io`, listed in x402 discovery indexes (OpenAPI and `/.well-known/x402`) and in the XRPL agent ecosystem.
-2. **Stablecoin pricing.** Done: RLUSD and Circle USDC are in `accepts[]` next to XRP, priced in USD cents (see *Accepted assets*).
+2. **Stablecoin pricing.** Done: RLUSD and Circle USDC are in `accepts[]` next to XRP, priced in USD cents (see *Accepted assets*). Since v0.4 the same price is also payable in USDC on Base, with XRPL kept first.
 3. **Prepaid credits through payment channels.** Agents that call often open an XRPL PayChannel once and stream signed claims, which brings per-call cost and latency well below one on-ledger Payment per call. Candidates are the `upto`/`paychan` x402 schemes.
 4. **Usage metrics dashboard.** Public stats from on-ledger data (payments to `PAY_TO` with `SourceTag 804681468`: calls, unique payer agents, XRP volume per endpoint) plus Workers Analytics Engine. These metrics become the grant KPIs.
 5. **More products.** Done: daily brief, yen carry-trade watch, sentiment, events, full track record, and an MCP server wrapper (`mcp/`). Next: historical signal series, a backtest API, webhook/stream subscriptions.

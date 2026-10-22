@@ -3,16 +3,16 @@ import { sanitize, scrubText, setPrivateNames, splitSentences } from "../src/san
 import { yenNote } from "../src/views";
 
 describe("sanitize", () => {
-  setPrivateNames("Casey, Morgan");
+  setPrivateNames("Canaryname, Decoyname");
 
   it("drops sentences about a configured private name or personal holdings but keeps the rest", () => {
-    const s = "XRP is at $1.33. Casey bought more yesterday. Support is $1.30. I hold a big bag. Resistance $1.375.";
+    const s = "XRP is at $1.33. Canaryname bought more yesterday. Support is $1.30. I hold a big bag. Resistance $1.375.";
     expect(scrubText(s)).toBe("XRP is at $1.33. Support is $1.30. Resistance $1.375.");
     expect(scrubText("Sized to fit my holdings.")).toBe("");
   });
 
   it("drops sensitive keys recursively and empty strings from arrays", () => {
-    const out = sanitize({ a: 1, holdings: [1], nested: { casey_note: "x", ok: "fine", list: ["Morgan says hi.", "ok"] } });
+    const out = sanitize({ a: 1, holdings: [1], nested: { canaryname_note: "x", ok: "fine", list: ["Decoyname says hi.", "ok"] } });
     expect(out).toEqual({ a: 1, nested: { ok: "fine", list: ["ok"] } });
   });
 

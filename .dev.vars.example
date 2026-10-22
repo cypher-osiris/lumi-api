@@ -5,3 +5,7 @@ FACILITATOR_URL=https://xrpl-facilitator-testnet.t54.ai
 INVOICE_SECRET=change-me-to-a-long-random-string
 # Optional: comma-separated private names to scrub from paid responses
 PRIVATE_NAMES=
+# Optional: USDC on Base Sepolia via x402 (address only)
+EVM_NETWORK=eip155:84532
+EVM_PAY_TO=0xYourBaseSepoliaReceiverAddress
+EVM_FACILITATOR_URL=https://x402.org/facilitator

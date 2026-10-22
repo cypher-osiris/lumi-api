@@ -3,7 +3,7 @@ import { createApp } from "../src/app";
 import { DATA, FACILITATOR, PAY_TO, NOW, fixture, happyFacilitator, makeFetch, paymentHeaderFor, decodeB64Json, type FakeFacilitator } from "./helpers";
 import { carryRisk, fundingRead } from "../src/products";
 
-const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret", PRIVATE_NAMES: "Casey" };
+const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret", PRIVATE_NAMES: "Canaryname" };
 const BASE = "http://lumi.test";
 const NEW = ["/v1/brief", "/v1/macro/yen", "/v1/sentiment", "/v1/events", "/v1/trades"];
 
@@ -60,7 +60,7 @@ describe("new endpoints: payloads", () => {
     expect(b.disclaimer).toMatch(/Not financial advice/);
     expect(b.payment.transaction).toHaveLength(64);
     const s = JSON.stringify(b);
-    expect(s).not.toMatch(/casey|my holdings/i);
+    expect(s).not.toMatch(/canaryname|my holdings/i);
   });
 
   it("brief: ?format=md returns text/markdown with the receipt", async () => {
@@ -70,7 +70,7 @@ describe("new endpoints: payloads", () => {
     const t = await r.text();
     expect(t).toContain("## Key levels");
     expect(t).toContain("Not financial advice");
-    expect(t).not.toMatch(/casey/i);
+    expect(t).not.toMatch(/canaryname/i);
   });
 
   it("macro/yen: USD/JPY + Nikkei, carry-trade risk around 155, Japan events", async () => {
@@ -97,7 +97,7 @@ describe("new endpoints: payloads", () => {
     expect(b.upcoming_timed.length).toBeGreaterThan(0);
     for (const e of b.upcoming_timed) expect(e.at_utc >= "2026-10-22T13:00:00.000Z").toBe(true);
     expect(b.upcoming_by_date.some((c: any) => c.coin === "XLM")).toBe(true);
-    expect(JSON.stringify(b)).not.toMatch(/casey/i);
+    expect(JSON.stringify(b)).not.toMatch(/canaryname/i);
   });
 
   it("trades: full history + computed track record, no private fields", async () => {
@@ -108,7 +108,7 @@ describe("new endpoints: payloads", () => {
     expect(b.track_record.by_status.cancelled).toBe(1);
     expect(b.track_record.worst_closed.pnl_pct).toBeLessThan(0);
     for (const x of b.trades) expect(x).not.toHaveProperty("source");
-    expect(JSON.stringify(b)).not.toMatch(/user-specified|casey/i);
+    expect(JSON.stringify(b)).not.toMatch(/user-specified|canaryname/i);
   });
 });
 

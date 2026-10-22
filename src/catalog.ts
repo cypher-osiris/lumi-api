@@ -123,9 +123,13 @@ export function priceTable(cfg: Config) {
     price_drops: cfg.pricesDrops[e.route],
     price_rlusd: cfg.ious.find((o) => o.symbol === "RLUSD")?.prices[e.route] ?? null,
     price_usdc: cfg.ious.find((o) => o.symbol === "USDC")?.prices[e.route] ?? null,
+    price_base_usdc: cfg.evm?.prices[e.route] ?? null,
     prices: [
-      { asset: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
-      ...cfg.ious.map((o) => ({ asset: o.symbol, amount: o.prices[e.route], currency: o.currency, issuer: o.issuer })),
+      { asset: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]), network: cfg.network },
+      ...cfg.ious.map((o) => ({ asset: o.symbol, amount: o.prices[e.route], currency: o.currency, issuer: o.issuer, network: cfg.network })),
+      ...(cfg.evm
+        ? [{ asset: "USDC", amount: cfg.evm.prices[e.route], network: cfg.evm.network, chain: cfg.evm.networkName, token: cfg.evm.asset, amount_atomic: cfg.evm.amounts[e.route] }]
+        : []),
     ],
     summary: e.summary,
     example: e.example,

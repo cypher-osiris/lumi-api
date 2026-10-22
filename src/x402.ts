@@ -17,6 +17,7 @@
  */
 
 import type { Config, DurableObjectNamespaceLike, IouOption, KVLike } from "./config";
+import { isPaymentPayloadV2 } from "@x402/core/schemas";
 
 export const HEADER_PAYMENT_REQUIRED = "PAYMENT-REQUIRED";
 export const HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE";
@@ -70,6 +71,8 @@ export interface Quote {
   amountDrops: string;
   /** Optional stablecoin prices keyed by symbol (IOU value strings); offered for each matching cfg.ious entry. */
   amountsIou?: Partial<Record<string, string>>;
+  /** Optional Base USDC price in atomic units (6 decimals); offered when cfg.evm is set. */
+  amountEvm?: string;
   description: string;
   resourceUrl: string;
 }
@@ -137,7 +140,8 @@ function macInput(cfg: Config, routeKey: string, amount: string, exp: string, no
 /** Every price offered in the quote is bound into the invoice MAC (one invoice covers all accepted assets). */
 function quoteAmounts(cfg: Config, quote: Quote): string {
   const ious = offeredIous(cfg, quote).map(([o, amt]) => `,${o.symbol}:${o.currency}:${o.issuer}:${amt}`).join("");
-  return `XRP:${quote.amountDrops}${ious}`;
+  const evm = cfg.evm && quote.amountEvm ? `,EVM:${cfg.evm.network}:${cfg.evm.asset}:${cfg.evm.payTo}:${quote.amountEvm}` : "";
+  return `XRP:${quote.amountDrops}${ious}${evm}`;
 }
 
 function offeredIous(cfg: Config, quote: Quote): [IouOption, string][] {
@@ -291,8 +295,31 @@ export function buildAccepts(cfg: Config, quote: Quote, invoiceId: string): Paym
       extra: { invoiceId, sourceTag: cfg.sourceTag, issuer: o.issuer, symbol: o.symbol },
     });
   }
+  const evm = buildEvmRequirement(cfg, quote, invoiceId);
+  if (evm) out.push(evm);
   return out;
 }
+
+/**
+ * Base USDC option (always after every XRPL option): x402 v2 `exact` scheme for EVM, EIP-3009 transferWithAuthorization.
+ * `amount` is in atomic units (6 decimals), `asset` is the USDC contract, `extra.name`/`extra.version` are the token's
+ * EIP-712 domain (what @x402/evm signs against). `extra.invoiceId` binds the payment to this quote: standard x402 clients
+ * echo `accepted` back unchanged, so the invoice comes back with it.
+ */
+export function buildEvmRequirement(cfg: Config, quote: Quote, invoiceId: string): PaymentRequirements | null {
+  if (!cfg.evm || !quote.amountEvm) return null;
+  return {
+    scheme: "exact",
+    network: cfg.evm.network,
+    amount: quote.amountEvm,
+    asset: cfg.evm.asset,
+    payTo: cfg.evm.payTo,
+    maxTimeoutSeconds: cfg.invoiceTtlSeconds,
+    extra: { name: cfg.evm.eip712.name, version: cfg.evm.eip712.version, invoiceId, symbol: "USDC", decimals: cfg.evm.decimals },
+  };
+}
+
+export const isEvmRequirement = (r: { network?: unknown }) => typeof r.network === "string" && r.network.startsWith("eip155:");
 
 /** Human label for a requirement's asset. */
 export function assetLabel(req: PaymentRequirements): string {
@@ -359,6 +386,20 @@ function decodePaymentPayload(header: string): PaymentPayload | null {
 }
 
 function sameRequirements(a: PaymentRequirements, b: PaymentRequirements): boolean {
+  if (isEvmRequirement(a) || isEvmRequirement(b)) {
+    const lc = (v: unknown) => String(v ?? "").toLowerCase();
+    return (
+      a.scheme === b.scheme &&
+      a.network === b.network &&
+      String(a.amount) === String(b.amount) &&
+      lc(a.asset) === lc(b.asset) &&
+      lc(a.payTo) === lc(b.payTo) &&
+      Number(a.maxTimeoutSeconds) === Number(b.maxTimeoutSeconds) &&
+      a.extra?.invoiceId === b.extra?.invoiceId &&
+      a.extra?.name === b.extra?.name &&
+      a.extra?.version === b.extra?.version
+    );
+  }
   return (
     a.scheme === b.scheme &&
     a.network === b.network &&
@@ -413,6 +454,8 @@ export async function requirePayment(
   if (await deps.replay.isUsed(invoiceId)) {
     return paymentRequiredResponse(cfg, quote, "invoice_already_used");
   }
+  // Base (EVM) payments take their own path; everything below is the unchanged XRPL flow.
+  if (isEvmRequirement(expected)) return requireEvmPayment(payload, expected, invoiceId, check.expiresAt, cfg, deps, quote, serve);
 
   const facilitatorBody = JSON.stringify({ paymentPayload: payload, paymentRequirements: expected });
   const post = (path: string) =>
@@ -527,4 +570,145 @@ function settlementUnknown(): Response {
     },
     { "X-Correlation-ID": correlationId },
   );
+}
+
+// ---------------------------------------------------------------- Base (EVM) flow
+
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+const NONCE_RE = /^0x[0-9a-fA-F]{64}$/;
+const UINT_RE = /^\d{1,78}$/;
+/** Seconds an EIP-3009 authorization must still be valid for when we start, so settlement can land on-chain. */
+const MIN_VALIDITY_SECONDS = 10;
+
+export interface Eip3009Authorization {
+  from: string;
+  to: string;
+  value: string;
+  validAfter: string;
+  validBefore: string;
+  nonce: string;
+}
+
+/** The x402 `exact` EVM payload (EIP-3009 transferWithAuthorization), or null when the shape is wrong. */
+export function parseEip3009(payload: PaymentPayload): { authorization: Eip3009Authorization; signature: string } | null {
+  const p = payload.payload as Record<string, any> | undefined;
+  const a = p?.authorization;
+  if (!a || typeof a !== "object" || typeof p?.signature !== "string" || !/^0x[0-9a-fA-F]{130,}$/.test(p.signature)) return null;
+  const auth = Object.fromEntries(
+    ["from", "to", "value", "validAfter", "validBefore", "nonce"].map((k) => [k, typeof a[k] === "number" ? String(a[k]) : a[k]]),
+  ) as Eip3009Authorization;
+  if (!ADDRESS_RE.test(auth.from ?? "") || !ADDRESS_RE.test(auth.to ?? "") || !NONCE_RE.test(auth.nonce ?? "")) return null;
+  if (![auth.value, auth.validAfter, auth.validBefore].every((v) => typeof v === "string" && UINT_RE.test(v))) return null;
+  return { authorization: auth, signature: p.signature };
+}
+
+/**
+ * Base USDC settlement through an x402 facilitator (PayAI by default on mainnet). Same guarantees as the XRPL path:
+ * the paid body is already built (freshness gate ran before the 402), the invoice is claimed exactly once in the
+ * replay guard before settlement, and the EIP-3009 authorization nonce is claimed too, so one signed authorization
+ * can never be redeemed against two invoices even if a facilitator treats a re-settle as success.
+ */
+async function requireEvmPayment(
+  payload: PaymentPayload,
+  expected: PaymentRequirements,
+  invoiceId: string,
+  expiresAt: number,
+  cfg: Config,
+  deps: PaywallDeps,
+  quote: Quote,
+  serve: (settlement: Settlement, paid: PaymentRequirements) => Promise<Response> | Response,
+): Promise<Response> {
+  const evm = cfg.evm!;
+  if (!isPaymentPayloadV2(payload)) return json(400, { error: "invalid_payment_payload", detail: "not an x402 v2 PaymentPayload" });
+  const parsed = parseEip3009(payload);
+  if (!parsed) {
+    return json(400, {
+      error: "invalid_evm_payload",
+      detail: "expected payload { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } (EIP-3009)",
+    });
+  }
+  const { authorization: auth } = parsed;
+  if (auth.to.toLowerCase() !== evm.payTo.toLowerCase()) return paymentRequiredResponse(cfg, quote, "authorization_payto_mismatch");
+  if (BigInt(auth.value) !== BigInt(expected.amount)) return paymentRequiredResponse(cfg, quote, "authorization_amount_mismatch");
+  const nowS = Math.floor(Date.now() / 1000);
+  if (BigInt(auth.validBefore) < BigInt(nowS + MIN_VALIDITY_SECONDS)) return paymentRequiredResponse(cfg, quote, "authorization_expired");
+  if (BigInt(auth.validAfter) > BigInt(nowS + 5)) return paymentRequiredResponse(cfg, quote, "authorization_not_yet_valid");
+
+  const nonceKey = `eip3009:${expected.network}:${expected.asset.toLowerCase()}:${auth.from.toLowerCase()}:${auth.nonce.toLowerCase()}`;
+  if (await deps.replay.isUsed(nonceKey)) return paymentRequiredResponse(cfg, quote, "authorization_already_used");
+
+  const body = JSON.stringify({ x402Version: 2, paymentPayload: payload, paymentRequirements: expected });
+  const post = (path: string) =>
+    deps.fetch(`${evm.facilitatorUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body,
+    });
+
+  // ---- verify (no money moves; safe to retry). Facilitators answer an invalid payment with 200 or 400 + isValid:false.
+  let verifyResp: Response;
+  try {
+    verifyResp = await post("/verify");
+  } catch {
+    return transient("facilitator_unavailable");
+  }
+  if (verifyResp.status === 408 || verifyResp.status === 429 || verifyResp.status >= 500) {
+    return transient("facilitator_unavailable", verifyResp.headers.get("Retry-After"));
+  }
+  const verifyJson = (await verifyResp.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!verifyJson || typeof verifyJson.isValid !== "boolean" || (verifyJson.isValid && verifyResp.status !== 200)) {
+    return json(502, { error: "invalid_verify_response", retryable: false, phase: "verify", settlementAttempted: false });
+  }
+  if (!verifyJson.isValid) {
+    return paymentRequiredResponse(cfg, quote, `verify_failed:${String(verifyJson.invalidReason || "verify_failed")}`);
+  }
+
+  // ---- one-time redemption: the invoice and the authorization nonce
+  const ttl = Math.max(60, Math.ceil((expiresAt - Date.now()) / 1000) + 60);
+  const nonceTtl = Math.max(ttl, Math.min(86_400 * 7, Number(auth.validBefore) - nowS + 60));
+  try {
+    if (!(await deps.replay.claim(invoiceId, ttl))) return paymentRequiredResponse(cfg, quote, "invoice_already_used");
+    if (!(await deps.replay.claim(nonceKey, nonceTtl))) return paymentRequiredResponse(cfg, quote, "authorization_already_used");
+  } catch {
+    return transient("invoice_guard_unavailable");
+  }
+
+  // ---- settle (the facilitator submits transferWithAuthorization on Base)
+  let settleResp: Response;
+  try {
+    settleResp = await post("/settle");
+  } catch {
+    return settlementUnknown();
+  }
+  const settleJson = (await settleResp.json().catch(() => null)) as Record<string, unknown> | null;
+  const tx = typeof settleJson?.transaction === "string" ? settleJson.transaction : "";
+  if (!settleJson || typeof settleJson.success !== "boolean") return settlementUnknown();
+  if (!settleJson.success || settleResp.status !== 200) {
+    // A definite refusal (nothing submitted) gets a fresh quote; anything that may have reached the chain is "unknown".
+    const definite = !settleJson.success && !tx && settleResp.status >= 200 && settleResp.status < 500 && settleResp.status !== 408 && settleResp.status !== 429;
+    if (!definite) return settlementUnknown();
+    return paymentRequiredResponse(cfg, quote, `settle_failed:${String(settleJson.errorReason ?? "unknown")}`);
+  }
+
+  const settlement: Settlement = {
+    success: true,
+    transaction: tx,
+    network: String(settleJson.network || expected.network),
+    payer: typeof settleJson.payer === "string" && settleJson.payer ? settleJson.payer : auth.from,
+  };
+  deps.log?.({
+    event: "x402_settled",
+    route: quote.routeKey,
+    asset: assetLabel(expected),
+    amount: expected.amount,
+    network: settlement.network,
+    tx: settlement.transaction,
+    payer: settlement.payer,
+  });
+
+  const resp = await serve(settlement, expected);
+  const out = new Response(resp.body, resp);
+  out.headers.set(HEADER_PAYMENT_RESPONSE, settleResp.headers.get(HEADER_PAYMENT_RESPONSE) || encodeHeader(settlement));
+  out.headers.set("Cache-Control", "no-store");
+  return out;
 }
