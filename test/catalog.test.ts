@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp } from "../src/app";
-import { toListing, normalizeUrl, normalizeDomain, registrableDomain, MemoryCatalogStore, probeRow, LABELS } from "../src/trust/catalog";
+import { toListing, normalizeUrl, normalizeDomain, registrableDomain, MemoryCatalogStore, probeRow, LABELS, INGEST_PAGE } from "../src/trust/catalog";
 import { DATA, FACILITATOR, PAY_TO, NOW, happyFacilitator, makeFetch } from "./helpers";
 
 const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret", OWNER_MCP_KEY: "k".repeat(52) };
@@ -33,7 +33,8 @@ function catalogFetch(base: typeof fetch, calls: string[] = []): typeof fetch {
     calls.push(url);
     if (url.startsWith("https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources")) {
       const u = new URL(url);
-      const off = Number(u.searchParams.get("offset")), lim = Number(u.searchParams.get("limit"));
+      // like CDP: limit forced to 30, offset snapped down to a multiple of 30
+      const lim = 30, off = Math.floor(Number(u.searchParams.get("offset")) / 30) * 30;
       return new Response(JSON.stringify({ items: ITEMS.slice(off, off + lim), pagination: { limit: lim, offset: off, total: ITEMS.length } }), { headers: { "content-type": "application/json" } });
     }
     if (url.startsWith("https://api.seller0.com/")) {
@@ -152,7 +153,7 @@ describe("catalog pipeline", () => {
     const app = createApp(ENV as any, { fetch: catalogFetch(makeFetch(happyFacilitator())), now: () => NOW, catalogStore: store, queue: { sendBatch: async (m) => { sent.push(...m); } } });
     await app.scheduled();
     expect(sent.map((m: any) => m.body)).toEqual([{ kind: "ingest", offset: 0 }, { kind: "probe", after: 0 }]);
-    expect(await store.getMeta("ingest_cursor")).toBe("25");
+    expect(await store.getMeta("ingest_cursor")).toBe(String(INGEST_PAGE));
     expect(store.rows.every((r) => r.probe_ts == null)).toBe(true);
     await app.queue(sent[1].body);
     expect(store.rows.filter((r) => r.probe_ts != null)).toHaveLength(3);
@@ -191,5 +192,17 @@ describe("lookup via MCP and A2A", () => {
     const s = JSON.stringify(await a2a.json());
     expect(s).toContain("trust_lookup");
     expect(s).toContain("catalog match");
+  });
+});
+
+describe("ingest paging", () => {
+  it("INGEST_PAGE is aligned to CDP's forced 30-item, 30-aligned pages so a full pass reads every entry", () => {
+    const total = 32776, seen = new Set<number>();
+    for (let o = 0; o < total + INGEST_PAGE; o += INGEST_PAGE) {
+      const snapped = Math.floor(o / 30) * 30;
+      for (let i = snapped; i < Math.min(total, snapped + 30); i++) seen.add(i);
+    }
+    expect(seen.size).toBe(total);
+    expect(INGEST_PAGE % 30).toBe(0);
   });
 });

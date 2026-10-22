@@ -7,7 +7,7 @@
 import type { D1Like } from "../config";
 
 export const DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources";
-export const INGEST_PAGE = 25; // a Bazaar page is ~3.5 KB per item; 25 keeps JSON parse + statement build well under 10 ms CPU
+export const INGEST_PAGE = 30; // CDP discovery forces limit=30 and snaps offset down to a multiple of 30, so pages must be 30-aligned (a 50-item stride skipped 40% of the catalog)
 export const PROBE_BATCH = 36;
 export const RDAP_PER_BATCH = 3;
 export const RUNS_PER_DAY = 46; // */30 cron = 48 runs; 46 leaves slack so every entry is checked within 24 h
