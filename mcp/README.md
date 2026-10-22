@@ -28,10 +28,11 @@ Prices are read live from each 402 quote; the table is for orientation. **You on
 
 ## Install
 
-Requires Node 20+. Until it is published to npm, run it from a clone:
+Requires Node 20+. Published on npm as [`lumi-trades-mcp`](https://www.npmjs.com/package/lumi-trades-mcp) and in the
+[official MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=lumi-trades) as `io.github.cypher-osiris/lumi-trades-mcp`.
 
 ```bash
-git clone https://github.com/cypher-osiris/lumi-api && cd lumi-api/mcp && npm install
+npx -y lumi-trades-mcp
 ```
 
 ### Claude Desktop / Cursor / any MCP client (`mcpServers` JSON)
@@ -40,8 +41,8 @@ git clone https://github.com/cypher-osiris/lumi-api && cd lumi-api/mcp && npm in
 {
   "mcpServers": {
     "lumi-trades": {
-      "command": "node",
-      "args": ["/absolute/path/to/lumi-api/mcp/src/index.js"],
+      "command": "npx",
+      "args": ["-y", "lumi-trades-mcp"],
       "env": {
         "XRPL_SEED": "sEd...your agent wallet seed...",
         "LUMI_PAY_ASSET": "XRP",
@@ -53,8 +54,8 @@ git clone https://github.com/cypher-osiris/lumi-api && cd lumi-api/mcp && npm in
 }
 ```
 
-Once published to npm the command becomes `"command": "npx", "args": ["-y", "lumi-trades-mcp"]`.
-Claude Code: `claude mcp add lumi-trades -e XRPL_SEED=sEd... -- node /absolute/path/to/lumi-api/mcp/src/index.js`.
+From a clone instead: `"command": "node", "args": ["/absolute/path/to/lumi-api/mcp/src/index.js"]` (after `npm install` in `mcp/`).
+Claude Code: `claude mcp add lumi-trades -e XRPL_SEED=sEd... -- npx -y lumi-trades-mcp`.
 
 Without `XRPL_SEED` the free tools work and paid tools return the price quote instead of paying.
 

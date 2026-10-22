@@ -231,7 +231,7 @@ All paid data comes from Lumi's own published files at `https://lumitrades.io/da
 
 ## MCP server
 
-`mcp/` is a stdio MCP server (`lumi-mcp`) exposing every endpoint as a tool and paying per call with the user's own XRPL wallet
+`mcp/` is a stdio MCP server ([`lumi-trades-mcp`](https://www.npmjs.com/package/lumi-trades-mcp) on npm, `io.github.cypher-osiris/lumi-trades-mcp` in the official MCP Registry) exposing every endpoint as a tool and paying per call with the user's own XRPL wallet
 (`XRPL_SEED` env), with per-call spend caps. See [mcp/README.md](mcp/README.md).
 
 ## Project layout

@@ -1,0 +1,49 @@
+# Smithery configuration for the Lumi Trades MCP server (stdio, published on npm as lumi-trades-mcp).
+# The server lives in ./mcp; this config simply launches the published npm package.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      xrplSeed:
+        type: string
+        description: "Seed of YOUR dedicated, low-balance XRPL agent wallet that pays for calls. Signed locally, never sent anywhere. Leave empty to use only the free tools (paid tools then return the price quote)."
+      payAsset:
+        type: string
+        enum: ["XRP", "RLUSD", "USDC"]
+        default: "XRP"
+        description: "Asset to pay with (stablecoins need a trust line and balance)."
+      maxXrpPerCall:
+        type: string
+        default: "0.05"
+        description: "Refuse any XRP quote above this amount."
+      maxUsdPerCall:
+        type: string
+        default: "0.05"
+        description: "Refuse any stablecoin quote above this amount."
+      sessionBudget:
+        type: string
+        default: "1"
+        description: "Max total spend per server process, in the pay asset."
+      network:
+        type: string
+        enum: ["xrpl:0", "xrpl:1"]
+        default: "xrpl:0"
+        description: "xrpl:0 mainnet, xrpl:1 testnet."
+  commandFunction: |-
+    (config) => {
+      const env = {
+        LUMI_PAY_ASSET: config.payAsset || "XRP",
+        LUMI_MAX_XRP_PER_CALL: config.maxXrpPerCall || "0.05",
+        LUMI_MAX_USD_PER_CALL: config.maxUsdPerCall || "0.05",
+        LUMI_SESSION_BUDGET: config.sessionBudget || "1",
+        XRPL_NETWORK: config.network || "xrpl:0"
+      };
+      if (config.xrplSeed) env.XRPL_SEED = config.xrplSeed;
+      return { command: "npx", args: ["-y", "lumi-trades-mcp"], env };
+    }
+  exampleConfig:
+    payAsset: "XRP"
+    maxXrpPerCall: "0.05"
+    sessionBudget: "0.5"
+    network: "xrpl:0"
