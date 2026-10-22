@@ -11,7 +11,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createClient, loadSettings } from "./lumi.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
 export const PAID_TOOLS = [
@@ -40,6 +40,18 @@ export const PAID_TOOLS = [
   { name: "lumi_sentiment", path: () => "/v1/sentiment", input: {}, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid (~0.005 XRP)." },
   { name: "lumi_events", path: () => "/v1/events", input: {}, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid (~0.005 XRP)." },
   { name: "lumi_trades", path: () => "/v1/trades", input: {}, description: "Lumi's full paper-trade history and honest computed track record (win rate, P&L, by coin/direction, equity curve). Paid (~0.01 XRP)." },
+  {
+    name: "lumi_institutional_brief",
+    path: (a) => `/v1/institutional${a.format === "md" ? "?format=md" : ""}`,
+    input: { format: z.enum(["json", "md"]).optional().describe("json (default) or md for ready-to-read markdown") },
+    description:
+      "Daily Institutional & Policy Brief (premium): what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 " +
+      "and other banks, central banks and tokenization firms did in the last days, and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR (plus RLUSD/USDC). " +
+      "Every item is dated and sourced, with why it matters, impact and confidence, and a link_type that separates confirmed links from Lumi's " +
+      "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
+      "what to watch next. Refreshed daily; never sold stale. Paid (~0.19 XRP / 0.25 RLUSD / 0.25 USDC): raise LUMI_MAX_XRP_PER_CALL to 0.2+ " +
+      "(or LUMI_MAX_USD_PER_CALL to 0.25+) to allow it. Not financial advice.",
+  },
 ];
 
 const DISCLAIMER = "Lumi Trades data: analytics and education only, not financial advice. Trade ideas are paper trades.";
@@ -90,7 +102,7 @@ export function buildServer(client) {
       t.name,
       { title: `Lumi: ${t.name.replace(/^lumi_/, "").replace(/_/g, " ")} (paid)`, description: `${t.description} Pays with your XRPL wallet via x402 within the configured caps.`, inputSchema: t.input },
       async (args) => {
-        const fmtMd = t.name === "lumi_brief" && args?.format === "md";
+        const fmtMd = (t.name === "lumi_brief" || t.name === "lumi_institutional_brief") && args?.format === "md";
         const r = await client.paid(t.path(args ?? {}), fmtMd ? "text/markdown" : "application/json");
         if (!r.paid) return { ...text(r), isError: r.status !== 402 || !!r.error };
         const receipt = { tx: r.receipt?.transaction, network: r.receipt?.network, spent_this_session: r.spent_this_session };

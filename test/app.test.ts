@@ -28,6 +28,7 @@ describe("free endpoints", () => {
     expect(index.paid_endpoints.map((p: any) => [p.path, p.price_xrp])).toEqual([
       ["/v1/signal/{coin}", "0.005"], ["/v1/levels/{coin}", "0.005"], ["/v1/slate", "0.01"], ["/v1/market", "0.01"],
       ["/v1/brief", "0.02"], ["/v1/macro/yen", "0.01"], ["/v1/sentiment", "0.005"], ["/v1/events", "0.005"], ["/v1/trades", "0.01"],
+      ["/v1/institutional", "0.19"],
     ]);
     expect(index.guarantee).toMatch(/only pay when you get data/i);
     expect((await get("/health")).status).toBe(200);
@@ -38,7 +39,7 @@ describe("free endpoints", () => {
     expect(skill).toContain("/v1/brief");
     const wk = await (await get("/.well-known/x402")).json();
     expect(wk).toMatchObject({ x402Version: 2, kind: "resource-server" });
-    expect(wk.resources).toHaveLength(9);
+    expect(wk.resources).toHaveLength(10);
     expect(wk.resources.map((r: any) => r.url)).toContain(`${BASE}/v1/macro/yen`);
     const oa = await (await get("/openapi.json")).json();
     expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].price).toEqual({ mode: "fixed", currency: "XRP", amount: "0.005" });

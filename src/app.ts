@@ -15,6 +15,7 @@ import {
 } from "./views";
 import { staleInputs, hasContent } from "./freshness";
 import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
+import { institutionalView } from "./institutional";
 import { handleMcp, MCP_CORS, type McpDeps } from "./mcp";
 
 export interface AppOptions {
@@ -43,6 +44,7 @@ const NEEDS: Record<PaidRoute, DataFile[]> = {
   sentiment: ["context", "prices", "signals"],
   events: ["analysis"],
   trades: ["trades"],
+  institutional: ["institutional_brief"],
 };
 /** Inputs that enrich a product but whose absence does not block it (the field is simply omitted). */
 const OPTIONAL: Partial<Record<PaidRoute, DataFile[]>> = {
@@ -59,6 +61,7 @@ const FIXED: Record<string, PaidRoute> = {
   "/v1/sentiment": "sentiment",
   "/v1/events": "events",
   "/v1/trades": "trades",
+  "/v1/institutional": "institutional",
 };
 
 export function createApp(env: Env, opts: AppOptions = {}): App {
@@ -239,7 +242,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (!prep.ok) return json(prep.status, prep.error, prep.headers);
     const { coin, body } = prep;
     const wantsMarkdown =
-      route === "brief" && (/^(md|markdown|text)$/i.test(url.searchParams.get("format") ?? "") || /text\/markdown/i.test(request.headers.get("Accept") ?? ""));
+      (route === "brief" || route === "institutional") && (/^(md|markdown|text)$/i.test(url.searchParams.get("format") ?? "") || /text\/markdown/i.test(request.headers.get("Accept") ?? ""));
 
     const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
     const quote: Quote = {
@@ -317,5 +320,7 @@ function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string
       return eventsView(d.events, d.analysis, coins, now);
     case "trades":
       return tradesView(d.trades, coins);
+    case "institutional":
+      return institutionalView(d.institutional_brief);
   }
 }

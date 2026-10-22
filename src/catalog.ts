@@ -112,6 +112,20 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
       "win rate, sum/avg P&L, best/worst, by coin, by direction, equity curve, open unrealized P&L.",
     example: "/v1/trades",
   },
+  {
+    route: "institutional",
+    name: "Lumi Institutional & Policy Brief (daily, premium)",
+    method: "GET",
+    path: "/v1/institutional",
+    template: "/v1/institutional",
+    summary:
+      "Daily, sourced analysis of what central banks, standard-setters, regulators, banks and tokenization firms are doing (BIS, IMF, US Treasury/OCC, " +
+      "Fed, SEC, CFTC, JPMorgan Kinexys, SBI, Cross River, Securitize, R3 and others) and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR " +
+      "(plus RLUSD/USDC). Every item has a source URL, date, why-it-matters, impact and confidence, and a link_type that separates confirmed " +
+      "links from Lumi's indirect-alignment analysis. Also: big picture, per-coin map, cross-item connections, no-news notes and dated what-to-watch. " +
+      "JSON with a `markdown` field; ?format=md returns text/markdown. Neutral and apolitical; not financial advice.",
+    example: "/v1/institutional",
+  },
 ];
 
 export function priceTable(cfg: Config) {

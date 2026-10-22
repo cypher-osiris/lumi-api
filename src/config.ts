@@ -87,7 +87,7 @@ export interface KVLike {
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
 }
 
-export type PaidRoute = "signal" | "levels" | "slate" | "market" | "brief" | "yen" | "sentiment" | "events" | "trades";
+export type PaidRoute = "signal" | "levels" | "slate" | "market" | "brief" | "yen" | "sentiment" | "events" | "trades" | "institutional";
 
 /**
  * Default prices per route: XRP and USD-stablecoin (RLUSD/USDC). Override with PRICE_<ROUTE>_XRP / _RLUSD / _USDC
@@ -104,6 +104,10 @@ export const DEFAULT_PRICES: Record<PaidRoute, { xrp: string; usd: string }> = {
   sentiment: { xrp: "0.005", usd: "0.01" },
   events: { xrp: "0.005", usd: "0.01" },
   trades: { xrp: "0.01", usd: "0.02" },
+  // Premium daily Institutional & Policy Brief: $0.25. Stablecoins are exactly 0.25; XRP is a fixed amount set from
+  // XRP ~= $1.32 on Oct 22 2026 (0.25 / 1.32 = 0.189 -> 0.19 XRP). There is no live XRP/USD repricing: update
+  // PRICE_INSTITUTIONAL_XRP in wrangler.toml if XRP moves a lot.
+  institutional: { xrp: "0.19", usd: "0.25" },
 };
 export const PAID_ROUTES = Object.keys(DEFAULT_PRICES) as PaidRoute[];
 

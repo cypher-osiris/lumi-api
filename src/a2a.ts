@@ -39,6 +39,14 @@ const SKILLS: SkillDef[] = [
   { id: "catalog", name: "Catalog: endpoints, prices, payment networks (free)", tags: ["catalog", "pricing", "x402", "free"], examples: ["catalog", "what do you sell and how much?"], match: /\b(catalog|prices?|pricing|endpoints?|help|menu)\b/i },
   { id: "coins", name: "Supported coins (free)", tags: ["coins", "free"], examples: ["list coins"], match: /\b(coins|supported|tickers)\b/i },
   { id: "quote", name: "Price quote for a paid call, without paying (free)", tags: ["quote", "x402", "free"], examples: ["quote /v1/brief"], match: /\bquote\b/i },
+  {
+    id: "institutional",
+    route: "institutional",
+    name: "Daily Institutional & Policy Brief (BIS, IMF, regulators, banks -> XRP, XLM, XDC, QNT, AXL, HBAR)",
+    tags: ["institutional", "policy", "regulation", "cbdc", "tokenization", "stablecoins", "xrp", "xlm", "xdc", "qnt", "axl", "hbar", "premium", "paid"],
+    examples: ["institutional brief", "what are BIS, IMF and the big banks doing that matters for XRP and QNT?"],
+    match: /\b(institution(al|s)?|policy|regulat(ion|ions|ory|ors?)|bis|imf|treasury|occ|sec|cftc|cbdcs?|jpmorgan|jpm|kinexys|sbi|cross river|securitize|corda|r3|banks?|tokeni[sz](ed|ation))\b/i,
+  },
   { id: "brief", route: "brief", name: "Daily crypto market brief", tags: ["crypto", "market", "brief", "newsletter", "paid"], examples: ["today's crypto market brief"], match: /\b(brief|summary|today|newsletter)\b/i },
   { id: "signal", route: "signal", name: "Coin signal (buy/sell read)", tags: ["crypto", "signal", "technical-analysis", "paid"], examples: ["signal XRP", "is BTC a buy?"], match: /\b(signal|buy|sell|rsi|macd)\b/i, needsCoin: true },
   { id: "levels", route: "levels", name: "Support/resistance levels + 7-day projection", tags: ["crypto", "levels", "support", "resistance", "paid"], examples: ["levels ETH"], match: /\b(levels?|support|resistance|projection)\b/i, needsCoin: true },
@@ -82,7 +90,8 @@ export function agentCard(cfg: Config, base: string) {
     name: "Lumi Trades",
     description:
       "Crypto market reads for AI agents from Lumi Trades (lumitrades.io): daily market brief, per-coin signals and support/resistance levels, " +
-      "paper-trade ideas and an honest track record, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar for 13 coins. " +
+      "paper-trade ideas and an honest track record, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar for 13 coins, " +
+      "plus a premium daily Institutional & Policy Brief mapping BIS, IMF, US regulators, major banks and tokenization firms to XRP, XLM, XDC, QNT, AXL and HBAR. " +
       `Pay per call over x402 v2 with no API key or account, in ${settledIn(cfg)}. Also available as a remote MCP server. Analytics only, not financial advice.`,
     // A2A 1.0
     supportedInterfaces: A2A_VERSIONS.map((v) => ({ url: a2aUrl, protocolBinding: "JSONRPC", protocolVersion: v })),
@@ -302,7 +311,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
     if (target.needsCoin && !coinArg) {
       return { skill: target.id, text: `Which coin? ${target.id} needs one of: ${coins.map((c) => c.symbol).join(", ")}.`, data: { error: "missing_coin", supported: coins.map((c) => c.symbol) } };
     }
-    path = ep.template.replace("{coin}", encodeURIComponent(String(coinArg ?? ""))) + (target.route === "brief" && data.format === "md" ? "?format=md" : "");
+    path = ep.template.replace("{coin}", encodeURIComponent(String(coinArg ?? ""))) + ((target.route === "brief" || target.route === "institutional") && data.format === "md" ? "?format=md" : "");
   }
   const q = await deps.quote(path);
   const url = `${base}${path}`;

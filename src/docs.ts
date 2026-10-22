@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -16,7 +16,8 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       `No API keys or accounts: each paid call is settled in ${settledIn(cfg)} via the x402 protocol (HTTP 402, exact scheme).`,
     human_summary:
       "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins, plus a daily " +
-      "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its full paper-trade track record. " +
+      "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its full paper-trade track record, " +
+      "plus a premium daily Institutional & Policy Brief (BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR). " +
       `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}` +
       `${cfg.evm ? ` or USDC on ${cfg.evm.networkName} (accepts[${cfg.ious.length + 1}])` : ""}, sign a small XRPL Payment${cfg.evm ? " or an EIP-3009 USDC authorization" : ""}, retry, and get JSON back.`,
     source: SOURCE,
@@ -65,7 +66,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate + track record, macro, daily brief, yen carry-trade watch, sentiment, events), settled in ${settledIn(cfg)}.`,
+    description: `Pay-per-call crypto market reads from lumitrades.io (signals, levels, paper-trade slate + track record, macro, daily brief, yen carry-trade watch, sentiment, events, daily Institutional & Policy Brief), settled in ${settledIn(cfg)}.`,
     resources: PAID_ENDPOINTS.map((e) => ({
       name: e.name,
       url: `${base}${e.example}`,
@@ -137,7 +138,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         description: e.summary,
         parameters: e.template.includes("{coin}")
           ? [coinParam]
-          : e.route === "brief"
+          : e.route === "brief" || e.route === "institutional"
             ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
             : [],
         "x-payment-info": {
@@ -192,7 +193,8 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
         "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
         "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives CoinMarketCap Fear & Greed, funding and breadth; " +
-        "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the full paper-trade history and track record. Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
+        "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the full paper-trade history and track record; " +
+        "GET /v1/institutional gives the daily Institutional & Policy Brief (BIS, IMF, US regulators, banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR, confirmed vs indirect-alignment links). Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
         (cfg.ious.length
           ? "in XRP (accepts[0])" + cfg.ious.map((o, i) => ` or ${o.symbol} (accepts[${i + 1}], issuer ${o.issuer})`).join("") + " "
           : "in XRP ") +
@@ -213,7 +215,7 @@ function mcpInfo(base: string) {
     registry: "io.github.cypher-osiris/lumi-trades-mcp",
     tools: {
       free: ["lumi_catalog", "lumi_coins", "lumi_quote"],
-      paid: ["lumi_brief", "lumi_signal", "lumi_levels", "lumi_slate", "lumi_market", "lumi_macro_yen", "lumi_sentiment", "lumi_events", "lumi_trades"],
+      paid: ["lumi_brief", "lumi_signal", "lumi_levels", "lumi_slate", "lumi_market", "lumi_macro_yen", "lumi_sentiment", "lumi_events", "lumi_trades", "lumi_institutional_brief"],
     },
     note: "On the remote server, paid tools return the price and how to pay (x402 at the REST endpoint, or the npm package with your wallet). Stale data is never sold.",
   };
@@ -315,7 +317,7 @@ export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const maxDrops = Math.max(...Object.values(cfg.pricesDrops).map(Number));
   return `---
 name: lumi-api
-description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas + track record, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar) for ${coins.length} coins, paid in ${settledIn(cfg)} via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
+description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas + track record, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar, daily Institutional & Policy Brief) for ${coins.length} coins, paid in ${settledIn(cfg)} via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
 ---
 
 # Lumi API (agent guide)
@@ -340,6 +342,8 @@ Which one to call:
 - Need "what's going on in crypto today" in one call? \`GET /v1/brief\` (add \`?format=md\` for ready-to-post markdown).
 - Macro risk from Japan / the yen carry trade? \`GET /v1/macro/yen\`.
 - Mood/positioning only? \`GET /v1/sentiment\`. What's scheduled? \`GET /v1/events\`.
+- What are central banks, regulators and big banks doing, and what does it mean for XRP, XLM, XDC, QNT, AXL, HBAR? \`GET /v1/institutional\`
+  (daily, sourced; each link labelled \`confirmed\`, \`indirect_alignment\` (Lumi's analysis) or \`context\`; \`?format=md\` for markdown).
 - Is Lumi any good? \`GET /v1/trades\` (every paper trade, wins and losses). Current ideas only? \`GET /v1/slate\`.
 - One coin? \`GET /v1/signal/{coin}\` + \`GET /v1/levels/{coin}\`.
 
@@ -353,7 +357,7 @@ served right after a validated \`tesSUCCESS\`: a settled payment always returns 
 Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
 Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`.
-Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day.
+Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day; the Institutional & Policy Brief once a day (not sold if older than 36 h).
 
 ## How payment works
 
@@ -455,7 +459,7 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 
 - **Remote MCP server:** \`${base}/mcp\` (Streamable HTTP, stateless; protocol 2026-07-28 and 2025-03-26 .. 2025-11-25).
   Add it as a remote MCP connector URL. Free tools: \`lumi_catalog\`, \`lumi_coins\`, \`lumi_quote\`. Paid tools (\`lumi_brief\`,
-  \`lumi_signal\`, \`lumi_levels\`, \`lumi_slate\`, \`lumi_market\`, \`lumi_macro_yen\`, \`lumi_sentiment\`, \`lumi_events\`, \`lumi_trades\`)
+  \`lumi_signal\`, \`lumi_levels\`, \`lumi_slate\`, \`lumi_market\`, \`lumi_macro_yen\`, \`lumi_sentiment\`, \`lumi_events\`, \`lumi_trades\`, \`lumi_institutional_brief\`)
   return the price and how to pay, since a remote connector has no wallet.
 - **Local MCP server that pays for you:** \`npx -y lumi-trades-mcp\` with \`XRPL_SEED\` set (npm \`lumi-trades-mcp\`, MCP Registry
   \`io.github.cypher-osiris/lumi-trades-mcp\`). Same tools; each paid call is an x402 payment from your wallet within per-call caps and a session budget.

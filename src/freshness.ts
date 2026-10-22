@@ -33,6 +33,8 @@ export function maxAgeMs(file: DataFile, baseHours: number): number | null {
     case "events":
     case "brief":
       return baseHours * 4 * H;
+    case "institutional_brief":
+      return baseHours * 3 * H; // daily product: 36 h at the default 12 h base (one missed run tolerated, two are not)
     default:
       return null; // coins.json: static list, no freshness requirement
   }
@@ -83,6 +85,8 @@ export function hasContent(route: string, body: Json): boolean {
       return (body.upcoming_timed?.length ?? 0) + (body.recent_24h?.length ?? 0) + (body.upcoming_by_date?.length ?? 0) > 0;
     case "trades":
       return Array.isArray(body.trades) && body.trades.length > 0;
+    case "institutional":
+      return (body.items?.length ?? 0) + (body.no_notable_news?.length ?? 0) > 0 && (body.big_picture?.length ?? 0) > 0 && !!body.markdown;
     default:
       return false;
   }

@@ -21,7 +21,7 @@ describe("config", () => {
     expect(cfg.facilitatorUrl).toBe("https://xrpl-facilitator-mainnet.t54.ai");
     expect(cfg.pricesDrops).toEqual({
       signal: "5000", levels: "5000", slate: "10000", market: "10000",
-      brief: "20000", yen: "10000", sentiment: "5000", events: "5000", trades: "10000",
+      brief: "20000", yen: "10000", sentiment: "5000", events: "5000", trades: "10000", institutional: "190000",
     });
     expect(loadConfig({ XRPL_NETWORK: "xrpl:1", PAY_TO: MAINNET_PAY_TO, PRICE_YEN_XRP: "0.02" }).pricesDrops.yen).toBe("20000");
   });

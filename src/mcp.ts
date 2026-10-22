@@ -55,6 +55,14 @@ const COIN_ARG = (desc: string) => ({
 });
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 
+export const INSTITUTIONAL_TOOL_DESCRIPTION =
+  "Daily Institutional & Policy Brief (premium): what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 " +
+  "and other banks, central banks and tokenization firms did in the last days, and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR (plus RLUSD/USDC). " +
+  "Every item is dated and sourced, with why it matters, impact and confidence, and a link_type that separates confirmed links from Lumi's " +
+  "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
+  "what to watch next. Use it when you need the institutional/regulatory picture behind these tokens without reading dozens of releases. " +
+  "Refreshed daily; never sold stale. Paid (~0.19 XRP / 0.25 RLUSD / 0.25 USDC). Not financial advice.";
+
 /** Same names and descriptions as mcp/src/index.js (PAID_TOOLS). */
 export const PAID_TOOLS: PaidTool[] = [
   {
@@ -87,6 +95,13 @@ export const PAID_TOOLS: PaidTool[] = [
   { name: "lumi_sentiment", route: "sentiment", path: () => "/v1/sentiment", inputSchema: NO_ARGS, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid (~0.005 XRP)." },
   { name: "lumi_events", route: "events", path: () => "/v1/events", inputSchema: NO_ARGS, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid (~0.005 XRP)." },
   { name: "lumi_trades", route: "trades", path: () => "/v1/trades", inputSchema: NO_ARGS, description: "Lumi's full paper-trade history and honest computed track record (win rate, P&L, by coin/direction, equity curve). Paid (~0.01 XRP)." },
+  {
+    name: "lumi_institutional_brief",
+    route: "institutional",
+    path: (a) => `/v1/institutional${a.format === "md" ? "?format=md" : ""}`,
+    inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "md"], description: "json (default) or md for ready-to-read markdown" } } },
+    description: INSTITUTIONAL_TOOL_DESCRIPTION,
+  },
 ];
 
 const PAID_SUFFIX =
@@ -123,8 +138,9 @@ function toolList() {
 
 const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate and track record, " +
-  "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins. lumi_catalog, lumi_coins and lumi_quote are free. " +
-  "Paid tools cost a few cents per call via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
+  "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins, plus a premium daily Institutional & Policy Brief " +
+  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins and lumi_quote are free. " +
+  "Paid tools cost a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
 // ---------------------------------------------------------------- auth
@@ -416,7 +432,7 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
       coinArg = tool.coin(args)?.trim();
       if (!coinArg) return text({ error: "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
     }
-    if (tool.name === "lumi_brief" && args.format !== undefined && args.format !== "json" && args.format !== "md") {
+    if ((tool.name === "lumi_brief" || tool.name === "lumi_institutional_brief") && args.format !== undefined && args.format !== "json" && args.format !== "md") {
       return text({ error: "format must be json or md" }, true);
     }
 
@@ -427,7 +443,7 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
 
     const restUrl = `${base}${tool.path({ ...args, coin: prep.coin?.symbol ?? coinArg })}`;
     if (owner) {
-      if (tool.name === "lumi_brief" && args.format === "md") {
+      if ((tool.name === "lumi_brief" || tool.name === "lumi_institutional_brief") && args.format === "md") {
         const md = String((prep.body as { markdown?: string }).markdown ?? "");
         return text(`${md}\n\n_${DISCLAIMER}_`);
       }
@@ -480,7 +496,7 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
             {
               option: `npm MCP server (${NPM_PACKAGE})`,
               install: `npx -y ${NPM_PACKAGE}`,
-              config: { command: "npx", args: ["-y", NPM_PACKAGE], env: { XRPL_SEED: "<your XRPL wallet seed, signed locally>", LUMI_PAY_ASSET: "XRP", LUMI_MAX_XRP_PER_CALL: "0.05", LUMI_SESSION_BUDGET: "1" } },
+              config: { command: "npx", args: ["-y", NPM_PACKAGE], env: { XRPL_SEED: "<your XRPL wallet seed, signed locally>", LUMI_PAY_ASSET: "XRP", LUMI_MAX_XRP_PER_CALL: Number(xrp) > 0.05 ? "0.25" : "0.05", ...(Number(cfg.ious[0]?.prices[tool.route] ?? 0) > 0.05 ? { LUMI_MAX_USD_PER_CALL: "0.3" } : {}), LUMI_SESSION_BUDGET: "1" } },
               note: "Runs locally over stdio and pays from your wallet within per-call caps and a session budget.",
             },
           ],
