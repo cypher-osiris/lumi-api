@@ -539,7 +539,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       const [probes, cat] = await Promise.allSettled([trust.runProbes(), catalog.cron()]);
       return { probes: probes.status === "fulfilled" ? probes.value : { error: String(probes.reason) }, catalog: cat.status === "fulfilled" ? cat.value : { error: String(cat.reason) } };
     },
-    queue: (job: CatalogJob) => catalog.consume(job),
+    queue: async (job: CatalogJob) => {
+      const r = await catalog.consume(job);
+      console.log(JSON.stringify({ event: "catalog_job", kind: job.kind, ...(job.kind === "ingest" ? { offset: job.offset } : { after: (job as { after?: number }).after }), ...r }));
+      return r;
+    },
     async fetch(request: Request, ctx?: WaitUntil): Promise<Response> {
       try {
         return await handle(request, ctx);
