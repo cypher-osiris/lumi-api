@@ -33,7 +33,7 @@ export function freeTrialInfo(cfg: Config) {
   };
 }
 
-export const VERSION = "1.1.1";
+export const VERSION = "1.1.2";
 
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
@@ -147,7 +147,7 @@ export function wellKnownX402(cfg: Config, base: string) {
       template: `${base}${e.template}`,
       mimeType: "application/json",
       method: e.method,
-      description: e.summary,
+      description: BAZAAR_ROUTES[e.route].description,
       serviceName: serviceNameFor(e.route),
       accepts: [
         ...(cfg.evm
@@ -230,7 +230,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
       get: {
         operationId: e.route,
         summary: e.name,
-        description: e.summary,
+        description: BAZAAR_ROUTES[e.route].description,
         ...(TRUST_ROUTES.includes(e.route) ? { tags: ["trust"] } : {}),
         "x-service-name": serviceNameFor(e.route),
         parameters: [...(e.template.includes("{coin}")

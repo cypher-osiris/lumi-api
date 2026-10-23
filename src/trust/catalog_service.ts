@@ -81,6 +81,21 @@ export interface CuratedBuy {
   data_returned: boolean;
 }
 
+/**
+ * Dated, one-off XRPL Bazaar sweep (box-side test-buys of every XRPL-paying host in the CDP Bazaar catalog,
+ * Oct 22-23 2026; each buy re-verified on the ledger when it was merged). A fixed, dated fact, not a live count:
+ * new XRPL hosts listed after Oct 23 2026 are not covered by it.
+ */
+export const XRPL_BAZAAR_SWEEP = {
+  statement: "93 of 98 XRPL Bazaar hosts bought, 82 delivered, checked 98 of 98, as of Oct 23 2026",
+  as_of: "2026-10-23",
+  hosts_checked: 98,
+  hosts_total: 98,
+  hosts_bought: 93,
+  delivered: 82,
+  note: "Dated snapshot. Hosts not bought had no payable XRPL quote within Lumi's limits at the time; that is a dated observation, not a judgement of the seller.",
+} as const;
+
 /** XRPL purchase-verified window for the curated list. */
 export const CURATED_WINDOW_MS = 30 * 86_400_000;
 
@@ -94,9 +109,10 @@ export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
       network: "xrpl:0", assets: x?.assets ?? [], source: "Lumi's curated XRPL vendor list (daily test-buys)", window_days: CURATED_WINDOW_MS / 86_400_000,
       purchase_verified_endpoints: x?.endpoints ?? 0, vendors: x?.vendors ?? 0, test_buys: x?.buys ?? 0, delivered: x?.delivered ?? 0,
       bazaar_catalog: { purchase_verified_resources: s?.by_network?.["xrpl:0"]?.purchase_verified ?? 0, test_buys: s?.by_network?.["xrpl:0"]?.test_buys ?? 0, source: "CDP Bazaar catalog listings Lumi bought on XRPL" },
+      bazaar_sweep: XRPL_BAZAAR_SWEEP,
     },
     ...(otherBazaar.length ? { other_bazaar_networks: Object.fromEntries(otherBazaar) } : {}),
-    note: "Counted separately per chain. The Bazaar catalog test-buys are Base USDC; XRPL test-buys cover only the small curated list, so XRPL coverage is much smaller.",
+    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is bought daily, and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
   };
 }
 
@@ -803,5 +819,6 @@ export function coverageLine(s: { catalogued: number; domains: number; quote_ver
   const base = s.by_network?.["eip155:8453"]?.purchase_verified ?? s.purchase_verified;
   return `${fmt(s.catalogued)} resources across ${fmt(s.domains)} domains indexed, ${fmt(s.quote_verified)} quote-verified, ${fmt(base)} purchase-verified on Base (USDC)` +
     (s.quote_checked_24h != null ? ` (${fmt(s.quote_checked_24h)} quote-checked in the last 24 h)` : "") +
-    (x ? `; separately, ${fmt(x.endpoints)} XRPL endpoints from ${fmt(x.vendors)} curated vendors purchase-verified (${fmt(x.buys)} XRPL test-buys in 30 days, ${fmt(x.delivered)} returned data)` : "");
+    (x ? `; separately, ${fmt(x.endpoints)} XRPL endpoints from ${fmt(x.vendors)} curated vendors purchase-verified (${fmt(x.buys)} XRPL test-buys in 30 days, ${fmt(x.delivered)} returned data)` : "") +
+    `; XRPL Bazaar sweep: ${XRPL_BAZAAR_SWEEP.statement}`;
 }

@@ -443,17 +443,18 @@ const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
 };
 
 /**
- * The 402 resource description that the Bazaar indexes: "<keywords> - $<USD price>. <route description>", capped at
- * BAZAAR_MAX_DESCRIPTION. Without a USD price, falls back to the full endpoint description.
+ * The 402 resource description that the Bazaar and x402scan index: the route's v2 listing text (Scout,
+ * notes/outreach/bazaar_descriptions_v2.md), never with a price inside it. Prices live only in accepts[] and in
+ * openapi x-payment-info, so a listing can never show a stale or wrong price in its text.
+ * `full`/`opts` are kept for call-site compatibility.
  */
 export function resourceDescription(route: PaidRoute, full: string, opts: { subject?: string; usd?: string } = {}): string {
-  if (opts.usd) {
-    // Never cut the listing text: headline + price + text when it fits, else text + price, else the text alone.
-    const desc = BAZAAR_ROUTES[route].description;
-    const p = `$${Number(opts.usd)}`;
-    for (const d of [`${HEADLINES[route](opts.subject)} - ${p}. ${desc}`, `${desc} ${p} per call.`, desc]) if (d.length <= BAZAAR_MAX_DESCRIPTION) return d;
-    return desc.slice(0, BAZAAR_MAX_DESCRIPTION - 1).replace(/\s+\S*$/, "") + "…";
-  }
-  if (full.length <= BAZAAR_MAX_DESCRIPTION) return full;
-  return BAZAAR_ROUTES[route].description.slice(0, BAZAAR_MAX_DESCRIPTION);
+  void full; void opts;
+  const desc = BAZAAR_ROUTES[route].description;
+  return desc.length <= BAZAAR_MAX_DESCRIPTION ? desc : desc.slice(0, BAZAAR_MAX_DESCRIPTION - 1).replace(/\s+\S*$/, "") + "…";
+}
+
+/** Short keyword headline per route (not used in resource.description; kept for titles). */
+export function routeHeadline(route: PaidRoute, subject?: string): string {
+  return HEADLINES[route](subject);
 }

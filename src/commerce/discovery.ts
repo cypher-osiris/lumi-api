@@ -34,7 +34,7 @@ export function planResources(cfg: Config, base: string) {
     query: { [PLAN_PARAM[id].name]: { required: PLAN_PARAM[id].required, description: PLAN_PARAM[id].desc } },
     mimeType: "application/json",
     method: "GET",
-    description: `$${PLANS[id].usd}${PLANS[id].days ? ` per ${PLANS[id].days} days, no auto-renew` : " one-off"}. ${PLANS[id].summary}`,
+    description: `${PLANS[id].days ? `${PLANS[id].days}-day term, no auto-renew` : "One-off"}. ${PLANS[id].summary}`,
     plan: true,
     accepts: planAccepts(cfg, id),
   }));
@@ -98,8 +98,8 @@ export function commerceOpenApiPaths(cfg: Config, base: string) {
       get: {
         operationId: `plan_${id}`,
         tags: p.family === "monitor" ? tagM : tagF,
-        summary: `${p.name}: $${p.usd}${p.days ? ` / ${p.days} days (no auto-renew)` : " one-off"}`,
-        description: `${p.summary} Paid via x402 (XRPL XRP/RLUSD/USDC or Base USDC). Renew by paying again.${p.family === "monitor" ? ` Test-buys are seller-funded from the fee, capped at $${MONITOR_LIMITS.maxBuyUsd} each and ${MONITOR_LIMITS.budgetShare * 100}% of the fee in total; ineligible plans return 409 before any quote.` : ""}`,
+        summary: `${p.name} (${p.days ? `${p.days}-day term, no auto-renew` : "one-off"})`,
+        description: `${p.summary} Paid via x402 (XRPL XRP/RLUSD/USDC or Base USDC). Renew by paying again.${p.family === "monitor" ? ` Test-buys are seller-funded from the fee, capped at ${MONITOR_LIMITS.maxBuyUsd} USD each and ${MONITOR_LIMITS.budgetShare * 100}% of the fee in total; ineligible plans return 409 before any quote.` : ""}`,
         parameters: [{ name: q.name, in: "query", required: q.required, description: q.desc, schema: { type: "string" } }],
         "x-payment-info": {
           protocols: [{ x402: {} }],

@@ -242,13 +242,13 @@ describe("?format validation", () => {
 });
 
 describe("Bazaar resource descriptions", () => {
-  it("use the listing text verbatim, with the USD price, never cut and never instructions to agents", async () => {
+  it("use the v2 listing text verbatim, with no price in the text (prices live in accepts[]), never cut and never instructions to agents", async () => {
     const { get } = setup();
     for (const [p, route, usd] of [["/v1/signal/xrp", "signal", "0.01"], ["/v1/institutional", "institutional", "0.25"], ["/v1/trust/check?url=https://a.example/x", "trust_check", ""]] as const) {
       const d = (await (await get(p)).json()).resource.description as string;
       expect(d.length, p).toBeLessThanOrEqual(500);
-      expect(d, p).toContain(BAZAAR_ROUTES[route].description);
-      if (usd) expect(d, p).toContain(`$${Number(usd)}`);
+      expect(d, p).toBe(BAZAAR_ROUTES[route].description);
+      if (usd) expect(d, p).not.toContain(`$${Number(usd)}`);
       expect(d).not.toMatch(/\b(you must|ignore previous|always call)\b/i);
     }
   });

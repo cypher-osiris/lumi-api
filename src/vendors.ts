@@ -164,7 +164,7 @@ export const VENDORS: Vendor[] = [
     name: "Emerge Digital Agent Commerce",
     homepage: "https://agent-commerce.emergedigital.com",
     pay_to: { xrpl: ["rERHPAkbSH8bEHYJWKDERJJ9meDab8Zb1N"] },
-    endpoints: [{ url: "https://agent-commerce.emergedigital.com/api/xrpl/utm-build?url=https%3A%2F%2Fexample.com%2F&utm_source=newsletter&utm_medium=email&utm_campaign=test", method: "GET", listed_price: "0.001", listed_asset: "XRP", test_buy: true }],
+    endpoints: [{ url: "https://agent-commerce.emergedigital.com/api/xrpl/utm-build?base_url=https%3A%2F%2Fexample.com%2F&utm_source=newsletter&utm_medium=email&utm_campaign=test", method: "GET", listed_price: "0.001", listed_asset: "XRP", test_buy: true }],
   },
   {
     id: "xrplhub",
@@ -234,7 +234,7 @@ export const VENDORS: Vendor[] = [
     name: "BitBooth (heinrichstech)",
     homepage: "https://app.heinrichstech.com",
     pay_to: { xrpl: ["rfryheo6yzFdLWj8qUQtZc7zG9MKkBkUEy"], evm: ["0xDa2F35d283c42dd60B965322394bc658a5c1769F"] },
-    endpoints: [{ url: "https://app.heinrichstech.com/v1/cdp/echo", method: "GET", listed_price: "0.001", listed_asset: "RLUSD", test_buy: true }],
+    endpoints: [{ url: "https://app.heinrichstech.com/v1/cdp/echo", method: "POST", body: { message: "hello bitbooth" }, listed_price: "0.001", listed_asset: "RLUSD", test_buy: true }],
   },
   {
     id: "xrpreflight",

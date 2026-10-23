@@ -15,6 +15,7 @@ import { isOwnerKey } from "../mcp";
 import { scrubText } from "../sanitize";
 import { VENDORS, vendorById, type Vendor, type VendorEndpoint } from "../vendors";
 import type { Catalog } from "./catalog_service";
+import { XRPL_BAZAAR_SWEEP } from "./catalog_service";
 import { receiptMatchesBuy, receiptVerifyDoc, verifyReceipt, type Receipt, type ReceiptStore } from "./receipts";
 import type { LookupQuery } from "./catalog";
 import type { ObservationRow, ProbeRow, ProbeSummary, ReportRow, TrustStore } from "./store";
@@ -362,7 +363,7 @@ export function methodologyDoc(base: string) {
         third_party: "vet402 observatory test results (KIZUNA Creation, CC BY 4.0, https://vet402.com/observatory) are imported for catalogued resources and shown separately as third_party.vet402 with a link, licence and retrieval date. They are never added to Lumi's own purchase-verified counts.",
         demand_driven_buys: "When a paid trust/check hits a listing with no Lumi purchase in 30 days and a warning signal, the listing is queued for Lumi's daily test-buy routine (same caps); nothing is bought during the check.",
       },
-      by_chain: "purchase-verified counts are split by chain. base_usdc: Bazaar catalog resources Lumi bought once each in USDC on Base (nearly all purchase-verified entries). xrpl: endpoints of the small curated vendor list that Lumi test-bought on XRPL in the last 30 days, with how many buys returned data. Lumi does not claim broad XRPL seller coverage; the curated XRPL list is a handful of vendors.",
+      by_chain: `purchase-verified counts are split by chain. base_usdc: Bazaar catalog resources Lumi bought once each in USDC on Base (nearly all purchase-verified entries). xrpl: endpoints of the small curated vendor list that Lumi test-bought on XRPL in the last 30 days, with how many buys returned data; plus xrpl.bazaar_sweep, a dated one-off sweep of the XRPL-paying hosts in the CDP Bazaar catalog: ${XRPL_BAZAAR_SWEEP.statement}. Each sweep buy was re-verified on the XRPL ledger when merged and carries a signed receipt. Hosts listed after the sweep date are not covered by it.`,
     },
     score: {
       range: "0-100, over the last 30 days",
