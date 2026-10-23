@@ -69,7 +69,8 @@ export interface Trust {
   /** Paid detailed report: full observation history. Unknown vendor and stale data are never sold. */
   vendorReport(id: string, base: string): Promise<VendorReportResult>;
   /** Lookup by resource URL, domain or payTo across the curated list and the catalog. */
-  lookup(q: LookupQuery, base: string): Promise<Record<string, unknown>>;
+  /** free=true: answer-only (no tx hashes / evidence detail) for free surfaces; default full for paid /v1/trust/check. */
+  lookup(q: LookupQuery, base: string, opts?: { free?: boolean }): Promise<Record<string, unknown>>;
 }
 
 /** Read url / domain / payTo lookup parameters (payTo matched case-insensitively). */
@@ -309,12 +310,13 @@ export function methodologyDoc(base: string) {
     label: LABEL,
     what_is_measured: [
       "Free probes: every 30 minutes Lumi sends one unpaid request to each listed endpoint and records whether it answers with a valid x402 v2 402 quote that offers an XRPL (xrpl:0) option paying an address listed for that vendor, the quoted price and asset, whether the quote carries a sourceTag, and the response time. Probes never send a payment.",
-      "Paid test-buys: Lumi buys one call per vendor per day from its own XRPL wallet (hard caps: 0.15 RLUSD + 0.05 XRP per day in total, and no endpoint priced above 0.05). Each record shows the amount, asset, ledger tx hash, HTTP status, whether the response contained data, and latency. Every test-buy tx is checked on the XRPL ledger before it is stored.",
+      "Paid test-buys: Lumi buys one call per vendor per day from its own XRPL wallet (hard caps: 0.15 RLUSD + 0.05 XRP per day in total, and no endpoint priced above 0.05). Each record (in the paid vendor report; the free summary shows only date, HTTP status and data yes/no) shows the amount, asset, ledger tx hash, HTTP status, whether the response contained data, and latency. Every test-buy tx is checked on the XRPL ledger before it is stored.",
       "Agent reports: any agent that paid a listed vendor can POST /v1/reports. A report counts only if the payment is validated on-ledger (tesSUCCESS, sent by the reporter, delivered to a pay-to address listed for that vendor, within the last 7 days) AND the payer signs the challenge `lumi-report:<network>:<tx_hash>`. Unverified submissions are stored privately for abuse review and are never shown or scored.",
     ],
     x402_catalog: {
       source: "CDP x402 Bazaar discovery API (free), ingested daily at 02:00 UTC. x402scan's resource API is paid, so it is not ingested.",
       lookup: `${base}/v1/trust/vendors?url=<resource> | ?domain=<host> | ?payTo=<address> (case-insensitive)`,
+      free_tier: "Free lookups are answer-only: tier, listed price, last quote check (valid, pays listed address, price matches) and test-buy count/date, up to 5 entries. Tx hashes, explorer links, check history, latency and domain age are in the paid /v1/trust/check ($0.004) and the curated vendor report ($0.02). GET /v1/trust/catalog is a teaser of the 100 most-used listings (25 per page), not a full export. Free calls are rate-limited per hashed client IP (catalog 10/min and 40/day; lookups 30/min and 300/day).",
       quote_checks: "Catalogued http resources get free, unpaid requests in rotating slices every 30 minutes, fanned out over a queue; not every resource is checked every day (see counts.quote_checked_24h in the catalog summary for live coverage). Recorded: HTTP status, whether a readable x402 quote came back, whether it pays an address in the listing, quoted price vs listed price, latency, and the last 30 results. MCP listings are not probed. The registrable domain's registration date is read from RDAP about monthly (shared hosting hosts such as workers.dev are skipped). TLS certificate age is not measured.",
       tiers: {
         "catalogued, not yet checked": "Listed in the Bazaar; no quote check yet.",
@@ -373,6 +375,17 @@ function rightToReply(base: string) {
 
 const DISCLAIMER =
   "Automated observations by Lumi, reported as measured. They describe how an endpoint answered Lumi's requests at the times shown, not the intent or quality of the business behind it. Vendors can reply; see right_to_reply.";
+
+/** Free trust surfaces: per hashed-IP limits (salted HMAC, never the raw IP) plus a global daily ceiling. */
+export const FREE_LIMITS = {
+  catalog: { perMinute: 10, perDay: 40, globalPerDay: 20_000 },
+  lookup: { perMinute: 30, perDay: 300, globalPerDay: 60_000 },
+} as const;
+
+/** Free, answer-only view of a paid test-buy: outcome only; tx hash and explorer link are in the paid vendor report. */
+function obsFreeView(o: ObservationRow) {
+  return { observed_at: iso(o.ts), endpoint: o.endpoint, network: o.network, http_status: o.http_status, data_returned: o.data_returned, source: o.source === "lumi_buy" ? "Lumi paid buy (seeded)" : "Lumi daily test-buy" };
+}
 
 function obsView(o: ObservationRow) {
   const evidence = `paid ${o.amount} ${o.asset} on ${iso(o.ts).replace(".000Z", "Z")}, tx ${o.tx_hash}, HTTP ${o.http_status ?? "none"}, response ${o.data_returned ? "contained data" : "contained no data"}`;
@@ -459,7 +472,7 @@ export function createTrust(deps: TrustDeps): Trust {
           score: g.score.value,
           confidence: g.score.confidence,
           samples: g.score.samples,
-          last_paid_observation: last ? obsView(last) : null,
+          last_paid_observation: last ? obsFreeView(last) : null,
           latest_probes: g.probes.latest.map(probeView),
           replies: g.replies.length,
           detail: `${base}/v1/trust/vendors/${v.id}`,
@@ -526,13 +539,13 @@ export function createTrust(deps: TrustDeps): Trust {
       pay_to: v.pay_to,
       endpoints: v.endpoints.map((e) => ({ url: e.url, method: e.method, listed_price: e.listed_price, listed_asset: e.listed_asset, daily_test_buy: !!e.test_buy })),
       score: { value: g.score.value, confidence: g.score.confidence, components: g.score.components, samples: g.score.samples },
-      observations: g.obs.slice(0, 50).map(obsView),
+      observations: g.obs.slice(0, 10).map(obsFreeView),
+      observations_total: g.obs.length,
+      evidence: `Answer-only. Tx hashes, explorer links, latency stats and the full 90-day history are in the paid report: ${base}/v1/trust/vendors/${v.id}/report ($0.02).`,
       latest_probes: g.probes.latest.map(probeView),
-      agent_reports: g.reports.slice(0, 50).map((r) => ({
+      agent_reports: g.reports.slice(0, 10).map((r) => ({
         reported_at: iso(r.ts),
         network: r.network,
-        tx_hash: r.tx_hash,
-        explorer: explorer(r.network, r.tx_hash),
         amount: r.amount,
         asset: r.asset,
         http_status: r.http_status,
@@ -1043,8 +1056,8 @@ export function createTrust(deps: TrustDeps): Trust {
     return json(201, { recorded: true, observation: obsView(row) });
   }
 
-  async function lookup(q: LookupQuery, base: string): Promise<Record<string, unknown>> {
-    if (deps.catalog) return deps.catalog.lookupDoc(q, base);
+  async function lookup(q: LookupQuery, base: string, opts: { free?: boolean } = {}): Promise<Record<string, unknown>> {
+    if (deps.catalog) return deps.catalog.lookupDoc(q, base, { free: !!opts.free });
     return { kind: "trust_lookup", query: q, observed: false, note: "Catalog lookups are unavailable on this deployment." };
   }
 
@@ -1058,6 +1071,10 @@ export function createTrust(deps: TrustDeps): Trust {
   async function handleInner(request: Request, path: string, base: string): Promise<Response | null> {
     const method = request.method;
     if (deps.catalog && path.startsWith("/v1/trust/catalog")) {
+      if ((method === "GET" || method === "HEAD") && path === "/v1/trust/catalog") {
+        const lim = await limited("catalog", await ipHash(request), FREE_LIMITS.catalog.perMinute, FREE_LIMITS.catalog.perDay, FREE_LIMITS.catalog.globalPerDay);
+        if (lim) return lim;
+      }
       const r = await deps.catalog.handle(request, new URL(request.url), base);
       if (r) return r;
     }
@@ -1070,7 +1087,9 @@ export function createTrust(deps: TrustDeps): Trust {
         if (err) return json(400, err, { "Cache-Control": "no-store" });
         if (q) {
           if (q.domain) q.domain = q.domain.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/:\d+$/, "").toLowerCase();
-          return json(200, await lookup(q, base), { "Cache-Control": "public, max-age=300" });
+          const lim = await limited("lookup", await ipHash(request), FREE_LIMITS.lookup.perMinute, FREE_LIMITS.lookup.perDay, FREE_LIMITS.lookup.globalPerDay);
+          if (lim) return lim;
+          return json(200, await lookup(q, base, { free: true }), { "Cache-Control": "public, max-age=300" });
         }
         const v = await cachedVendorsDoc(base);
         return json(200, v.doc, { "Cache-Control": "public, max-age=120", "X-Lumi-Cache": v.cache });

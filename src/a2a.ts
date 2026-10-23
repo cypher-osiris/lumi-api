@@ -345,7 +345,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
       payTo: sv("payTo") ?? sv("pay_to") ?? text.match(/\b0x[0-9a-fA-F]{40}\b/)?.[0] ?? text.match(/\br[1-9A-HJ-NP-Za-km-z]{24,34}\b/)?.[0],
     };
     if (lq.url || lq.domain || lq.payTo) {
-      const doc: any = await deps.trust.lookup(lq, base);
+      const doc: any = await deps.trust.lookup(lq, base, { free: true });
       const summary = doc.self
         ? `${doc.self.name}: ${doc.self.label}.`
         : !doc.observed

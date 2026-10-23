@@ -107,7 +107,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/v1/samples", summary: "Free truncated SAMPLE of every paid product (lists cut to 2, up to 10 min old) with USD price and full URL" },
       { method: "GET", path: "/v1/trust/vendors", summary: "Lumi's automated observations of other x402 vendors (402-quote checks every 30 min, paid test-buys with tx evidence, sample sizes)" },
       { method: "GET", path: "/v1/trust/vendors?url=|domain=|payTo=", summary: "Look up any x402 seller before you pay it: the full CDP Bazaar catalog, with free 402-quote checks on a rotating schedule ('quote-verified, low confidence'; not every listing is checked yet, see catalog.coverage: 'N resources across M domains indexed, X quote-verified, Y purchase-verified') and Lumi's on-chain-confirmed test-buys ('purchase-verified')" },
-      { method: "GET", path: "/v1/trust/catalog", summary: "Browse the ingested x402 catalog (?after=&limit=, or ?popular=1&max_usd=0.05), with counts by tier" },
+      { method: "GET", path: "/v1/trust/catalog", summary: "Free teaser of the ingested x402 catalog: the 100 most-used listings (?page=1..4, ?limit<=25, or ?popular=1&max_usd=0.05), answer-only (no tx hashes), with live counts by tier; rate-limited per client" },
       { method: "GET", path: "/v1/trust/vendors/{id}", summary: "One vendor: observations with evidence, latest probes, verified agent reports, vendor replies" },
       { method: "GET", path: "/v1/trust/vendors/{id}/report", summary: "Paid ($0.02, x402): full observation history for one vendor; listed under paid_endpoints" },
       { method: "GET", path: "/v1/trust/methodology", summary: "How trust observations and scores are computed; how to report and how vendors reply" },
@@ -335,14 +335,14 @@ function trustPaths(): Record<string, unknown> {
   const r = (codes: Record<string, string>) => Object.fromEntries(Object.entries(codes).map(([k, v]) => [k, { description: v }]));
   const tag = ["trust"];
   return {
-    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 seller lookup and vendor observations (free)", description: "With url, domain or payTo (case-insensitive): matches across the full CDP x402 Bazaar catalog (ingested daily; listings get free, unpaid 402-quote checks on a rotating schedule: valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys. Tiers: 'catalogued, not yet checked', 'quote-verified, low confidence', 'quote-checked: no valid x402 quote at the last check', 'purchase-verified'. No match returns {observed:false, note}; that is not a negative signal. Without parameters: the curated XRPL vendor list (allowlist order, not ranked) plus catalog counts. Observations, not ratings.", parameters: [
+    "/v1/trust/vendors": { get: { tags: tag, security: [], summary: "x402 seller lookup and vendor observations (free)", description: "With url, domain or payTo (case-insensitive): matches across the full CDP x402 Bazaar catalog, answer-only (tier, last quote check, test-buy count; up to 5 entries; no tx hashes or check history, those are in the paid /v1/trust/check); rate-limited per client (ingested daily; listings get free, unpaid 402-quote checks on a rotating schedule: valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys. Tiers: 'catalogued, not yet checked', 'quote-verified, low confidence', 'quote-checked: no valid x402 quote at the last check', 'purchase-verified'. No match returns {observed:false, note}; that is not a negative signal. Without parameters: the curated XRPL vendor list (allowlist order, not ranked) plus catalog counts. Observations, not ratings.", parameters: [
       { name: "url", in: "query", required: false, description: "Resource URL you are about to pay", schema: { type: "string", maxLength: 500 } },
       { name: "domain", in: "query", required: false, description: "Seller host or registrable domain", schema: { type: "string", maxLength: 253 } },
       { name: "payTo", in: "query", required: false, description: "payTo address from the seller's 402 quote (case-insensitive)", schema: { type: "string", maxLength: 120 } },
     ], responses: r({ "200": "OK" }) } },
-    "/v1/trust/catalog": { get: { tags: tag, security: [], summary: "Browse the ingested x402 catalog (free)", parameters: [
-      { name: "after", in: "query", required: false, schema: { type: "integer", minimum: 0 } },
-      { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100 } },
+    "/v1/trust/catalog": { get: { tags: tag, security: [], summary: "Free teaser of the ingested x402 catalog", description: "The 100 most-used Bazaar listings (25 per page, pages 1-4) with live counts by tier. Answer-only: tier, listed price, last quote check and test-buy count; no tx hashes, receipts or check history (those are in the paid /v1/trust/check and /v1/trust/vendors/{id}/report). Not a full export: after= is ignored and pages past 4 are empty. Rate-limited per hashed client IP (10/min, 40/day); use ?url=|domain=|payTo= on /v1/trust/vendors to look up any listing.", parameters: [
+      { name: "page", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 4 } },
+      { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 25 } },
       { name: "popular", in: "query", required: false, description: "1 = most-used Bazaar listings first", schema: { type: "string", enum: ["1"] } },
       { name: "max_usd", in: "query", required: false, schema: { type: "number" } },
     ], responses: r({ "200": "OK" }) } },
@@ -531,7 +531,7 @@ Which one to call:
   (daily, sourced; each link labelled \`confirmed\`, \`indirect_alignment\` (Lumi's analysis) or \`context\`; \`?format=md\` for markdown).
 - Every past paper-trade idea as a raw list? \`GET /v1/trades\`. Current ideas only? \`GET /v1/slate\`.
 - One coin? \`GET /v1/signal/{coin}\` or \`/v1/lite/{coin}\` (any of ${coins.length}) + \`GET /v1/levels/{coin}\` (watchlist and majors).
-- Checking any x402 seller before you pay it? \`GET /v1/trust/vendors?url=<resource>\` (or \`?domain=\`, \`?payTo=\`) is free and covers the whole CDP Bazaar catalog. For curated vendors, \`GET /v1/trust/vendors/{id}\` is the free summary; \`GET /v1/trust/vendors/{id}/report\` ($0.02)
+- Checking any x402 seller before you pay it? \`GET /v1/trust/vendors?url=<resource>\` (or \`?domain=\`, \`?payTo=\`) is free and covers the whole CDP Bazaar catalog (answer-only; tx evidence is in the paid \`/v1/trust/check\`, $0.004). For curated vendors, \`GET /v1/trust/vendors/{id}\` is the free summary; \`GET /v1/trust/vendors/{id}/report\` ($0.02)
   is the full observation history (every quote check and paid test-buy with tx hashes, latency stats and trend, uptime %, verified reports, replies).
   Unknown vendor: 404; no observation in the last 48 h: 503. Both before any 402, never charged.
 
@@ -731,7 +731,7 @@ Lumi publishes its automated observations of other x402 sellers on the XRP Ledge
 and one small paid test-buy per vendor per day from Lumi's own wallet, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
 Scores are observations with sample sizes, not ratings; few samples are marked low confidence; vendors are listed in allowlist order, not ranked.
 
-- Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free quote checks on a rotating schedule = "quote-verified, low confidence"; not every listing is checked yet, the response's \`coverage\` line says "N resources across M domains indexed, X quote-verified, Y purchase-verified"; on-chain test-buys = "purchase-verified"; no match = \`{observed:false}\`, not a negative signal). Browse: \`GET ${base}/v1/trust/catalog\`.
+- Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free quote checks on a rotating schedule = "quote-verified, low confidence"; not every listing is checked yet, the response's \`coverage\` line says "N resources across M domains indexed, X quote-verified, Y purchase-verified"; on-chain test-buys = "purchase-verified"; no match = \`{observed:false}\`, not a negative signal). Free lookups are answer-only (tier, last quote check, test-buy count; no tx hashes) and rate-limited per client; evidence is in the paid \`/v1/trust/check\` ($0.004) and \`/v1/trust/vendors/{id}/report\` ($0.02). Browse a teaser (top 100 most-used, 25 per page, 40 requests/day): \`GET ${base}/v1/trust/catalog?page=1\`.
 - \`GET ${base}/v1/trust/vendors\`, \`GET ${base}/v1/trust/vendors/{id}\`, method: \`GET ${base}/v1/trust/methodology\`. MCP: \`lumi_vendor_scores\`. A2A: \`vendor_trust\`.
 - **Paid detailed report ($0.02 per call, x402 on every rail):** \`GET ${base}/v1/trust/vendors/{id}/report\`: full observation history (every free quote
   check over 90 days, every paid test-buy with tx hash and delivered yes/no), latency min/p50/p90/p95/max and 7-day trend, uptime % for 24h/7d/30d/90d and a
@@ -895,7 +895,8 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 <p class="lead">${esc(desc)}</p>
 <div class="cta"><a class="btn p" href="${esc(base)}/skill.md">Agent quickstart (skill.md)</a><a class="btn" href="${esc(base)}/v1/samples">Free samples</a><a class="btn" href="${esc(base)}/v1/trust/vendors">x402 vendor trust (free)</a></div>
 </section>
-<div class="card free"><p style="margin:0"><strong>Free:</strong> <a href="${esc(base)}/v1/trust/vendors">x402 vendor trust list</a> &middot;
+<div class="card free"><p style="margin:0"><strong>Free:</strong> <a href="${esc(base)}/v1/trust/vendors">x402 vendor trust list</a> (seller lookup <code>?url=</code>, answer-only) &middot;
+<a href="${esc(base)}/v1/trust/catalog">catalog teaser</a> (top 100 listings) &middot;
 <a href="${esc(base)}/v1/trust/methodology">methodology</a> &middot; <a href="${esc(base)}/v1/coins">coins</a> &middot; <a href="${esc(base)}/v1/samples">free samples</a> &middot;
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>

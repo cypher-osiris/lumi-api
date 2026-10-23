@@ -518,7 +518,7 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
           // Empty optional args are ignored (MCP clients often send ""); non-empty but malformed ones are errors.
           const err = lookupError(lq);
           if (err) return text(err, true);
-          return text(await deps.trust.lookup(lq, base));
+          return text(await deps.trust.lookup(lq, base, { free: true }));
         }
         const id = str(args.vendor_id);
         if (id) {

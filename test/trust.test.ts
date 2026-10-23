@@ -110,10 +110,12 @@ describe("trust: public reads", () => {
     const surf = d.vendors.find((v: any) => v.id === "asksurf");
     expect(surf.samples.paid_test_buys).toBe(2);
     expect(surf.confidence).toBe("low");
-    expect(surf.last_paid_observation.evidence).toMatch(/^paid 0\.006 RLUSD on 2026-10-22T12:5\dZ?.*, tx [0-9A-F]{64}, HTTP 502, response contained no data$/);
+    expect(surf.last_paid_observation).toMatchObject({ http_status: 502, data_returned: false });
+    expect(surf.last_paid_observation.tx_hash).toBeUndefined();
     const scalp = d.vendors.find((v: any) => v.id === "scalpstream");
     expect(scalp.score).toBe(100);
-    expect(scalp.last_paid_observation.evidence).toContain("response contained data");
+    expect(scalp.last_paid_observation.data_returned).toBe(true);
+    expect(JSON.stringify(d)).not.toMatch(/"tx_hash"|"explorer"/);
     const text = JSON.stringify(d);
     expect(text).not.toMatch(/\b(scam|fraud|untrustworthy)\b/i);
     expect(text).not.toMatch(/ip_hash|excerpt/);
@@ -150,8 +152,9 @@ describe("trust: public reads", () => {
   it("serves one vendor with evidence, explorer links and components; 404 for unknown", async () => {
     const { req } = setup();
     const d: any = await (await req("/v1/trust/vendors/heurist-mesh")).json();
-    expect(d.observations[0]).toMatchObject({ tx_hash: "07929A44333D9269CD4C92DE6A4A917B0BA28F1A3F244F1992B3F61BDA366BA0", data_returned: false, http_status: 200 });
-    expect(d.observations[0].explorer).toMatch(/^https:\/\/livenet\.xrpl\.org\/transactions\//);
+    expect(d.observations[0]).toMatchObject({ data_returned: false, http_status: 200 });
+    expect(JSON.stringify(d)).not.toMatch(/07929A44333D9269CD4C92DE6A4A917B0BA28F1A3F244F1992B3F61BDA366BA0|"explorer"/);
+    expect(d.evidence).toContain("/v1/trust/vendors/heurist-mesh/report");
     expect(d.score.components.delivery.value).toBe(0);
     expect(d.right_to_reply.endpoint).toContain("/v1/trust/replies");
     expect((await req("/v1/trust/vendors/nope")).status).toBe(404);
@@ -242,7 +245,8 @@ describe("trust: agent reports", () => {
     expect(await r.json()).toMatchObject({ accepted: true, verified: true });
     const d: any = await (await req("/v1/trust/vendors/asksurf")).json();
     expect(d.agent_reports).toHaveLength(1);
-    expect(d.agent_reports[0]).toMatchObject({ tx_hash: tx, amount: "0.006", asset: "RLUSD", outcome: "no_data" });
+    expect(d.agent_reports[0]).toMatchObject({ amount: "0.006", asset: "RLUSD", outcome: "no_data" });
+    expect(d.agent_reports[0].tx_hash).toBeUndefined();
     expect(d.score.samples.verified_reports_counted).toBe(0);
     expect((await req("/v1/reports", { method: "POST", body: good(rep, tx), ip: "198.51.100.1" })).status).toBe(409);
   });
@@ -280,7 +284,7 @@ describe("trust: agent reports", () => {
     const r = await req("/v1/reports", { method: "POST", body });
     expect(r.status).toBe(201);
     const d: any = await (await req("/v1/trust/vendors/scalpstream")).json();
-    expect(d.agent_reports[0]).toMatchObject({ amount: "0.01", asset: "USDC", explorer: `https://basescan.org/tx/${tx}` });
+    expect(d.agent_reports[0]).toMatchObject({ amount: "0.01", asset: "USDC" });
   });
 
   it("rate-limits reports per IP", async () => {

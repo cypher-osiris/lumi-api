@@ -247,6 +247,8 @@ export interface CatalogStore {
   addBuy(row: BuyRow): Promise<"inserted" | "duplicate">;
   boughtResources(): Promise<string[]>;
   popular(maxUsd: number, limit: number, network: string): Promise<CatalogRow[]>;
+  /** Most-used listings first (Bazaar 30-day calls), for the free teaser browse. */
+  top(offset: number, limit: number): Promise<CatalogRow[]>;
   saveDomain(row: DomainRow): Promise<void>;
   domainInfo(domains: string[]): Promise<DomainRow[]>;
   computeStats(now: number): Promise<CatalogStats>;
@@ -322,6 +324,9 @@ export class MemoryCatalogStore implements CatalogStore {
     return "inserted" as const;
   }
   async boughtResources() { return [...new Set(this.buys.map((b) => b.resource))]; }
+  async top(offset: number, limit: number) {
+    return [...this.rows].sort((a, b) => (b.calls_30d ?? 0) - (a.calls_30d ?? 0) || a.id - b.id).slice(offset, offset + limit);
+  }
   async popular(maxUsd: number, limit: number, network: string) {
     return this.rows
       .filter((r) => r.price_usd != null && Number(r.price_usd) > 0 && Number(r.price_usd) <= maxUsd && (r.networks ?? "").split(",").includes(network) && r.method !== "MCP")
@@ -458,6 +463,11 @@ export class D1CatalogStore implements CatalogStore {
   }
   async boughtResources() {
     return (await this.db.prepare("SELECT DISTINCT resource FROM catalog_buys").all<{ resource: string }>()).results.map((r) => r.resource);
+  }
+  async top(offset: number, limit: number) {
+    return (
+      await this.db.prepare(`SELECT ${CAT_COLS} FROM catalog ORDER BY calls_30d DESC NULLS LAST, id ASC LIMIT ?1 OFFSET ?2`).bind(limit, offset).all<CatalogRow>()
+    ).results;
   }
   async popular(maxUsd: number, limit: number, network: string) {
     return (
@@ -658,6 +668,36 @@ export function catalogView(row: CatalogRow, buys: BuyRow[], dom: DomainRow | un
           facilitator: b.facilitator, http_status: b.http_status, data_returned: b.data_returned, latency_ms: b.latency_ms, summary: b.summary,
         }))
       : [],
+    listed_until: row.last_seen < now - DELISTED_AFTER_MS ? iso(row.last_seen) : null,
+  };
+}
+
+/**
+ * Free, answer-only view of one catalog entry: tier and the yes/no outcome of the latest checks. No tx hashes, receipts,
+ * check history or latency series: that evidence is in the paid /v1/trust/check ($0.004) and vendor report ($0.02).
+ */
+export function catalogFreeView(row: CatalogRow, buys: BuyRow[], now: number) {
+  let accepts: any[] = [];
+  try { accepts = JSON.parse(row.accepts ?? "[]"); } catch { /* ignore */ }
+  const last = buys[0];
+  return {
+    resource: row.resource,
+    domain: row.domain,
+    service_name: row.service_name,
+    method: row.method,
+    listed_price_usd: row.price_usd,
+    networks: (row.networks ?? "").split(",").filter(Boolean),
+    pay_to: [...new Map(accepts.filter((a) => a.p).map((a) => [`${a.n}|${String(a.p).toLowerCase()}`, { network: a.n, pay_to: a.p }])).values()],
+    tier: tierOf(row, buys, now),
+    last_quote_check: row.probe_ts == null
+      ? null
+      : {
+          at: iso(row.probe_ts),
+          valid_quote: row.probe_valid === 1,
+          pays_listed_address: row.probe_pay_to_match == null ? null : row.probe_pay_to_match === 1,
+          price_matches_listing: row.probe_price_match == null ? null : row.probe_price_match === 1,
+        },
+    test_buys: buys.length ? { count: buys.length, last_at: iso(last.ts), last_data_returned: last.data_returned } : { count: 0 },
     listed_until: row.last_seen < now - DELISTED_AFTER_MS ? iso(row.last_seen) : null,
   };
 }

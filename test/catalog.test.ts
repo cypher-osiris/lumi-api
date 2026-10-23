@@ -105,7 +105,9 @@ describe("catalog pipeline", () => {
     expect(byUrl.status).toBe(200);
     expect(byUrl.body.observed).toBe(true);
     expect(byUrl.body.catalog.entries[0].tier).toBe(LABELS.quote_verified);
-    expect(byUrl.body.catalog.entries[0].domain_age.age_days).toBeGreaterThan(2000);
+    expect(byUrl.body.catalog.entries[0].last_quote_check).toMatchObject({ valid_quote: true, pays_listed_address: true });
+    expect(byUrl.body.catalog.entries[0].domain_age).toBeUndefined(); // free lookup is answer-only
+    expect(byUrl.body.evidence.paid).toContain("/v1/trust/check?url=");
     const byDom = await get(app, "/v1/trust/vendors?domain=seller1.com");
     expect(byDom.body.catalog.total_matches).toBe(2);
     expect(byDom.body.catalog.entries[0].tier).toBe(LABELS.quote_failed);
@@ -141,7 +143,8 @@ describe("catalog pipeline", () => {
     expect(store.buys).toHaveLength(1);
     const look = await get(app, "/v1/trust/vendors?url=" + encodeURIComponent(body.resource));
     expect(look.body.catalog.entries[0].tier).toBe("purchase-verified");
-    expect(look.body.catalog.entries[0].purchases[0].explorer).toContain("basescan.org/tx/0x");
+    expect(look.body.catalog.entries[0].test_buys).toMatchObject({ count: 1, last_data_returned: true });
+    expect(JSON.stringify(look.body)).not.toMatch(/0xa{64}|basescan|"tx_hash"|"explorer"/);
     const pop = await get(app, "/v1/trust/catalog?popular=1&max_usd=0.05");
     expect(pop.body.entries.length).toBe(3);
   });
@@ -204,5 +207,66 @@ describe("ingest paging", () => {
     }
     expect(seen.size).toBe(total);
     expect(INGEST_PAGE % 30).toBe(0);
+  });
+});
+
+describe("free catalog teaser (v1.0.1)", () => {
+  function bigStore(n: number) {
+    const store = new MemoryCatalogStore();
+    const ls = Array.from({ length: n }, (_, i) =>
+      toListing({
+        resource: `https://api.seller${i}.com/v1/x`, type: "http",
+        accepts: [{ scheme: "exact", network: "eip155:8453", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", amount: "10000", payTo: "0x" + String(i).padStart(40, "1") }],
+        metadata: { calls30d: i },
+      })!,
+    );
+    store.upsert(ls, NOW);
+    for (const [i, r] of store.rows.entries()) Object.assign(r, { calls_30d: i, probe_ts: NOW - 1000, probe_valid: 1, probe_status: 402, probe_pay_to_match: 1, probe_price_match: 1 });
+    store.buys.push({ resource: store.rows[n - 1].resource, domain: store.rows[n - 1].domain, ts: NOW - 5000, network: "eip155:8453", tx_hash: "0x" + "b".repeat(64), amount: "0.01", asset: "USDC", pay_to: "0x1", facilitator: "cdp", http_status: 200, data_returned: true, latency_ms: 300, summary: "ok" });
+    // Stale stats from long ago: the summary must be recomputed, not served as-is.
+    store.meta.set("stats", JSON.stringify({ catalogued: 1, active: 1, quote_checked: 1, quote_checked_24h: 1, quote_verified: 1, purchase_verified: 0, test_buys: 0, domains: 1, computed_at: NOW - 10 * 3_600_000 }));
+    return store;
+  }
+  const getIp = (app: any, path: string, ip: string) => app.fetch(new Request(BASE + path, { headers: { "CF-Connecting-IP": ip } })).then(async (r: Response) => ({ status: r.status, body: await r.json() as any }));
+
+  it("serves only the top 100 most-used, 25 per page, answer-only, with fresh counts", async () => {
+    const { app } = mkApp(bigStore(150));
+    const p1 = await getIp(app, "/v1/trust/catalog?limit=500", "203.0.113.1");
+    expect(p1.status).toBe(200);
+    expect(p1.body.entries).toHaveLength(25);
+    expect(p1.body.entries[0].resource).toBe("https://api.seller149.com/v1/x"); // most-used first
+    expect(p1.body.entries[0].test_buys).toMatchObject({ count: 1, last_data_returned: true });
+    expect(JSON.stringify(p1.body)).not.toMatch(/b{64}|basescan|"tx_hash"|"explorer"|"purchases"|median_latency/);
+    expect(p1.body.next).toContain("page=2");
+    expect(p1.body.summary.counts).toMatchObject({ catalogued: 150, quote_verified: 150, purchase_verified: 1 });
+    const p4 = await getIp(app, "/v1/trust/catalog?page=4", "203.0.113.1");
+    expect(p4.body.entries).toHaveLength(25);
+    expect(p4.body.next).toBeNull();
+    const p5 = await getIp(app, "/v1/trust/catalog?page=5", "203.0.113.1");
+    expect(p5.body.entries).toHaveLength(0);
+    expect(p5.body.free_tier.beyond_free_pages).toBeTruthy();
+    const after = await getIp(app, "/v1/trust/catalog?after=100&limit=100", "203.0.113.1");
+    expect(after.body.free_tier.ignored).toMatch(/after=/);
+    expect(after.body.entries[0].resource).toBe("https://api.seller149.com/v1/x");
+    const seen = new Set<string>();
+    for (const page of [1, 2, 3, 4, 5, 6]) (await getIp(app, `/v1/trust/catalog?page=${page}`, "203.0.113.2")).body.entries.forEach((e: any) => seen.add(e.resource));
+    expect(seen.size).toBe(100); // full paging of 150 is not possible
+  });
+
+  it("rate-limits free catalog browsing per hashed IP per day; lookups stay free", async () => {
+    const { app } = mkApp(bigStore(30));
+    const codes: number[] = [];
+    let t = NOW;
+    const app2 = createApp({ ...ENV, BASE_RPC_URL: "https://base.rpc.test/" } as any, { fetch: catalogFetch(makeFetch(happyFacilitator()), []), now: () => (t += 61_000), catalogStore: bigStore(30) });
+    for (let i = 0; i < 42; i++) codes.push((await getIp(app2, "/v1/trust/catalog", "198.51.100.7")).status);
+    expect(codes.slice(0, 40).every((c) => c === 200)).toBe(true);
+    expect(codes[40]).toBe(429);
+    expect((await getIp(app2, "/v1/trust/catalog", "198.51.100.8")).status).toBe(200); // other client unaffected
+    const look = await getIp(app, "/v1/trust/vendors?url=" + encodeURIComponent("https://api.seller3.com/v1/x"), "198.51.100.7");
+    expect(look.status).toBe(200);
+    expect(look.body.catalog.entries[0]).toMatchObject({ tier: LABELS.quote_verified, last_quote_check: { valid_quote: true } });
+    const burst: number[] = [];
+    for (let i = 0; i < 31; i++) burst.push((await getIp(app, "/v1/trust/vendors?domain=api.seller3.com", "198.51.100.9")).status);
+    expect(burst[30]).toBe(429);
   });
 });

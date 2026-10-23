@@ -3,7 +3,7 @@ import type { D1Like } from "../config";
 import { VENDORS } from "../vendors";
 import {
   DISCOVERY_URL, INGEST_PAGE, PROBE_BATCH, RDAP_PER_BATCH, RUNS_PER_DAY, DELISTED_AFTER_MS, LABELS, LABEL_NOTES,
-  toListing, probeRow, rdapRegistered, catalogView, normalizeDomain, normalizeUrl, isPlatformHost, explorerFor,
+  toListing, probeRow, rdapRegistered, catalogView, catalogFreeView, normalizeDomain, normalizeUrl, isPlatformHost, explorerFor,
   type CatalogStore, type CatalogStats, type LookupQuery, type BuyRow,
 } from "./catalog";
 import { lookupBaseUsdc, lookupXrplPayment, EVM_TX_RE, XRPL_TX_RE } from "./verify";
@@ -33,7 +33,13 @@ export interface CatalogDeps {
   isOwner(request: Request): Promise<boolean>;
 }
 
-const STATS_EVERY_MS = 6 * 3_600_000;
+const STATS_EVERY_MS = 25 * 60_000; // every cron run (one aggregate query), so the summary matches the entries
+/** Read path recomputes when the stored stats are older than this (e.g. a cron run was missed). */
+const STATS_STALE_MS = 60 * 60_000;
+/** Free browse is a teaser: the most-used listings only. Single URL/domain/payTo lookups stay free and uncapped by this. */
+export const FREE_BROWSE_MAX = 100;
+export const FREE_BROWSE_PAGE = 25;
+export const FREE_LOOKUP_ENTRIES = 5;
 /** D1 Free allows 100k rows written per day (index entries count). Catalog work stays well under it. */
 export const WRITE_BUDGET = { ingest: 55_000, probe: 85_000 };
 const PER_HOST = 3;
@@ -172,7 +178,16 @@ export function createCatalog(deps: CatalogDeps) {
 
   async function stats(): Promise<CatalogStats | null> {
     const s = await store.getMeta("stats");
-    try { return s ? (JSON.parse(s) as CatalogStats) : null; } catch { return null; }
+    let st: CatalogStats | null = null;
+    try { st = s ? (JSON.parse(s) as CatalogStats) : null; } catch { st = null; }
+    const t = now();
+    if (st && t - st.computed_at > STATS_STALE_MS) {
+      try {
+        st = await store.computeStats(t);
+        await store.setMeta("stats", JSON.stringify(st));
+      } catch { /* keep the stored copy */ }
+    }
+    return st;
   }
 
   function selfMatch(q: LookupQuery): boolean {
@@ -193,7 +208,9 @@ export function createCatalog(deps: CatalogDeps) {
     }).map((v) => ({ id: v.id, name: v.name, homepage: v.homepage, tier: "purchase-verified (curated XRPL list, scored)", detail: `${base}/v1/trust/vendors/${v.id}` }));
   }
 
-  async function lookupDoc(q: LookupQuery, base: string, limit = 25) {
+  async function lookupDoc(q: LookupQuery, base: string, opts: { free?: boolean; limit?: number } = {}) {
+    const free = !!opts.free;
+    const limit = opts.limit ?? (free ? FREE_LOOKUP_ENTRIES : 25);
     const query = Object.fromEntries(Object.entries(q).filter(([, v]) => v));
     const t = now();
     if (selfMatch(q)) {
@@ -205,8 +222,10 @@ export function createCatalog(deps: CatalogDeps) {
     const curated = curatedMatches(q, base);
     const { total, rows } = await store.lookup(q, limit);
     const buys = await store.buysFor(rows.map((r) => r.resource));
-    const doms = new Map((await store.domainInfo([...new Set(rows.map((r) => r.reg_domain).filter((x): x is string => !!x))])).map((x) => [x.domain, x]));
-    const entries = rows.map((r) => catalogView(r, buys.filter((b) => b.resource === r.resource), r.reg_domain ? doms.get(r.reg_domain) : undefined, t));
+    const doms = free ? new Map<string, any>() : new Map((await store.domainInfo([...new Set(rows.map((r) => r.reg_domain).filter((x): x is string => !!x))])).map((x) => [x.domain, x]));
+    const entries: Array<{ tier: string } & Record<string, unknown>> = free
+      ? rows.map((r) => catalogFreeView(r, buys.filter((b) => b.resource === r.resource), t))
+      : rows.map((r) => catalogView(r, buys.filter((b) => b.resource === r.resource), r.reg_domain ? doms.get(r.reg_domain) : undefined, t));
     if (!curated.length && !entries.length) {
       return {
         kind: "trust_lookup", query, observed: false, generated_at: iso(t),
@@ -223,7 +242,16 @@ export function createCatalog(deps: CatalogDeps) {
       curated,
       catalog: { total_matches: total, shown: entries.length, ordering: "Bazaar 30-day calls, most used first", tiers_shown: tiers, entries },
       methodology: `${base}/v1/trust/methodology`,
+      ...(free ? { evidence: freeEvidenceNote(base, q) } : {}),
       note: "Observations, not a rating. Quote checks are free unpaid requests; purchases are single test-buys. Few samples = low confidence.",
+    };
+  }
+
+  function freeEvidenceNote(base: string, q?: LookupQuery) {
+    const u = q?.url ? `?url=${encodeURIComponent(q.url)}` : "?url=<resource>";
+    return {
+      free: "answer only: tier and the yes/no outcome of the latest quote check and test-buys",
+      paid: `Tx hashes, explorer links, check history, latency and domain age: ${base}/v1/trust/check${u} ($0.004) or, for curated vendors, ${base}/v1/trust/vendors/{id}/report ($0.02).`,
     };
   }
 
@@ -233,7 +261,7 @@ export function createCatalog(deps: CatalogDeps) {
     return {
       source: "CDP x402 Bazaar discovery (free); x402scan's resource API is paid, so it is not ingested",
       lookup: `${base}/v1/trust/vendors?url=<resource url> | ?domain=<host> | ?payTo=<address>`,
-      browse: `${base}/v1/trust/catalog`,
+      browse: `${base}/v1/trust/catalog (free teaser: the ${FREE_BROWSE_MAX} most-used listings, ${FREE_BROWSE_PAGE} per page)`,
       labels: LABEL_NOTES,
       coverage: s ? coverageLine(s) : null,
       counts: s ? { catalogued: s.catalogued, active: s.active, quote_checked: s.quote_checked, quote_checked_24h: s.quote_checked_24h, quote_verified: s.quote_verified, purchase_verified: s.purchase_verified, test_buys: s.test_buys, domains: s.domains, as_of: iso(s.computed_at) } : null,
@@ -242,22 +270,47 @@ export function createCatalog(deps: CatalogDeps) {
     };
   }
 
+  let topMemo: { at: number; rows: Awaited<ReturnType<CatalogStore["top"]>> } | undefined;
+  async function topRows() {
+    const t = now();
+    if (topMemo && t - topMemo.at < 300_000) return topMemo.rows;
+    const rows = await store.top(0, FREE_BROWSE_MAX);
+    topMemo = { at: t, rows };
+    return rows;
+  }
+
+  /** Free teaser browse: the FREE_BROWSE_MAX most-used listings, FREE_BROWSE_PAGE per page, answer-only entries. */
   async function browseDoc(url: URL, base: string) {
     const t = now();
     const popular = url.searchParams.get("popular") === "1";
-    const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? "50") || 50));
-    let rows;
+    const pages = Math.ceil(FREE_BROWSE_MAX / FREE_BROWSE_PAGE);
+    const limit = Math.max(1, Math.min(FREE_BROWSE_PAGE, Number(url.searchParams.get("limit") ?? String(FREE_BROWSE_PAGE)) || FREE_BROWSE_PAGE));
+    const pageRaw = Math.floor(Number(url.searchParams.get("page") ?? "1") || 1);
+    const page = Math.max(1, pageRaw);
+    let rows: Awaited<ReturnType<CatalogStore["top"]>> = [];
+    let next: string | null = null;
     if (popular) {
       const maxUsd = Math.min(1, Number(url.searchParams.get("max_usd") ?? "0.05") || 0.05);
       rows = await store.popular(maxUsd, limit, url.searchParams.get("network") ?? "eip155:8453");
-    } else {
-      rows = await store.range(Math.max(0, Number(url.searchParams.get("after") ?? "0") || 0), limit);
+    } else if ((page - 1) * limit < FREE_BROWSE_MAX) {
+      const all = await topRows();
+      rows = all.slice((page - 1) * limit, Math.min(page * limit, FREE_BROWSE_MAX));
+      if (page * limit < Math.min(FREE_BROWSE_MAX, all.length)) next = `${base}/v1/trust/catalog?page=${page + 1}${limit !== FREE_BROWSE_PAGE ? `&limit=${limit}` : ""}`;
     }
     const buys = await store.buysFor(rows.map((r) => r.resource));
     return {
       kind: "trust_catalog", generated_at: iso(t), summary: await summary(base),
-      entries: rows.map((r) => ({ id: r.id, ...catalogView(r, buys.filter((b) => b.resource === r.resource), undefined, t) })),
-      next: popular || rows.length < limit ? null : `${base}/v1/trust/catalog?after=${rows[rows.length - 1]?.id ?? 0}&limit=${limit}`,
+      free_tier: {
+        shows: `the ${FREE_BROWSE_MAX} most-used listings (Bazaar 30-day calls), ${FREE_BROWSE_PAGE} per page, pages 1-${pages}${popular ? "; popular=1 returns the top cheap listings only" : ""}`,
+        ...(url.searchParams.has("after") ? { ignored: "after= is no longer supported: the free catalog is not a full export" } : {}),
+        ...(!popular && (page - 1) * limit >= FREE_BROWSE_MAX ? { beyond_free_pages: `page ${page} is past the free teaser` } : {}),
+        lookup: `Any specific listing is free to look up: ${base}/v1/trust/vendors?url=<resource url> | ?domain=<host> | ?payTo=<address>`,
+        evidence: freeEvidenceNote(base),
+        rate_limit: "free catalog requests are rate-limited per client per day",
+      },
+      ...(popular ? {} : { page }),
+      entries: rows.map((r) => catalogFreeView(r, buys.filter((b) => b.resource === r.resource), t)),
+      next,
     };
   }
 
