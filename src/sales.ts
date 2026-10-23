@@ -226,3 +226,36 @@ export async function sendSaleAlert(cfg: AlertConfig, row: SaleRow, doFetch: typ
   }
   return sent;
 }
+
+/** Plain-text email via the same send_email binding as sale alerts (monitoring alerts, renewal reminders). Never throws.
+ *  Cloudflare send_email only delivers to verified Email Routing destinations, so delivery to arbitrary addresses can fail;
+ *  the result says whether it was accepted. The recipient is never logged. */
+export async function sendPlainEmail(
+  cfg: { emailFrom?: string; emailBinding?: SendEmailBinding; makeMessage?: (from: string, to: string, raw: string) => unknown },
+  to: string,
+  subject: string,
+  text: string,
+  msgId: string,
+): Promise<boolean> {
+  if (!cfg.emailFrom || !cfg.emailBinding || !to) return false;
+  try {
+    const mime = [
+      `From: Lumi API <${cfg.emailFrom}>`,
+      `To: ${to}`,
+      `Subject: ${subject.replace(/[\r\n]+/g, " ").slice(0, 140)}`,
+      `Message-ID: <${msgId.replace(/[^A-Za-z0-9._-]/g, "").slice(0, 60)}@lumitrades.io>`,
+      `Date: ${new Date().toUTCString()}`,
+      "MIME-Version: 1.0",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      text,
+      "",
+    ].join("\r\n");
+    const make = cfg.makeMessage ?? (await loadEmailMessage());
+    await cfg.emailBinding.send(make(cfg.emailFrom, to, mime));
+    return true;
+  } catch (e) {
+    console.log(JSON.stringify({ event: "plain_email_error", error: String((e as Error)?.message ?? e).split(to).join("<recipient>").slice(0, 200) }));
+    return false;
+  }
+}

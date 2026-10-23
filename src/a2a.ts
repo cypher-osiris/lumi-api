@@ -8,6 +8,7 @@
  * live x402 terms for every network and the REST URL to pay at. Nothing is charged over A2A.
  */
 
+import { planPriceTable } from "./commerce/discovery";
 import type { Trust } from "./trust";
 import type { Config } from "./config";
 import { atomicToUsdc, dropsToXrp } from "./config";
@@ -46,6 +47,8 @@ const SKILLS: SkillDef[] = [
   { id: "catalog", name: "Catalog: endpoints, prices, payment networks (free)", tags: ["catalog", "pricing", "x402", "free"], examples: ["catalog", "what do you sell and how much?"], match: /\b(catalog|prices?|pricing|endpoints?|help|menu)\b/i },
   { id: "coins", name: "Supported coins (free)", tags: ["coins", "free"], examples: ["list coins"], match: /\b(coins|supported|tickers)\b/i },
   { id: "vendor_trust", name: "x402 seller lookup and observations (free)", tags: ["trust", "x402", "vendors", "observations", "lookup", "bazaar", "free"], examples: ["vendor trust scores", "{\"skill\":\"vendor_trust\",\"url\":\"https://example.com/api/x402\"}", "{\"skill\":\"vendor_trust\",\"payTo\":\"0x...\"}", "{\"skill\":\"vendor_trust\",\"vendor_id\":\"printmoneylab\"}"], match: /\b(vendors?|trust)\b/i },
+  { id: "seller_monitoring", name: "Seller monitoring plans for x402 sellers (info free; plans paid at the REST URL)", tags: ["monitoring", "x402", "sellers", "badge", "audit"], examples: ["seller monitoring plans", "{\"skill\":\"seller_monitoring\"}"], match: /\b(monitor(ing)?|badge|audit)\b/i },
+  { id: "trust_feed", name: "Trust data feed for facilitators, wallets and frameworks (info free; keys and plans at the REST URL)", tags: ["data", "feed", "license", "trust", "x402"], examples: ["trust data feed", "{\"skill\":\"trust_feed\"}"], match: /\b(data feed|trust feed|feed|licen[cs]e|bulk lookup)\b/i },
   { id: "samples", name: "Free samples of every paid product", tags: ["samples", "preview", "free"], examples: ["samples", "show me a free sample"], match: /\b(samples?|preview|try|demo)\b/i },
   { id: "quote", name: "Price quote for a paid call, without paying (free)", tags: ["quote", "x402", "free"], examples: ["quote /v1/brief"], match: /\bquote\b/i },
   {
@@ -96,6 +99,10 @@ const FREE_DESCRIPTIONS: Record<string, string> = {
   vendor_trust:
     "Check an x402 seller before paying it: {\"url\":\"...\"}, {\"domain\":\"...\"} or {\"payTo\":\"...\"} (case-insensitive) looks it up in the full CDP x402 Bazaar catalog (free quote checks of listings on a rotating schedule: 'quote-verified, low confidence'; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys ('purchase-verified', counted per chain: Base USDC for Bazaar listings, XRPL for a small curated list). Answer-only; tx evidence is in the paid trust check. With no arguments: curated XRPL vendor observations; {\"vendor_id\":\"...\"} for one vendor's summary. Observations, not ratings; no match is not a negative signal.",
   samples: "Free, clearly labelled SAMPLE previews of every paid product (truncated, up to 10 minutes old), with the USD price of each. Use it to see the output shape before paying.",
+  seller_monitoring:
+    "For x402 sellers: Monitor $9/30 days (1 endpoint, test-buy per term + alerts), Monitor Plus $29/30 days (weekly test-buys, up to 20 endpoints), Audit $99 one-off (every listed endpoint, signed report). Seller-funded, no auto-renew, payTo proven by signature; paying never changes a score. Answers with the plan table and enrolment steps; payment happens at GET /v1/monitor/subscribe/{plan}?enrollment=.",
+  trust_feed:
+    "Licensed trust data feed: free key with 1,000 lookups/month (wallet signature), $1.50 per 1,000 extra lookups, Feed $99/30 days, Feed Pro $199/30 days (snapshot export, webhooks). Answers with plans, endpoints and licence terms; keys and payments at the REST URLs under /v1/feed.",
   quote: "Live x402 v2 quote (all accepts options) for a paid skill or path, e.g. {\"skill\":\"signal\",\"coin\":\"XRP\"} or \"quote /v1/brief\". A 503 means the data is not fresh right now and would not be sold.",
 };
 
@@ -152,6 +159,7 @@ export function agentCard(cfg: Config, base: string) {
             discovery: `${base}/.well-known/x402`,
             openapi: `${base}/openapi.json`,
             prices: priceTable(cfg).map((p) => ({ path: p.path, prices: p.prices })),
+            plans: planPriceTable(base).map((p) => ({ path: p.path, name: p.name, price_usd: p.price_usd, term_days: p.term_days, auto_renew: false })),
             guarantee: "Inputs are checked (present, non-empty, fresh) before any 402 quote; stale data is answered with 503 'Not charged.'",
           },
         },
@@ -311,6 +319,8 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   if (!skill && /\bquote\b/i.test(text)) skill = SKILLS.find((s) => s.id === "quote");
   if (!skill && /\b(should i pay|pay[- ]check|trust[- ]check|safe to pay)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "trust_check");
   if (!skill && /\b(vendor|trust)\s+report\b|\breport\b.*\bvendors?\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_report");
+  if (!skill && /\b(seller monitoring|monitor(ing)? plans?|monitored by lumi|badge)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "seller_monitoring");
+  if (!skill && /\b(data feed|trust feed|feed plans?|data licen[cs]e|bulk lookup)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "trust_feed");
   if (!skill && /\b(vendors?|trust)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_trust");
   if (!skill && (["url", "domain", "payTo", "pay_to"].some((k) => typeof data[k] === "string") || (/\b(check|verify|seller|safe|legit|payto)\b/i.test(text) && /https?:\/\/|\b0x[0-9a-fA-F]{40}\b/.test(text))))
     skill = SKILLS.find((s) => s.id === "vendor_trust");
@@ -324,7 +334,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
       skill: "catalog",
       text:
         `Lumi Trades sells crypto market reads per call over x402 (${settledIn(cfg)}). ` +
-        "Free here: catalog, coins, quote, vendor_trust. Paid skills: " + SKILLS.filter((s) => s.route).map((s) => s.id).join(", ") +
+        "Free here: catalog, coins, quote, vendor_trust, seller_monitoring, trust_feed. Paid skills: " + SKILLS.filter((s) => s.route).map((s) => s.id).join(", ") +
         ". Ask e.g. 'signal XRP' to get the live payment terms." + (skill ? "" : " (No skill matched your message, so here is the catalog.)"),
       data: {
         api: base,
@@ -334,6 +344,15 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
         endpoints: priceTable(cfg).map((p) => ({ path: p.path, name: p.name, prices: p.prices })),
         disclaimer: DISCLAIMER,
       },
+    };
+  }
+  if (skill.id === "seller_monitoring" || skill.id === "trust_feed") {
+    const r = await deps.quote(skill.id === "seller_monitoring" ? "/v1/monitor" : "/v1/feed");
+    const plans = (r.body?.plans ?? []) as any[];
+    return {
+      skill: skill.id,
+      text: `${FREE_DESCRIPTIONS[skill.id]} Docs: ${base}${skill.id === "seller_monitoring" ? "/v1/monitor" : "/v1/feed"}.` + (plans.length ? ` Plans: ${plans.map((p) => `${p.name ?? p.plan} $${p.price_usd}`).join(", ")}.` : ""),
+      data: r.body,
     };
   }
   if (skill.id === "vendor_trust") {

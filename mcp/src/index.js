@@ -185,6 +185,32 @@ export function buildServer(client) {
     },
   );
 
+  server.registerTool(
+    "lumi_seller_monitoring",
+    {
+      title: "Lumi: seller monitoring plans and monitored sellers (free)",
+      description:
+        "Free. For x402 sellers: Monitor $9/30 days (1 endpoint, seller-funded test-buy per term + alerts), Monitor Plus $29/30 days (weekly test-buys, up to 20 endpoints), Audit $99 one-off (every listed endpoint, signed report). No auto-renew; payTo proven by signature; paying never changes a score. No args: plans and enrolment steps. enrollment_id: that seller's public entry and badge status.",
+      inputSchema: { enrollment_id: z.string().regex(/^men_[a-f0-9]{24}$/).optional().describe("Optional enrollment id (men_...)") },
+    },
+    async ({ enrollment_id }) => {
+      if (!enrollment_id) return text((await client.free("/v1/monitor")).body);
+      const [e, b] = await Promise.all([client.free(`/v1/monitor/sellers/${enrollment_id}`), client.free(`/v1/monitor/badge/${enrollment_id}.json`)]);
+      return e.status === 200 ? text({ ...e.body, badge: b.body }) : { ...text({ status: e.status, body: e.body }), isError: true };
+    },
+  );
+
+  server.registerTool(
+    "lumi_trust_feed",
+    {
+      title: "Lumi: trust data feed plans and licence (free)",
+      description:
+        "Free. Licensed trust data feed for facilitators, wallets and frameworks: free key with 1,000 lookups/month (wallet signature), $1.50 per 1,000 extra lookups, Feed $99/30 days, Feed Pro $199/30 days. Returns plans, endpoints and licence terms.",
+      inputSchema: {},
+    },
+    async () => text((await client.free("/v1/feed")).body),
+  );
+
   for (const t of PAID_TOOLS) {
     server.registerTool(
       t.name,

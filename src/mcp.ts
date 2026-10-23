@@ -216,6 +216,23 @@ function toolList() {
       },
       annotations: ro,
     },
+    {
+      name: "lumi_seller_monitoring",
+      title: "Lumi: seller monitoring plans and monitored sellers (free)",
+      description:
+        "Free. For x402 sellers: Monitor $9/30 days (1 endpoint, seller-funded test-buy per term + alerts), Monitor Plus $29/30 days (weekly test-buys, up to 20 endpoints), Audit $99 one-off (every listed endpoint, signed report). No auto-renew; payTo proven by signature; paying never changes a score. " +
+        "No args: plans, enrolment steps and safeguards. enrollment_id: that seller's public entry (disclosure, findings, replies) and live badge status. Plans are paid over x402 at the REST URL.",
+      inputSchema: { type: "object", properties: { enrollment_id: { type: "string", pattern: "^men_[a-f0-9]{24}$", description: "Optional enrollment id (men_...)" } } },
+      annotations: ro,
+    },
+    {
+      name: "lumi_trust_feed",
+      title: "Lumi: trust data feed plans and licence (free)",
+      description:
+        "Free. Licensed trust data feed for facilitators, wallets and frameworks: free key with 1,000 lookups/month (wallet signature), $1.50 per 1,000 extra lookups, Feed $99/30 days, Feed Pro $199/30 days (snapshot export, webhooks). Returns plans, endpoints and licence terms (no resale, attribution).",
+      inputSchema: NO_ARGS,
+      annotations: ro,
+    },
     ...PAID_TOOLS.map((t) => ({
       name: t.name,
       title: `Lumi: ${t.name.replace(/^lumi_/, "").replace(/_/g, " ")} (paid)`,
@@ -229,7 +246,7 @@ function toolList() {
 const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, live signals for 50 coins (lumi_signal, cheap lumi_lite, or all at once with lumi_scan), support/resistance levels, paper-trade slate, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment, funding rates, Fear & Greed, events and the next 48h, lumi_trust_check (should I pay this x402 URL? allow/warn/block), and a daily policy brief " +
-  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_samples (truncated previews of every paid product), lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
+  "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_samples (truncated previews of every paid product), lumi_quote, lumi_vendor_scores (Lumi's observations of other x402 vendors), lumi_seller_monitoring (seller monitoring plans: Monitor $9/30d, Monitor Plus $29/30d, Audit $99) and lumi_trust_feed (licensed data feed: free 1,000 lookups/month, Feed $99/30d, Feed Pro $199/30d) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
   "Paid tools cost $0.003 to $0.02 per call (the daily policy brief $0.25) via x402; new wallets get 3 free trial calls over REST (x402 sign-in-with-x) (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
@@ -507,6 +524,18 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
         const one = (r.body?.products || []).find((p: any) => p.route === route);
         return one ? text({ label: r.body.label, ...one }) : text({ error: "unknown route", routes: (r.body?.products || []).map((p: any) => p.route) }, true);
       }
+      case "lumi_seller_monitoring": {
+        const id = str(args.enrollment_id);
+        if (id && !/^men_[a-f0-9]{24}$/.test(id)) return text({ error: "enrollment_id must look like men_<24 hex>" }, true);
+        if (!id) { const r = await deps.quote("/v1/monitor"); return text(r.body, r.status !== 200); }
+        const [entry, badge] = await Promise.all([deps.quote(`/v1/monitor/sellers/${id}`), deps.quote(`/v1/monitor/badge/${id}.json`)]);
+        if (entry.status !== 200) return text({ status: entry.status, body: entry.body }, true);
+        return text({ ...entry.body, badge: badge.body });
+      }
+      case "lumi_trust_feed": {
+        const [doc, lic] = await Promise.all([deps.quote("/v1/feed"), deps.quote("/v1/feed/license")]);
+        return text({ ...(doc.body ?? {}), license_terms: lic.body }, doc.status !== 200);
+      }
       case "lumi_coins": {
         const list = await deps.coins();
         return text(list.map((c) => ({ symbol: c.symbol, id: c.id, name: c.name, group: (c as any).group })));
@@ -636,7 +665,7 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
               note: "Runs locally over stdio and pays from your wallet within per-call caps and a session budget.",
             },
           ],
-          free_tools: ["lumi_catalog", "lumi_coins", "lumi_samples", "lumi_quote", "lumi_vendor_scores"],
+          free_tools: ["lumi_catalog", "lumi_coins", "lumi_samples", "lumi_quote", "lumi_vendor_scores", "lumi_seller_monitoring", "lumi_trust_feed"],
           free_sample: `${base}/v1/samples`,
           disclaimer: DISCLAIMER,
         },

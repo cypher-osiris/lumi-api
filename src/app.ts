@@ -20,6 +20,9 @@ import { briefView, yenView, sentimentView, eventsView, tradesView } from "./pro
 import { institutionalView } from "./institutional";
 import { handleMcp, isOwnerKey, MCP_CORS, type McpDeps } from "./mcp";
 import { createTrust, TRUST_POST_PATHS, REPORT_FRESH_MS, type Trust } from "./trust";
+import { createCommerce, D1CommerceStore, MemoryCommerceStore, type Commerce } from "./commerce";
+import type { CommerceStore } from "./commerce/store";
+import { TEST_PRICE_USD } from "./commerce/plans";
 import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
@@ -60,6 +63,8 @@ export interface AppOptions {
   feedStore?: FeedStore;
   /** Free-trial ledger override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   trialStore?: TrialStore;
+  /** Seller-monitoring + feed store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  commerceStore?: CommerceStore;
 }
 
 /** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
@@ -83,7 +88,7 @@ export type Prepared =
 export interface App {
   fetch(request: Request, ctx?: WaitUntil): Promise<Response>;
   /** Cron entry: free, unpaid 402-quote probes of the trust allowlist + the x402 catalog slice. */
-  scheduled(): Promise<{ probes: unknown; catalog: unknown }>;
+  scheduled(): Promise<{ probes: unknown; catalog: unknown; commerce?: unknown }>;
   /** One-minute cron: recompute live signals for the stalest slice of the top-50 universe. */
   liveRefresh(): Promise<unknown>;
   live: LiveStore;
@@ -94,6 +99,7 @@ export interface App {
   pricer: XrpPricer;
   trust: Trust;
   catalog: Catalog;
+  commerce: Commerce;
   sales: SalesStore;
   traffic: TrafficStore;
   /** Best-effort private request log (hashed IPs only); call once per request from the Worker entry point. */
@@ -212,6 +218,12 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const trustStore: TrustStore = opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS));
   const receiptStore: ReceiptStore = opts.receiptStore ?? (env.TRUST_DB ? new D1ReceiptStore(env.TRUST_DB) : new MemoryReceiptStore());
   const evmBuyers = split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS;
+  const evidenceStore = opts.evidenceStore ?? (env.TRUST_DB ? new D1EvidenceStore(env.TRUST_DB) : new MemoryEvidenceStore());
+  const commerceStore: CommerceStore = opts.commerceStore ?? (env.TRUST_DB ? new D1CommerceStore(env.TRUST_DB) : new MemoryCommerceStore());
+  const ownerReq = async (request: Request) => {
+    const m = (request.headers.get("Authorization") ?? "").match(/^Bearer\s+(\S+)$/i);
+    return isOwnerKey(m?.[1], env.OWNER_MCP_KEY);
+  };
   const catalog = createCatalog({
     store: catalogStore,
     curatedBuys: async (since) => (await Promise.all(VENDORS.map((v) => trustStore.observations(v.id, since)))).flat(),
@@ -222,7 +234,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     xrplRpc,
     baseRpc,
     receipts: receiptStore,
-    evidence: opts.evidenceStore ?? (env.TRUST_DB ? new D1EvidenceStore(env.TRUST_DB) : new MemoryEvidenceStore()),
+    evidence: evidenceStore,
+    onStatusChanges: (changes) => commerceStore.addChanges(changes),
     baseRpcs: split(env.BASE_INDEX_RPCS).length ? split(env.BASE_INDEX_RPCS) : ["https://base-rpc.publicnode.com", "https://base.drpc.org", "https://gateway.tenderly.co/public/base"],
     buyers: { xrpl: xrplBuyers, evm: split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS },
     self: {
@@ -251,6 +264,27 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     publicBase: config.publicBaseUrl || undefined,
     receipts: receiptStore,
     evmBuyers,
+    annotate: (doc, payTos) => commerce.annotate(doc, payTos),
+  });
+  const ownHosts = new Set(["api.lumitrades.io", ...(config.publicBaseUrl ? [new URL(config.publicBaseUrl).hostname] : [])]);
+  const commerce = createCommerce({
+    store: commerceStore,
+    cfg: config,
+    fetch: doFetch,
+    // A Worker cannot fetch its own route: Lumi's own endpoints are answered in-process.
+    endpointFetch: (u, init) => (ownHosts.has(new URL(u).hostname) ? handle(new Request(u, init)) : doFetch(u, init)),
+    now,
+    isOwner: ownerReq,
+    xrplRpc,
+    catalogStore,
+    evidence: evidenceStore,
+    receipts: receiptStore,
+    paywall: (ctx) => paywallDeps(ctx),
+    email: { from: alertCfg.emailFrom, binding: alertCfg.emailBinding },
+    extraTestWallets,
+    testPriceUsd: TEST_PRICE_USD,
+    reportSigners: [config.payTo],
+    log: (e) => deps.log?.(e),
   });
 
   /** Free samples of every paid product, rebuilt at most every 10 minutes per isolate. */
@@ -488,11 +522,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           ? MCP_CORS
           : path === "/a2a"
           ? A2A_CORS
-          : TRUST_POST_PATHS.includes(path)
+          : TRUST_POST_PATHS.includes(path) || commerce.postPaths.includes(path)
           ? {
               "Access-Control-Allow-Origin": "*",
               "Access-Control-Allow-Methods": "POST, OPTIONS",
-              "Access-Control-Allow-Headers": "Content-Type, Authorization",
+              "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Lumi-Key",
               "Access-Control-Max-Age": "86400",
             }
           : {
@@ -546,6 +580,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           note: "Not charged.",
         });
       }
+    }
+    // Seller monitoring + data licence feed (free docs/signup, x402 plans, keyed feed, owner routes).
+    {
+      const r = await commerce.handle(request, path, base, ctx);
+      if (r) return r;
     }
     // Trust layer: free GETs, rate-limited public POSTs, owner-only ingest.
     if (path.startsWith("/v1/trust") || path === "/v1/reports" || path === "/v1/tips") {
@@ -861,6 +900,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     trust,
     sales,
     catalog,
+    commerce,
     traffic,
     logTraffic(request: Request, response: Response, ctx?: WaitUntil) {
       if (!trafficOn || request.method === "OPTIONS") return;
@@ -888,8 +928,12 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     },
     async scheduled() {
       const prune = traffic.prune(now() - TRAFFIC_RETENTION_DAYS * 86_400_000).catch(() => {});
-      const [probes, cat] = await Promise.allSettled([trust.runProbes(), catalog.cron(), prune]);
-      return { probes: probes.status === "fulfilled" ? probes.value : { error: String(probes.reason) }, catalog: cat.status === "fulfilled" ? cat.value : { error: String(cat.reason) } };
+      const [probes, cat, , com] = await Promise.allSettled([trust.runProbes(), catalog.cron(), prune, commerce.cron(config.publicBaseUrl ?? "https://api.lumitrades.io")]);
+      return {
+        probes: probes.status === "fulfilled" ? probes.value : { error: String(probes.reason) },
+        catalog: cat.status === "fulfilled" ? cat.value : { error: String(cat.reason) },
+        commerce: com.status === "fulfilled" ? com.value : { error: String(com.reason) },
+      };
     },
     queue: async (job: CatalogJob) => {
       const r = await catalog.consume(job);
@@ -965,7 +1009,7 @@ export function prefersHtml(accept: string | null | undefined): boolean {
 
 /** API sitemap: the human and machine-readable entry points (paid routes are listed in /openapi.json, not here). */
 export function sitemapXml(base: string): string {
-  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog"];
+  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog", "/v1/monitor", "/v1/monitor/sellers", "/v1/monitor/corrections", "/v1/feed", "/v1/feed/license"];
   const day = new Date().toISOString().slice(0, 10);
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
     paths.map((p) => `  <url><loc>${base}${p}</loc><lastmod>${day}</lastmod><changefreq>daily</changefreq></url>`).join("\n") +

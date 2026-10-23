@@ -30,7 +30,7 @@ describe("A2A agent card", () => {
     expect(await (await get("/.well-known/agent.json")).json()).toEqual(card);
     expect(card).toMatchObject({
       name: "Lumi Trades",
-      version: "1.0.1",
+      version: "1.1.0",
       provider: { organization: "Lumi Trades", url: "https://lumitrades.io" },
       documentationUrl: `${BASE}/skill.md`,
       capabilities: { streaming: false, pushNotifications: false },
@@ -47,7 +47,7 @@ describe("A2A agent card", () => {
       { url: `${BASE}/a2a`, protocolBinding: "JSONRPC", protocolVersion: "1.0" },
       { url: `${BASE}/a2a`, protocolBinding: "JSONRPC", protocolVersion: "0.3" },
     ]);
-    expect(card.skills.map((s: any) => s.id)).toEqual(["catalog", "coins", "vendor_trust", "samples", "quote", "institutional", "brief", "scan", "lite", "signal", "levels", "slate", "market", "macro_yen", "funding", "fear_greed", "events_48h", "sentiment", "events", "vendor_report", "trust_check", "trades"]);
+    expect(card.skills.map((s: any) => s.id)).toEqual(["catalog", "coins", "vendor_trust", "seller_monitoring", "trust_feed", "samples", "quote", "institutional", "brief", "scan", "lite", "signal", "levels", "slate", "market", "macro_yen", "funding", "fear_greed", "events_48h", "sentiment", "events", "vendor_report", "trust_check", "trades"]);
     expect(card.iconUrl).toBe("https://lumitrades.io/assets/icon-512.png");
     for (const s of card.skills) expect(s).toMatchObject({ id: expect.any(String), name: expect.any(String), description: expect.any(String), tags: expect.any(Array) });
     const x402 = card.capabilities.extensions.find((e: any) => e.uri === "https://x402.org");

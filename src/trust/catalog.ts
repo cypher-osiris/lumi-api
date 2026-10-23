@@ -256,6 +256,10 @@ export interface CatalogStore {
   saveProbes(rows: ProbeResult[]): Promise<number>;
   lookup(q: LookupQuery, limit: number): Promise<{ total: number; rows: CatalogRow[] }>;
   byResource(resource: string): Promise<CatalogRow | null>;
+  /** Batched exact-resource lookup (licence feed). */
+  byResources(resources: string[]): Promise<CatalogRow[]>;
+  /** Listings paying any of these payTos (lowercase), most used first (licence feed / audits). */
+  byPayTos(payTosLc: string[], limit: number): Promise<CatalogRow[]>;
   buysFor(resources: string[]): Promise<BuyRow[]>;
   addBuy(row: BuyRow): Promise<"inserted" | "duplicate">;
   boughtResources(): Promise<string[]>;
@@ -330,6 +334,10 @@ export class MemoryCatalogStore implements CatalogStore {
     return { total: m.length, rows: m.slice(0, limit) };
   }
   async byResource(resource: string) { return this.rows.find((r) => r.resource === resource) ?? null; }
+  async byResources(rs: string[]) { return this.rows.filter((r) => rs.includes(r.resource)); }
+  async byPayTos(ps: string[], limit: number) {
+    return this.rows.filter((r) => (r.pay_tos ?? "").split(",").some((p) => ps.includes(p.toLowerCase()))).sort((a, b) => (b.calls_30d ?? 0) - (a.calls_30d ?? 0)).slice(0, limit);
+  }
   async buysFor(resources: string[]) { return this.buys.filter((b) => resources.includes(b.resource)).sort((a, b) => b.ts - a.ts); }
   async addBuy(row: BuyRow) {
     if (this.buys.some((b) => b.tx_hash === row.tx_hash)) return "duplicate" as const;
@@ -461,6 +469,18 @@ export class D1CatalogStore implements CatalogStore {
   }
   async byResource(resource: string) {
     return this.db.prepare(`SELECT ${CAT_COLS} FROM catalog WHERE resource = ?1`).bind(resource).first<CatalogRow>();
+  }
+  async byResources(rs: string[]) {
+    const l = [...new Set(rs)].slice(0, 90);
+    if (!l.length) return [];
+    return (await this.db.prepare(`SELECT ${CAT_COLS} FROM catalog WHERE resource IN (${l.map((_, i) => `?${i + 1}`).join(",")})`).bind(...l).all<CatalogRow>()).results;
+  }
+  async byPayTos(ps: string[], limit: number) {
+    const l = [...new Set(ps)].slice(0, 50);
+    if (!l.length) return [];
+    return (await this.db
+      .prepare(`SELECT ${CAT_COLS} FROM catalog WHERE resource IN (SELECT resource FROM catalog_payto WHERE pay_to_lc IN (${l.map((_, i) => `?${i + 1}`).join(",")})) ORDER BY calls_30d DESC NULLS LAST, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
+      .bind(...l).all<CatalogRow>()).results;
   }
   async buysFor(resources: string[]) {
     if (!resources.length) return [];

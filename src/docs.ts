@@ -1,5 +1,6 @@
 /** Free, human- and agent-facing documents: index, skill.md, discovery manifests, OpenAPI. */
 
+import { COMMERCE_FREE_ENDPOINTS, commerceOpenApiPaths, commerceSkillMd, planPriceTable, planResources } from "./commerce/discovery";
 import type { Config, PaidRoute } from "./config";
 import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable, EXAMPLE_COIN } from "./catalog";
@@ -32,7 +33,7 @@ export function freeTrialInfo(cfg: Config) {
   };
 }
 
-export const VERSION = "1.0.1";
+export const VERSION = "1.1.0";
 
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
@@ -116,12 +117,14 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "POST", path: "/v1/trust/receipts/verify", summary: "Verify a signed test-buy receipt (hash, paying-wallet signature; ?ledger=1 also checks the payment on-chain), free" },
       { method: "POST", path: "/v1/tips", summary: "Send Lumi a private tip (stored privately; never published or returned)" },
       { method: "POST", path: "/v1/trust/replies", summary: "Vendor right to reply (signed by a listed pay-to address), or email hello@lumitrades.io" },
+      ...COMMERCE_FREE_ENDPOINTS,
       { method: "POST", path: "/mcp", summary: "Remote MCP server (Streamable HTTP): free tools for everyone; paid tools return the price and how to pay" },
       { method: "POST", path: "/a2a", summary: "A2A JSON-RPC endpoint (SendMessage / message/send): free skills answered inline, paid skills return x402 terms" },
     ],
     mcp: mcpInfo(base),
     a2a: { agent_card: `${base}/.well-known/agent-card.json`, endpoint: `${base}/a2a`, protocol_versions: ["1.0", "0.3"], binding: "JSONRPC" },
     paid_endpoints: priceTable(cfg),
+    plans: planPriceTable(base),
     coins: coins.map((c) => c.symbol),
     docs: `${base}/skill.md`,
     disclaimer: DISCLAIMER,
@@ -135,7 +138,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     x402Version: 2,
     kind: "resource-server",
     name: "Lumi API",
-    description: `Pay-per-call crypto market reads from lumitrades.io (signals, all-coins scan, lite reads, levels, paper-trade ideas, macro, daily brief, yen carry-trade watch, sentiment, funding, Fear & Greed, events and a 48h window, an x402 pay-check, a detailed x402 vendor report from Lumi's trust observations and a daily policy brief), settled in ${settledIn(cfg)}.`,
+    description: `Pay-per-call crypto market reads from lumitrades.io (signals, all-coins scan, lite reads, levels, paper-trade ideas, macro, daily brief, yen carry-trade watch, sentiment, funding, Fear & Greed, events and a 48h window, an x402 pay-check, a detailed x402 vendor report from Lumi's trust observations and a daily policy brief), settled in ${settledIn(cfg)}. Also: seller monitoring plans (Monitor $9/30d, Monitor Plus $29/30d, Audit $99) and a licensed trust data feed (free 1,000 lookups/month; $1.50 per 1,000; Feed $99/30d; Feed Pro $199/30d).`,
     resources: PAID_ENDPOINTS.map((e) => ({
       name: e.name,
       url: `${base}${e.example}`,
@@ -174,7 +177,8 @@ export function wellKnownX402(cfg: Config, base: string) {
           payTo: cfg.payTo,
         })),
       ],
-    })),
+    })).concat(planResources(cfg, base) as any),
+    plans: { note: "Plan routes (seller monitoring, trust data feed) are one x402 payment per 30-day term or one-off, no auto-renew. The concrete URL quotes the list price; the payment binds to ?enrollment= or ?key_id= and is refused before settlement without a valid one (except Feed / Feed Pro, which issue a new key).", monitor: `${base}/v1/monitor`, feed: `${base}/v1/feed`, license: `${base}/v1/feed/license` },
     facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [...(cfg.evm.cdp ? [cfg.evm.cdp.url] : []), cfg.evm.facilitatorUrl] : [])],
     networks: paymentNetworks(cfg),
     agent_card: `${base}/.well-known/agent-card.json`,
@@ -207,6 +211,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     "/v1/samples": { get: { summary: "Free truncated samples of every paid product (labelled SAMPLE)", security: [], responses: { "200": { description: "OK" } } } },
     "/health": { get: { summary: "Health (free)", responses: { "200": { description: "OK" } } } },
     ...trustPaths(),
+    ...commerceOpenApiPaths(cfg, base),
   };
   for (const e of PAID_ENDPOINTS) {
     paths[e.template] = {
@@ -321,6 +326,8 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     components: {
       securitySchemes: {
         bearer: { type: "http", scheme: "bearer", description: "Owner key, only for owner-only endpoints. Paid endpoints use x402 (see x-payment-info); free endpoints need no auth." },
+        feedKey: { type: "http", scheme: "bearer", description: "Trust data feed API key (lumi_fk_…), from POST /v1/feed/keys or a Feed plan payment; X-Lumi-Key header also accepted." },
+        managementToken: { type: "http", scheme: "bearer", description: "Seller monitoring management token (lumi_mt_…), returned once at enrolment." },
       },
     },
   };
@@ -517,7 +524,7 @@ Base URL: ${base}
 Network: \`${net}\` (${cfg.networkName}). Assets: XRP${cfg.ious.map((o) => ` or ${o.symbol} (${IOU_NAMES[o.symbol]}, issuer \`${o.issuer}\`, currency \`${o.currency}\`)`).join("")}. Pay to: \`${cfg.payTo}\`.
 ${cfg.evm ? `Also: \`${cfg.evm.network}\` (${cfg.evm.networkName}). Asset: USDC \`${cfg.evm.asset}\`. Pay to: \`${cfg.evm.payTo}\`. Facilitator: ${cfg.evm.cdp ? `${cfg.evm.cdp.url} (Coinbase CDP; fallback ${cfg.evm.facilitatorUrl})` : cfg.evm.facilitatorUrl}.
 ` : ""}Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call${cfg.evm ? ", or one EIP-3009 USDC authorization on Base" : ""}).
-No API key, no account, no sign-up.
+No API key, no account, no sign-up for the per-call endpoints (the optional trust data feed uses keys, see below).
 A2A agent card: ${base}/.well-known/agent-card.json. MCP: ${base}/mcp.
 
 ## What you can buy
@@ -758,7 +765,7 @@ Scores are observations with sample sizes, not ratings; few samples are marked l
   \`lumi-report:<network>:<tx_hash>\` with the paying key. Only reports with an on-ledger payment and a valid signature are shown or scored.
 - **Private tips:** \`POST ${base}/v1/tips\` \`{text, coins?, source_urls?}\`. Stored privately; never published or returned.
 - **Vendors can reply:** sign \`lumi-reply:<vendor_id>:<sha256 of text>\` with a listed pay-to key and \`POST ${base}/v1/trust/replies\`, or email hello@lumitrades.io.
-
+${commerceSkillMd(base)}
 ## Rules of use
 
 - ${DISCLAIMER}
@@ -927,6 +934,15 @@ ${quickHtml}
 <div class="tbl"><table><thead><tr><th>Endpoint</th><th>USD</th><th>XRP</th><th>What you get</th></tr></thead><tbody>
 ${rows}</tbody></table></div>
 <p class="note">Signals: ${coins.length} coins, computed live (1h refreshed about every 13 minutes): ${esc(coins.map((c) => c.symbol).join(", "))}. Levels, slate and trades: ${esc(siteOnly(coins).map((c) => c.symbol).join(", "))}. Every response carries <code>as_of</code>, <code>data_age_seconds</code>, <code>next_update</code> and <code>stale_after</code> (ISO UTC). You only pay when you get data: not charged on bad input (4xx before any quote) or stale data (503 "Not charged." past <code>stale_after</code>).</p>
+<h2 id="monitoring">For x402 sellers: monitoring</h2>
+<div class="tbl"><table><thead><tr><th>Plan</th><th>USD</th><th>What you get</th></tr></thead><tbody>
+${planPriceTable(base).filter((p) => p.path.startsWith("/v1/monitor")).map((p) => `<tr><td><code>GET ${esc(p.path)}</code></td><td>$${esc(p.price_usd)}${p.term_days ? ` / ${p.term_days} days` : " one-off"}</td><td>${esc(p.summary)}</td></tr>`).join("\n")}</tbody></table></div>
+<p class="note">Prove your payTo with a signature, enrol endpoints (test-buys capped at $0.10 each, seller-funded and labelled so), pay over x402; no auto-renew. Paying never changes a score; findings can be replied to, not removed; the badge is removed automatically if a test fails or the plan lapses. <a href="${esc(base)}/v1/monitor">How it works</a> &middot; <a href="${esc(base)}/v1/monitor/sellers">Monitored sellers</a> &middot; <a href="${esc(base)}/v1/monitor/corrections">Corrections</a></p>
+<h2 id="feed">For facilitators, wallets and frameworks: trust data feed</h2>
+<div class="tbl"><table><thead><tr><th>Plan</th><th>USD</th><th>What you get</th></tr></thead><tbody>
+<tr><td>Free key</td><td>$0</td><td>1,000 lookups / month per key (wallet signature), answer-only.</td></tr>
+${planPriceTable(base).filter((p) => p.path.startsWith("/v1/feed")).map((p) => `<tr><td><code>GET ${esc(p.path)}</code></td><td>$${esc(p.price_usd)}${p.term_days ? ` / ${p.term_days} days` : ""}</td><td>${esc(p.summary)}</td></tr>`).join("\n")}</tbody></table></div>
+<p class="note"><a href="${esc(base)}/v1/feed">Feed docs</a> &middot; <a href="${esc(base)}/v1/feed/license">Licence terms</a> (no resale of raw data, attribution required).</p>
 ${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
 <h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
 <p class="note">Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}

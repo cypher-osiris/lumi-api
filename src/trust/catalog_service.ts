@@ -49,6 +49,24 @@ export interface CatalogDeps {
   evidence?: EvidenceStore;
   /** Public Base RPCs, rotated (getLogs for the forward index). */
   baseRpcs?: string[];
+  /** Status flips found by a probe batch (quote valid / pays listed payTo / price matches), for the licence feed delta. */
+  onStatusChanges?: (changes: StatusChange[]) => Promise<void>;
+}
+
+export interface StatusChange { ts: number; resource: string; field: "quote_valid" | "pays_listed_address" | "price_matches"; old: string | null; new: string | null }
+
+/** Compare a row's stored probe status with a fresh probe result (first observations are not changes). */
+export function statusChanges(row: { resource: string; probe_ts: number | null; probe_valid: number | null; probe_pay_to_match: number | null; probe_price_match: number | null }, p: { ts: number; valid: boolean; pay_to_match: boolean | null; price_match: boolean | null }): StatusChange[] {
+  if (row.probe_ts == null) return [];
+  const s = (v: number | boolean | null | undefined) => (v == null ? null : v === true || v === 1 ? "true" : "false");
+  const out: StatusChange[] = [];
+  const pairs: [StatusChange["field"], string | null, string | null][] = [
+    ["quote_valid", s(row.probe_valid), s(p.valid)],
+    ["pays_listed_address", s(row.probe_pay_to_match), s(p.pay_to_match)],
+    ["price_matches", s(row.probe_price_match), s(p.price_match)],
+  ];
+  for (const [field, o, n] of pairs) if (o !== n) out.push({ ts: p.ts, resource: row.resource, field, old: o, new: n });
+  return out;
 }
 
 export interface CuratedBuy {
@@ -252,6 +270,11 @@ export function createCatalog(deps: CatalogDeps) {
     const rows = (await store.range(job.after, PROBE_BATCH)).filter((r) => r.method !== "MCP" && r.last_seen > t - DELISTED_AFTER_MS);
     const results = await probeAll(rows, t);
     const w = await store.saveProbes(results);
+    if (deps.onStatusChanges) {
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const ch = results.flatMap((p) => { const r = byId.get(p.id); return r ? statusChanges(r, p) : []; });
+      if (ch.length) await deps.onStatusChanges(ch).catch((e) => deps.log({ event: "status_change_error", error: String(e) }));
+    }
     // Domain age: a few registrable domains from this batch that have no recent RDAP answer.
     const regs = [...new Set(rows.map((r) => r.reg_domain).filter((x): x is string => !!x && !isPlatformHost(x)))];
     if (regs.length) {

@@ -9,6 +9,7 @@
  * - Tips are stored privately; nothing reads them back.
  * Public wording is factual: observed results with timestamps and tx evidence, never a judgement of the business.
  */
+import { MONITOR_METHODOLOGY } from "../commerce/policy";
 import { json } from "../x402";
 import { isOwnerKey } from "../mcp";
 import { scrubText } from "../sanitize";
@@ -59,6 +60,22 @@ export interface TrustDeps {
   receipts?: ReceiptStore;
   /** EVM addresses whose payments are Lumi's own test-buys (Base receipts). */
   evmBuyers?: string[];
+  /** Adds disclosure fields (seller monitoring = commercial relationship) to lookup docs. Never changes scores. */
+  annotate?: (doc: Record<string, unknown>, payTos: string[]) => Promise<Record<string, unknown>>;
+}
+
+/** Every payTo-looking string under `pay_to` keys of a lookup doc (catalog entries + curated vendors). */
+export function payTosIn(doc: unknown, q?: { payTo?: string }): string[] {
+  const out = new Set<string>();
+  if (q?.payTo) out.add(q.payTo.trim());
+  const walk = (v: unknown, under: boolean, depth: number) => {
+    if (depth > 8 || v == null) return;
+    if (typeof v === "string") { if (under && (XRPL_ADDR_RE.test(v) || EVM_ADDR_RE.test(v))) out.add(v); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, under, depth + 1); return; }
+    if (typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) walk(x, under || k === "pay_to" || k === "xrpl" || k === "evm", depth + 1);
+  };
+  walk(doc, false, 0);
+  return [...out].slice(0, 50);
 }
 
 export const RECEIPT_FREE_LIMITS = { perMinute: 10, perDay: 100, globalPerDay: 5_000 } as const;
@@ -315,6 +332,7 @@ export function methodologyDoc(base: string) {
     version: "v0",
     url: `${base}/v1/trust/methodology`,
     label: LABEL,
+    seller_monitoring: { ...MONITOR_METHODOLOGY, docs: `${base}/v1/monitor`, corrections: `${base}/v1/monitor/corrections` },
     what_is_measured: [
       "Free probes: every 30 minutes Lumi sends one unpaid request to each curated vendor endpoint and records whether it answers with a valid x402 v2 402 quote that offers an XRPL (xrpl:0) option paying an address listed for that vendor (curated list; Bazaar catalog listings get their own quote checks, see x402_catalog), the quoted price and asset, whether the quote carries a sourceTag, and the response time. Probes never send a payment.",
       "Paid test-buys, by chain. Curated vendor list (/v1/trust/vendors): bought on XRPL (xrpl:0) in RLUSD or XRP from Lumi's XRPL wallet, one call per vendor per day (hard caps: 0.15 RLUSD + 0.05 XRP per day in total, no endpoint priced above 0.05). CDP Bazaar catalog listings: bought in USDC on Base (eip155:8453) from Lumi's Base buyer wallet, through the facilitator the seller's own 402 names, one buy per seller domain plus queued re-buys (no listing priced above $0.05; re-buys capped at $0.10 per day). Catalog listings are not test-bought on XRPL and curated vendors are not test-bought on Base. Every test-buy tx is checked on-chain (successful, sent by a Lumi wallet, received by a listed payTo) before it is stored. Each record (in the paid vendor report or paid trust/check; free surfaces show only date, HTTP status and data yes/no) shows the amount, asset, tx hash, HTTP status, whether the response contained data, latency, and a signed receipt (see receipts).",
@@ -549,7 +567,7 @@ export function createTrust(deps: TrustDeps): Trust {
     const v = vendorById(id);
     if (!v) return null;
     const [g, reach] = await Promise.all([gather(v), reachability(v)]);
-    return {
+    const doc: Record<string, unknown> = {
       kind: "trust_vendor",
       ...header(base),
       id: v.id,
@@ -577,6 +595,7 @@ export function createTrust(deps: TrustDeps): Trust {
       right_to_reply: rightToReply(base),
       disclaimer: DISCLAIMER,
     };
+    return deps.annotate ? deps.annotate(doc, payTosIn({ pay_to: v.pay_to })).catch(() => doc) : doc;
   }
 
 
@@ -758,6 +777,7 @@ export function createTrust(deps: TrustDeps): Trust {
       free_summary: `${base}/v1/trust/vendors/${v.id}`,
       disclaimer: DISCLAIMER,
     };
+    if (deps.annotate) { const d2 = await deps.annotate(doc as Record<string, unknown>, payTosIn({ pay_to: v.pay_to })).catch(() => null); if (d2) return { ok: true, doc: d2 as typeof doc }; }
     return { ok: true, doc };
   }
 
@@ -1080,7 +1100,11 @@ export function createTrust(deps: TrustDeps): Trust {
   }
 
   async function lookup(q: LookupQuery, base: string, opts: { free?: boolean } = {}): Promise<Record<string, unknown>> {
-    if (deps.catalog) return deps.catalog.lookupDoc(q, base, { free: !!opts.free });
+    if (deps.catalog) {
+      const doc = await deps.catalog.lookupDoc(q, base, { free: !!opts.free });
+      if (!deps.annotate) return doc;
+      return deps.annotate(doc, payTosIn(doc, q)).catch(() => doc);
+    }
     return { kind: "trust_lookup", query: q, observed: false, note: "Catalog lookups are unavailable on this deployment." };
   }
 
