@@ -1,0 +1,8 @@
+# keep local secrets and build output out of the image context
+.dev.vars
+.env
+.env.*
+.testnet
+.wrangler
+.git
+**/node_modules
