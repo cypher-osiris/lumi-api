@@ -6,6 +6,7 @@ import { envelope, type CoinRef } from "./views";
 import { compact, eventRows, catalystRows } from "./products";
 import { band } from "./feeds";
 import type { LiveRow } from "./live";
+import { VENDORS, vendorById, vendorPayTos } from "./vendors";
 
 type Json = any;
 const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
@@ -171,10 +172,22 @@ export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: J
   }
 
   const ref = e ?? domEntries[0];
-  const listedPayTo: string[] = [...new Set<string>([...(e ? [e] : domEntries)].flatMap((x) => (x.pay_to ?? []).map((p: Json) => String(p.pay_to).toLowerCase())))];
+  const entries: Json[] = e ? [e] : domEntries;
+  const listedPayTo: string[] = [...new Set<string>(entries.flatMap((x) => (x.pay_to ?? []).map((p: Json) => String(p.pay_to).toLowerCase())))];
+  // M-3 (audit 2026-10-23b): the Bazaar only lists EVM/Solana payTos, so an XRPL payTo Lumi itself paid was a false block.
+  // Also known: the payTos of Lumi's curated record for this seller (by id, or the same operator via a shared listed payTo)
+  // and seller.pay_to of Lumi's own signed test-buy receipts for these entries.
+  const knownPayTo = new Set<string>([
+    ...listedPayTo,
+    ...curated.flatMap((c) => { const v = c?.id ? vendorById(String(c.id)) : undefined; return v ? vendorPayTos(v) : []; }),
+    ...(listedPayTo.length ? VENDORS.filter((v) => vendorPayTos(v).some((p) => listedPayTo.includes(p.toLowerCase()))).flatMap(vendorPayTos) : []),
+    ...entries.flatMap((x) => (x.purchases ?? []).map((p: Json) => p?.receipt?.seller?.pay_to).filter((p: unknown): p is string => typeof p === "string")),
+  ].map((p) => p.toLowerCase()));
   if (input.payTo) {
-    if (listedPayTo.length && !listedPayTo.includes(input.payTo.toLowerCase())) add("pay_to_mismatch", "block", `The payTo you were quoted (${input.payTo}) is not an address this ${e ? "resource" : "domain"} lists in the Bazaar (${listedPayTo.slice(0, 3).join(", ")}).`);
-    else if (listedPayTo.length) add("pay_to_matches", "info", "The payTo you were quoted matches the listing.");
+    const q = input.payTo.toLowerCase();
+    if (knownPayTo.has(q)) add("pay_to_matches", "info", listedPayTo.includes(q) ? "The payTo you were quoted matches the listing." : "The payTo you were quoted is a known address of this seller (Lumi's curated vendor record or Lumi's own paid test-buy), not a Bazaar-listed one.");
+    else if (listedPayTo.length) add("pay_to_mismatch", "block", `The payTo you were quoted (${input.payTo}) is not an address this ${e ? "resource" : "domain"} lists in the Bazaar (${listedPayTo.slice(0, 3).join(", ")}) or that Lumi has on record for this seller.`);
+    else if (knownPayTo.size) add("pay_to_unrecognised", "warn", `The payTo you were quoted (${input.payTo}) is not one Lumi has on record for this seller (${[...knownPayTo].slice(0, 3).join(", ")}). It may be new; check it with the seller.`);
   }
   if (e) {
     const listed = Number(e.listed_price_usd);

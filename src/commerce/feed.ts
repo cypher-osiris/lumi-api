@@ -93,7 +93,10 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
     if (!t || !t.startsWith("lumi_fk_")) return null;
     return store.keyByHash(await sha256(t));
   }
-  const needKey = (base: string) => json(401, { error: "api_key_required", hint: "Authorization: Bearer <api key>", signup: `${base}/v1/feed`, note: "Not charged." }, { ...NO_STORE, "WWW-Authenticate": "Bearer" });
+  // L-9 (audit 2026-10-23b): a key that was sent but is malformed or unknown gets invalid_api_key, not api_key_required
+  const needKey = (base: string, request?: Request) => request && bearer(request)
+    ? json(401, { error: "invalid_api_key", detail: "The API key is malformed, unknown or was rotated.", signup: `${base}/v1/feed`, note: "Not charged." }, { ...NO_STORE, "WWW-Authenticate": 'Bearer error="invalid_token"' })
+    : json(401, { error: "api_key_required", hint: "Authorization: Bearer <api key>", signup: `${base}/v1/feed`, note: "Not charged." }, { ...NO_STORE, "WWW-Authenticate": "Bearer" });
 
   async function newKey(wallet: string | null, network: string | null): Promise<{ key: FeedKey; secret: string }> {
     const secret = `lumi_fk_${randHex(24)}`;
@@ -198,7 +201,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
 
   async function lookup(request: Request, url: URL, base: string) {
     const k = await keyFor(request);
-    if (!k) return needKey(base);
+    if (!k) return needKey(base, request);
     let items: Item[] | string;
     if (request.method === "POST") {
       const b = await readJson(request, 64_000);
@@ -218,7 +221,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
 
   async function delta(request: Request, url: URL, base: string) {
     const k = await keyFor(request);
-    if (!k) return needKey(base);
+    if (!k) return needKey(base, request);
     const tier = feedTier(k, now());
     if (tier !== "feed" && tier !== "feed_pro") return json(403, { error: "plan_required", detail: "The delta feed is part of Feed and Feed Pro.", pay: `${base}/v1/feed/subscribe/feed?key_id=${k.id}`, note: "Not charged." }, NO_STORE);
     const since = Date.parse(url.searchParams.get("since") ?? "") || now() - DAY_MS;
@@ -231,7 +234,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
 
   async function snapshot(request: Request, url: URL, base: string) {
     const k = await keyFor(request);
-    if (!k) return needKey(base);
+    if (!k) return needKey(base, request);
     if (feedTier(k, now()) !== "feed_pro") return json(403, { error: "feed_pro_required", detail: "Full snapshots are licensed to Feed Pro.", pay: `${base}/v1/feed/subscribe/feed_pro?key_id=${k.id}`, note: "Not charged." }, NO_STORE);
     const cursor = Math.max(0, Number(url.searchParams.get("cursor") ?? 0) || 0);
     const deny = await meter(k, 1, base);
@@ -250,7 +253,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
 
   async function webhook(request: Request, base: string) {
     const k = await keyFor(request);
-    if (!k) return needKey(base);
+    if (!k) return needKey(base, request);
     if (feedTier(k, now()) !== "feed_pro") return json(403, { error: "feed_pro_required", note: "Not charged." }, NO_STORE);
     const b = await readJson(request);
     const u = b?.url === null ? null : safeHttpsUrl(b?.url);
@@ -263,7 +266,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
 
   async function usage(request: Request, base: string) {
     const k = await keyFor(request);
-    if (!k) return needKey(base);
+    if (!k) return needKey(base, request);
     const t = now();
     const q = quotaFor(k, 0, 0, t);
     const u = await store.usage(k.id, q.period);

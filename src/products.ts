@@ -10,6 +10,7 @@
  */
 
 import type { Json } from "./data";
+import { isSignedObject } from "./signed";
 import {
   DISCLAIMER, FALLBACK_COINS, envelope, levelsBlock, num, priceBlock, tradeView, yenNote, type CoinRef,
 } from "./views";
@@ -21,6 +22,7 @@ const DAY = 86_400_000;
 /** Drop null/undefined/empty-array/empty-object values (recursively) so missing data is omitted, not faked. */
 export function compact<T>(v: T): T {
   if (Array.isArray(v)) return v.map(compact).filter((x) => x !== null && x !== undefined) as T;
+  if (isSignedObject(v)) return v; // H-2: never drop nulls (e.g. inconclusive delivery.data_returned) inside a signed receipt
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, x] of Object.entries(v as Record<string, unknown>)) {

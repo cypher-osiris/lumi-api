@@ -8,6 +8,8 @@
  * (comma-separated, set with `wrangler secret put PRIVATE_NAMES`).
  */
 
+import { isSignedObject } from "./signed";
+
 const BLOCKED_KEY = /(holdings?|portfolio|personal|private|owner|wallet|seed|secret)/i;
 
 let nameText: RegExp | null = null;
@@ -64,6 +66,7 @@ function walk(v: unknown): unknown {
   if (Array.isArray(v)) {
     return v.map(walk).filter((x) => !(typeof x === "string" && x === ""));
   }
+  if (isSignedObject(v)) return v; // H-2: signed receipts are public evidence and must stay byte-for-byte as signed
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
