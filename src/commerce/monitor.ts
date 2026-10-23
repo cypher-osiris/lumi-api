@@ -359,6 +359,8 @@ export function createMonitor(deps: CommerceDeps) {
   }
 
   async function reply(request: Request) {
+    // No credentials at all -> 401 up front (audit 2026-10-23b L-12), so an unauthenticated caller never sees 404 unknown_enrollment
+    if (!bearer(request)) return json(401, { error: "management_token_required", hint: "Authorization: Bearer <management token from enrolment>" }, { ...NO_STORE, "WWW-Authenticate": "Bearer" });
     const b = await readJson(request, 8000);
     if (!b) return bad("invalid_json");
     const e = ENROLL_ID_RE.test(String(b.enrollment_id ?? "")) ? await store.enrollment(String(b.enrollment_id)) : null;

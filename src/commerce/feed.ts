@@ -358,7 +358,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
     if (path === "/v1/feed/challenge" && get) {
       const w = (url.searchParams.get("wallet") ?? "").trim();
       const c = await makeChallenge(deps.cfg.invoiceSecret, "feed-key", w, now());
-      if (!c) return bad("wallet_required", "?wallet=<XRPL r-address or Base 0x address>");
+      if (!c) return bad(w ? "invalid_wallet" : "wallet_required", "?wallet=<XRPL r-address or Base 0x address>");
       return json(200, { ...c, sign: c.network === "xrpl:0" ? "ripple-keypairs sign(utf8 hex of message); send public_key too" : "EIP-191 personal_sign(message)", next: `POST ${base}/v1/feed/keys {message, signature, public_key?}` }, NO_STORE);
     }
     if (path === "/v1/feed/keys") return m === "POST" ? signup(request, base) : json(405, { error: "method_not_allowed" }, { Allow: "POST, OPTIONS" });
