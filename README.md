@@ -381,7 +381,7 @@ reads it free. MCP: `lumi_vendor_report` (`vendor_id`). A2A: `vendor_report`. Th
   never any payment header). Recorded: HTTP status, whether it is a valid x402 v2 quote with an `xrpl:0` option paying an address listed for
   that vendor, price and asset, whether the quote carries a `sourceTag`, latency. Probes older than 90 days are pruned.
 - **Paid test-buys (periodic, from Lumi's own XRPL wallet, run from the operator's box, never from the Worker).** Single calls on a vendor's
-  cheapest listed endpoint, within shared caps (not every vendor every day): hard caps 0.15 RLUSD + 0.05 XRP per day in total, and no endpoint priced above 0.05. Each record shows the amount,
+  cheapest listed endpoint, within shared caps (not every vendor every day): hard caps of about $0.50 a day (0.40 RLUSD + 0.10 XRP in total), and no endpoint priced above 0.05. Each record shows the amount,
   asset, ledger tx hash, HTTP status, whether the response contained data, and latency. The Worker re-checks every tx on the ledger (sender is
   Lumi's wallet, recipient is a listed pay-to address, amount and asset match) before storing it. The Worker holds no key.
 - **"Contained data"** = 2xx and a non-empty body for that endpoint (e.g. a non-empty result list). Error bodies, empty lists and empty

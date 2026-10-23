@@ -41,7 +41,7 @@ export interface CatalogDeps {
   baseRpc: string;
   buyers: { xrpl: string[]; evm: string[] };
   self: SelfEntry;
-  /** Signed test-buy receipts, attached to purchases in paid lookups (trust/check). */
+  /** Signed test-buy receipts, attached to purchases in full (paid) lookups; trust/check uses them for its verdict but does not return them. */
   receipts?: ReceiptStore;
   isOwner(request: Request): Promise<boolean>;
   /** Lumi's own test-buys of the curated XRPL vendor list since `since` (trust store observations). */
@@ -122,7 +122,7 @@ export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
       bazaar_sweep: XRPL_BAZAAR_SWEEP,
     },
     ...(otherBazaar.length ? { other_bazaar_networks: Object.fromEntries(otherBazaar) } : {}),
-    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is test-bought by a daily routine within shared caps (0.15 RLUSD + 0.05 XRP per day in total, so not every vendor every day), and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
+    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is test-bought by a daily routine within shared caps (about $0.50 a day: 0.40 RLUSD + 0.10 XRP in total, so not every vendor every day), and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
   };
 }
 

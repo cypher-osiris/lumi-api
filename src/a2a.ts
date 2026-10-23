@@ -135,7 +135,7 @@ export function agentCard(cfg: Config, base: string) {
     name: "Lumi Trades",
     description:
       "Should I pay this x402 URL? Lumi Trust checks a seller before you pay: allow / warn / block with coded reasons from daily CDP Bazaar index checks and Lumi's own on-chain test-buys, " +
-      "with signed delivery receipts (free lookup, paid check and vendor reports). " +
+      "(free lookup, paid check, vendor reports); signed delivery receipts come with paid vendor reports and Feed catalog lookups, verifiable free. " +
       "Plus crypto market reads for AI agents from Lumi Trades (lumitrades.io): daily market brief, per-coin signals and support/resistance levels, " +
       "paper-trade ideas, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar (signals cover the top 50 coins; levels and paper trades cover 13 tracked coins), " +
       "and a daily policy brief (regulators, central banks, banks, tokenization). " +
