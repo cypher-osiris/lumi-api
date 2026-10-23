@@ -59,7 +59,7 @@ export interface TrustDeps {
 /** The precomputed vendors index is served while younger than this (rebuilt by the 30-minute cron and after trust writes). */
 export const VENDORS_INDEX_TTL_MS = 40 * 60_000;
 const VENDORS_MEMO_MS = 60_000;
-const VENDORS_KEY = "vendors_index_v1";
+const VENDORS_KEY = "vendors_index_v2"; // v2: answer-only free shape (no tx evidence)
 
 export interface Trust {
   handle(request: Request, path: string, base: string): Promise<Response | null>;
