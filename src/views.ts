@@ -90,6 +90,7 @@ function indicatorSummary(ind: Json) {
     rsi: pick("rsi", ["value", "state", "points"]),
     macd: pick("macd", ["hist", "cross", "state", "points"]),
     ema: pick("ema", ["ema20", "ema50", "ema200", "state", "points"]),
+    ema200: pick("ema200", ["ema200", "state", "points"]),
     bollinger: pick("bb", ["pct_b", "bandwidth_pct", "squeeze", "state", "points"]),
     stoch_rsi: pick("stochrsi", ["k", "d", "state", "points"]),
     volume: pick("volume", ["ratio", "state", "points"]),
@@ -125,6 +126,32 @@ export function signalView(coin: CoinRef, signals: Json, prices: Json) {
       note: "Mechanical indicator readings from exchange candles; not predictions.",
     },
     generated_utc: signals?.generated_utc ?? null,
+  });
+}
+
+/** Signal computed live in the Worker (src/live.ts): same shape as signalView, fresher (1h/4h about every 13 min). */
+export function liveSignalView(coin: CoinRef, row: Json) {
+  const tfs: Record<string, unknown> = {};
+  for (const tf of ["1h", "4h", "1d"]) {
+    const t = row?.timeframes?.[tf];
+    if (!t) continue;
+    tfs[tf] = { label: t.label ?? null, score: num(t.score), points: num(t.points), max_points: num(t.max_points), candle_time: t.candle_time ?? null, indicators: indicatorSummary(t.indicators) };
+  }
+  const p = row?.price ?? {};
+  return envelope("signal", {
+    coin,
+    label: row?.label ?? null,
+    score: num(row?.score),
+    price: { usd: num(p.usd), change_24h_pct: num(p.change_24h_pct), high_24h: num(p.high_24h), low_24h: num(p.low_24h), volume_24h_usd: num(p.volume_24h_usd), as_of: new Date(row.computed_at).toISOString() },
+    timeframes: tfs,
+    method: {
+      timeframe_weights: { "1h": 0.25, "4h": 0.35, "1d": 0.4 },
+      labels: "score >= 0.5 Strong Buy; >= 0.15 Buy; > -0.15 Neutral; > -0.5 Sell; else Strong Sell",
+      points: "RSI +-1/+-0.5, MACD hist +-1 (+-0.5 fresh cross), EMA stack +-1 (+-0.5 mixed), EMA200 +-1 (1d), Bollinger %B outside bands +-0.5, StochRSI turn +-0.5, volume >=1.5x avg +-0.5; score = points / max",
+      note: "Mechanical indicator readings computed live from public exchange candles (1h refreshed about every 13 minutes; 4h built from 1h; 1d every few hours); not predictions.",
+    },
+    computed: "live",
+    generated_utc: new Date(row.computed_at).toISOString(),
   });
 }
 

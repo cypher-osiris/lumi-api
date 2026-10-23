@@ -73,7 +73,7 @@ describe("free endpoints", () => {
     expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].protocols).toEqual([{ x402: {} }]);
     expect(oa.paths["/v1/signal/{coin}"].get["x-payment-info"].xrp_price).toEqual({ mode: "fixed", currency: "XRP", amount: "0.005" });
     const coins = await (await get("/v1/coins")).json();
-    expect(coins.count).toBe(13);
+    expect(coins.count).toBe(50);
     expect(coins.coins.map((c: any) => c.symbol)).toContain("ZBCN");
   });
 

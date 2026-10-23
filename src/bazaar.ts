@@ -79,7 +79,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
     description:
       "Use this when you need a fast, mechanical buy/sell read on one crypto coin before acting: overall label and score, " +
       "1h/4h/1d labels and the indicator breakdown (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) with price context. " +
-      "BTC, ETH, SOL and the other coins in GET /v1/coins. " + FAIR_USE + " JSON.",
+      "50 top coins (BTC, ETH, SOL... see GET /v1/coins), computed live; 1h refreshed about every 13 minutes. " + FAIR_USE + " JSON.",
     routeTemplate: "/v1/signal/:coin",
     pathParam: COIN_PARAM,
     example: {

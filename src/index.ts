@@ -3,6 +3,9 @@ import { createApp, type App } from "./app";
 import type { Env } from "./config";
 import type { CatalogJob } from "./trust/catalog_service";
 
+/** Must match the one-minute entry in wrangler.toml [triggers] crons. */
+const LIVE_CRON = "* * * * *";
+
 // One app per isolate (keeps the data cache and replay guard warm between requests).
 let app: App | undefined;
 let appEnv: Env | undefined;
@@ -61,8 +64,13 @@ export default {
     }
     return res;
   },
-  /** Cron trigger (every 30 min): free, unpaid 402-quote probes of the trust allowlist; schedules catalog jobs. */
-  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+  /** Cron triggers. LIVE_CRON (every minute): live signals for the stalest slice of the top-50 coins.
+   * Every 30 min: free, unpaid 402-quote probes of the trust allowlist; schedules catalog jobs. */
+  async scheduled(event: { cron?: string }, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+    if (event?.cron === LIVE_CRON) {
+      ctx.waitUntil(appFor(env).liveRefresh().catch((e) => console.error(JSON.stringify({ event: "live_refresh_error", error: String(e) }))));
+      return;
+    }
     ctx.waitUntil(appFor(env).scheduled().catch((e) => console.error(JSON.stringify({ event: "trust_probe_error", error: String(e) }))));
   },
   /** Queue consumer (lumi-trust-jobs, batch size 1): one catalog ingest page or one quote-check slice per invocation. */

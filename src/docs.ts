@@ -6,7 +6,7 @@ import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { BAZAAR_ROUTES } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.10.0";
+export const VERSION = "0.11.0";
 
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
@@ -156,16 +156,20 @@ export function wellKnownX402(cfg: Config, base: string) {
   };
 }
 
+/** Lumi's site coins (full coverage); the rest of the top-50 universe is signals-only (group "top50"). */
+const siteOnly = (coins: CoinRef[]) => coins.filter((c) => c.group !== "top50");
+
 export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   const coinParam = {
     name: "coin",
     in: "path",
     required: true,
-    description: "Ticker or CoinGecko id (case-insensitive)",
+    description: "Ticker or CoinGecko id (case-insensitive). Signals: any coin in GET /v1/coins.",
     schema: { type: "string", enum: coins.map((c) => c.symbol) },
     example: "btc",
     examples: { btc: { value: "btc" }, eth: { value: "eth" } },
   };
+  const levelsCoinParam = { ...coinParam, description: "Ticker or CoinGecko id (case-insensitive). Levels cover Lumi's watchlist and majors.", schema: { type: "string", enum: siteOnly(coins).map((c) => c.symbol) } };
   const paths: Record<string, unknown> = {
     "/v1/coins": { get: { summary: "List supported coins (free)", security: [], responses: { "200": { description: "OK" } } } },
     "/v1/samples": { get: { summary: "Free truncated samples of every paid product (labelled SAMPLE)", security: [], responses: { "200": { description: "OK" } } } },
@@ -179,7 +183,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         summary: e.name,
         description: e.summary,
         parameters: e.template.includes("{coin}")
-          ? [coinParam]
+          ? [e.route === "levels" ? levelsCoinParam : coinParam]
           : e.template.includes("{id}")
           ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab", examples: { printmoneylab: { value: "printmoneylab" } } }]
           : e.route === "brief" || e.route === "institutional"
@@ -253,7 +257,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         `plus free x402 vendor lookups. No API key: pay a few cents per call in ${settledIn(cfg)} via x402. ` +
         `Not charged on bad input or stale data; every response carries as_of, data_age_seconds, next_update and stale_after.`,
       "x-guidance":
-        `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
+        `Use this API when you need a current technical read or trade-idea context. Signals cover ${coins.length} top coins (computed live, 1h refreshed about every 13 minutes); levels, slate and trades cover ${siteOnly(coins).map((c) => c.symbol).join(", ")}. ` +
         "GET /v1/coins (free) lists supported coins; GET /v1/samples (free) previews every paid product, truncated. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
         "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
@@ -446,7 +450,7 @@ export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const maxDrops = Math.max(...Object.values(cfg.pricesDrops).map(Number));
   return `---
 name: lumi-api
-description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas and history, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar, daily Institutional & Policy Brief) for ${coins.length} coins, paid in ${settledIn(cfg)} via x402. Use when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}.
+description: Pay-per-call crypto market reads from Lumi Trades (daily market brief, signals, support/resistance levels, paper-trade ideas and history, BTC + macro backdrop, yen carry-trade watch, Fear & Greed sentiment, events calendar, daily Institutional & Policy Brief) paid in ${settledIn(cfg)} via x402. Signals for ${coins.length} top coins, computed live; levels and trade ideas for ${siteOnly(coins).map((c) => c.symbol).join(", ")}. Use when you need a current technical read or trade-idea context.
 ---
 
 # Lumi API (agent guide)
@@ -464,8 +468,10 @@ A2A agent card: ${base}/.well-known/agent-card.json. MCP: ${base}/mcp.
 |---|---|---|
 ${rows}
 
-\`{coin}\` is a ticker or CoinGecko id, case-insensitive: ${coins.map((c) => c.symbol).join(", ")}.
-Unknown coins return 404 **before** any payment is requested.
+\`{coin}\` is a ticker or CoinGecko id, case-insensitive.
+- \`/v1/signal/{coin}\` (${coins.length} coins, computed live from public exchange candles; 1h/4h refreshed about every 13 minutes, 1d every few hours): ${coins.map((c) => c.symbol).join(", ")}.
+- \`/v1/levels/{coin}\` (Lumi's watchlist and majors): ${siteOnly(coins).map((c) => c.symbol).join(", ")}.
+Unknown coins (or levels for an uncovered coin) return 404 **before** any payment is requested.
 
 Which one to call:
 - Need "what's going on in crypto today" in one call? \`GET /v1/brief\` (add \`?format=md\` for ready-to-post markdown).
@@ -474,7 +480,7 @@ Which one to call:
 - What are central banks, regulators and big banks doing, and what does it mean for XRP, XLM, XDC, QNT, AXL, HBAR? \`GET /v1/institutional\`
   (daily, sourced; each link labelled \`confirmed\`, \`indirect_alignment\` (Lumi's analysis) or \`context\`; \`?format=md\` for markdown).
 - Every past paper-trade idea as a raw list? \`GET /v1/trades\`. Current ideas only? \`GET /v1/slate\`.
-- One coin? \`GET /v1/signal/{coin}\` + \`GET /v1/levels/{coin}\`.
+- One coin? \`GET /v1/signal/{coin}\` (any of ${coins.length}) + \`GET /v1/levels/{coin}\` (watchlist and majors).
 - Checking any x402 seller before you pay it? \`GET /v1/trust/vendors?url=<resource>\` (or \`?domain=\`, \`?payTo=\`) is free and covers the whole CDP Bazaar catalog. For curated vendors, \`GET /v1/trust/vendors/{id}\` is the free summary; \`GET /v1/trust/vendors/{id}/report\` ($0.02)
   is the full observation history (every quote check and paid test-buy with tx hashes, latency stats and trend, uptime %, verified reports, replies).
   Unknown vendor: 404; no observation in the last 48 h: 503. Both before any 402, never charged.
@@ -816,7 +822,7 @@ ${quickHtml}
 <h2>What you can buy</h2>
 <div class="tbl"><table><thead><tr><th>Endpoint</th><th>USD</th><th>XRP</th><th>What you get</th></tr></thead><tbody>
 ${rows}</tbody></table></div>
-<p class="note">Coins: ${esc(coins.map((c) => c.symbol).join(", "))}. Every response carries <code>as_of</code>, <code>data_age_seconds</code>, <code>next_update</code> and <code>stale_after</code> (ISO UTC). You only pay when you get data: not charged on bad input (4xx before any quote) or stale data (503 "Not charged." past <code>stale_after</code>).</p>
+<p class="note">Signals: ${coins.length} coins, computed live (1h refreshed about every 13 minutes): ${esc(coins.map((c) => c.symbol).join(", "))}. Levels, slate and trades: ${esc(siteOnly(coins).map((c) => c.symbol).join(", "))}. Every response carries <code>as_of</code>, <code>data_age_seconds</code>, <code>next_update</code> and <code>stale_after</code> (ISO UTC). You only pay when you get data: not charged on bad input (4xx before any quote) or stale data (503 "Not charged." past <code>stale_after</code>).</p>
 ${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
 <h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
 <p class="note">Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}

@@ -30,7 +30,7 @@ describe("A2A agent card", () => {
     expect(await (await get("/.well-known/agent.json")).json()).toEqual(card);
     expect(card).toMatchObject({
       name: "Lumi Trades",
-      version: "0.10.0",
+      version: "0.11.0",
       provider: { organization: "Lumi Trades", url: "https://lumitrades.io" },
       documentationUrl: `${BASE}/skill.md`,
       capabilities: { streaming: false, pushNotifications: false },
@@ -66,8 +66,8 @@ describe("A2A JSON-RPC", () => {
     const m = r.body.result.message;
     expect(m).toMatchObject({ role: "ROLE_AGENT", metadata: { skill: "coins" } });
     expect(m.contextId).toBeTruthy();
-    expect(m.parts[0].text).toMatch(/13 coins/);
-    expect(m.parts[1].data.coins).toHaveLength(13);
+    expect(m.parts[0].text).toMatch(/50 coins/);
+    expect(m.parts[1].data.coins).toHaveLength(50);
     const cat = await rpc(send1([{ data: { skill: "catalog" } }]));
     expect(cat.body.result.message.parts[1].data.networks.map((n: any) => n.network)).toEqual(["eip155:84532", "xrpl:1"]);
     expect(fac.calls).toHaveLength(0);

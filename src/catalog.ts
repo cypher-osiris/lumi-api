@@ -26,7 +26,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     path: "/v1/signal/{coin}",
     template: "/v1/signal/{coin}",
     summary:
-      "Use this when you need a fast, mechanical buy/sell read on one coin before acting: overall label + score, per-timeframe (1h/4h/1d) labels and an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume). " + NOT_CHARGED,
+      "Use this when you need a fast, mechanical buy/sell read on one coin before acting: overall label + score, per-timeframe (1h/4h/1d) labels and an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume). 50 top coins (GET /v1/coins), computed live from public exchange candles; 1h refreshed about every 13 minutes. " + NOT_CHARGED,
     example: "/v1/signal/BTC",
   },
   {

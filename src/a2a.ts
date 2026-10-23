@@ -77,7 +77,7 @@ const SKILLS: SkillDef[] = [
 
 const FREE_DESCRIPTIONS: Record<string, string> = {
   catalog: "Lists every Lumi endpoint with live prices on every payment network (XRP Ledger, Base), the MCP and A2A endpoints, and the no-charge-when-stale guarantee.",
-  coins: "The 13 coins Lumi covers (tickers and CoinGecko ids).",
+  coins: "The 50 coins Lumi covers (tickers and CoinGecko ids): signals for all, levels for the watchlist and majors.",
   vendor_trust:
     "Check an x402 seller before paying it: {\"url\":\"...\"}, {\"domain\":\"...\"} or {\"payTo\":\"...\"} (case-insensitive) looks it up in the full CDP x402 Bazaar catalog (free quote checks of listings on a rotating schedule: 'quote-verified, low confidence'; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys ('purchase-verified'). With no arguments: curated XRPL vendor observations; {\"vendor_id\":\"...\"} for one vendor's evidence. Observations, not ratings; no match is not a negative signal.",
   samples: "Free, clearly labelled SAMPLE previews of every paid product (truncated, up to 10 minutes old), with the USD price of each. Use it to see the output shape before paying.",

@@ -12,7 +12,7 @@ import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
 import { indexDoc, indexHtml, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
 import { agentCard, handleA2a, A2A_CORS } from "./a2a";
 import {
-  coinList, resolveCoin, signalView, levelsView, slateView, marketView, DISCLAIMER, SOURCE, type CoinRef,
+  coinList, resolveCoin, signalView, liveSignalView, levelsView, slateView, marketView, DISCLAIMER, SOURCE, type CoinRef,
 } from "./views";
 import { staleInputs, hasContent, fileMeta, withMeta, isoTimestamps, metaFrom, nextHalfHour } from "./freshness";
 import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
@@ -27,6 +27,7 @@ import { createCatalog, type Catalog, type CatalogJob, type QueueLike } from "./
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { applyRate, createXrpPricer, type XrpPricer } from "./pricing";
 import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
+import { D1LiveStore, MemoryLiveStore, refreshLive, isFresh, LIVE_UNIVERSE, LIVE_MAX_AGE_MS, LIVE_CYCLE_MS, type LiveStore } from "./live";
 import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
 export interface AppOptions {
@@ -44,6 +45,8 @@ export interface AppOptions {
   queue?: QueueLike;
   /** Private request log override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   trafficStore?: TrafficStore;
+  /** Live signal store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory (empty: site files are used). */
+  liveStore?: LiveStore;
 }
 
 /** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
@@ -68,6 +71,9 @@ export interface App {
   fetch(request: Request, ctx?: WaitUntil): Promise<Response>;
   /** Cron entry: free, unpaid 402-quote probes of the trust allowlist + the x402 catalog slice. */
   scheduled(): Promise<{ probes: unknown; catalog: unknown }>;
+  /** One-minute cron: recompute live signals for the stalest slice of the top-50 universe. */
+  liveRefresh(): Promise<unknown>;
+  live: LiveStore;
   /** Queue consumer: one catalog ingest page or quote-check batch. */
   queue(job: CatalogJob): Promise<unknown>;
   config: Config;
@@ -130,6 +136,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const sales: SalesStore = opts.salesStore ?? (env.TRUST_DB ? new D1SalesStore(env.TRUST_DB) : new MemorySalesStore());
   const traffic: TrafficStore = opts.trafficStore ?? (env.TRUST_DB ? new D1TrafficStore(env.TRUST_DB) : new MemoryTrafficStore());
   const trafficOn = env.TRAFFIC_LOG !== "0";
+  const live: LiveStore = opts.liveStore ?? (env.TRUST_DB ? new D1LiveStore(env.TRUST_DB) : new MemoryLiveStore());
   const alertCfg: AlertConfig = {
     webhookUrl: env.SALES_WEBHOOK_URL || undefined,
     email: env.SALES_ALERT_EMAIL || undefined,
@@ -230,12 +237,19 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     return body;
   }
 
-  async function coins(): Promise<CoinRef[]> {
+  /** Lumi's site coins (coins.json): full coverage including levels, slate and trades. */
+  async function siteCoins(): Promise<CoinRef[]> {
     try {
       return coinList(await data.get("coins"));
     } catch {
       return coinList(undefined);
     }
+  }
+  /** Site coins first, then the rest of the live top-50 universe (signals only). */
+  async function coins(): Promise<CoinRef[]> {
+    const site = await siteCoins();
+    const have = new Set(site.map((c) => c.id));
+    return [...site, ...LIVE_UNIVERSE.filter((c) => !have.has(c.id)).map((c) => ({ id: c.id, symbol: c.symbol, name: c.name, group: "top50" }))];
   }
 
   /**
@@ -256,6 +270,21 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         };
       }
     }
+    // Signals: computed live (refreshed about every 13 min) when a fresh row exists; else the site file (site coins only).
+    if (route === "signal" && coin) {
+      const t0 = now();
+      const row = await live.get(coin.id).catch(() => null);
+      if (isFresh(row, t0)) {
+        const meta = metaFrom(row.computed_at, row.computed_at + LIVE_MAX_AGE_MS, row.computed_at + LIVE_CYCLE_MS, t0);
+        return { ok: true, route, coin, body: isoTimestamps(withMeta(liveSignalView(coin, row) as Record<string, unknown>, meta)) };
+      }
+      if (!(await siteCoins()).some((c) => c.id === coin!.id)) {
+        return { ok: false, status: 503, error: { error: "data_stale", detail: `the live ${coin.symbol} signal is not fresh right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "120" } };
+      }
+    }
+    if (route === "levels" && coin && !(await siteCoins()).some((c) => c.id === coin!.id)) {
+      return { ok: false, status: 404, error: { error: "no_data_for_coin", coin: coin.symbol, detail: "levels cover Lumi's watchlist and majors; signals cover every coin in GET /v1/coins", levels_coins: (await siteCoins()).map((c) => c.symbol), note: "Not charged." } };
+    }
     // Load (cached) data before asking for money, so a payment is never
     // settled when the upstream data is unavailable.
     let loaded: Record<string, unknown>;
@@ -271,7 +300,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
     // Optional inputs that are stale are dropped (their fields are omitted), never served as current.
     for (const f of OPTIONAL[route] ?? []) if (staleInputs(loaded, [f], t, config.dataMaxAgeHours).length) delete loaded[f];
-    const list = await coins();
+    const list = await siteCoins();
     const body = buildBody(route, coin, loaded, list, t);
     if (body && !hasContent(route, body)) {
       return { ok: false, status: 503, error: { error: "data_unavailable", detail: `the ${route} data is empty right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
@@ -490,15 +519,17 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         return json(200, await samplesDoc(base), { "Cache-Control": "public, max-age=600" });
       case "/v1/coins": {
         const list = await coins();
+        const site = new Set((await siteCoins()).map((c) => c.id));
         return json(200, {
           kind: "coins",
           timestamp: new Date().toISOString(),
           source: SOURCE,
           count: list.length,
+          coverage: "signal: every coin (computed live from public 1h/1d exchange candles, refreshed about every 13 minutes). levels, slate and trades: Lumi's watchlist and majors (group watchlist or majors).",
           coins: list.map((c) => ({
             ...c,
             signal: `${base}/v1/signal/${c.symbol}`,
-            levels: `${base}/v1/levels/${c.symbol}`,
+            levels: site.has(c.id) ? `${base}/v1/levels/${c.symbol}` : null,
           })),
           disclaimer: DISCLAIMER,
         });
@@ -636,6 +667,12 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         .then((row) => traffic.insert(row))
         .catch((e) => console.error(JSON.stringify({ event: "traffic_log_error", error: String(e).slice(0, 200) })));
       if (ctx) ctx.waitUntil(p);
+    },
+    live,
+    async liveRefresh() {
+      const r = await refreshLive(live, doFetch, now());
+      deps.log?.({ event: "live_refresh", ...r });
+      return r;
     },
     async scheduled() {
       const prune = traffic.prune(now() - TRAFFIC_RETENTION_DAYS * 86_400_000).catch(() => {});
