@@ -26,6 +26,7 @@ import { SEED_OBSERVATIONS } from "./trust/seed";
 import { D1CatalogStore, MemoryCatalogStore, type CatalogStore } from "./trust/catalog";
 import { createCatalog, buyCandidate, type Catalog, type CatalogJob, type QueueLike } from "./trust/catalog_service";
 import { D1EvidenceStore, MemoryEvidenceStore, type EvidenceStore } from "./trust/evidence";
+import { D1ReceiptStore, MemoryReceiptStore, type ReceiptStore } from "./trust/receipts";
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { applyRate, createXrpPricer, type XrpPricer } from "./pricing";
 import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
@@ -49,6 +50,7 @@ export interface AppOptions {
   catalogStore?: CatalogStore;
   /** Free-evidence store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   evidenceStore?: EvidenceStore;
+  receiptStore?: ReceiptStore;
   /** Queue override (tests). Default: env.TRUST_QUEUE; absent = jobs run inline. */
   queue?: QueueLike;
   /** Private request log override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
@@ -208,6 +210,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     extraSources: [{ name: "lumitrades", url: `${config.dataBaseUrl}/prices.json`, pick: (j: any) => j?.assets?.ripple?.price ?? j?.ripple?.price ?? j?.XRP?.price }],
   });
   const trustStore: TrustStore = opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS));
+  const receiptStore: ReceiptStore = opts.receiptStore ?? (env.TRUST_DB ? new D1ReceiptStore(env.TRUST_DB) : new MemoryReceiptStore());
+  const evmBuyers = split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS;
   const catalog = createCatalog({
     store: catalogStore,
     curatedBuys: async (since) => (await Promise.all(VENDORS.map((v) => trustStore.observations(v.id, since)))).flat(),
@@ -217,6 +221,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     queue: opts.queue ?? (env.TRUST_QUEUE as QueueLike | undefined),
     xrplRpc,
     baseRpc,
+    receipts: receiptStore,
     evidence: opts.evidenceStore ?? (env.TRUST_DB ? new D1EvidenceStore(env.TRUST_DB) : new MemoryEvidenceStore()),
     baseRpcs: split(env.BASE_INDEX_RPCS).length ? split(env.BASE_INDEX_RPCS) : ["https://base-rpc.publicnode.com", "https://base.drpc.org", "https://gateway.tenderly.co/public/base"],
     buyers: { xrpl: xrplBuyers, evm: split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS },
@@ -244,6 +249,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     catalog,
     cache: { get: (k) => catalogStore.getMeta(k), set: (k, v) => catalogStore.setMeta(k, v) },
     publicBase: config.publicBaseUrl || undefined,
+    receipts: receiptStore,
+    evmBuyers,
   });
 
   /** Free samples of every paid product, rebuilt at most every 10 minutes per isolate. */

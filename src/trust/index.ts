@@ -14,6 +14,7 @@ import { isOwnerKey } from "../mcp";
 import { scrubText } from "../sanitize";
 import { VENDORS, vendorById, type Vendor, type VendorEndpoint } from "../vendors";
 import type { Catalog } from "./catalog_service";
+import { receiptMatchesBuy, receiptVerifyDoc, verifyReceipt, type Receipt, type ReceiptStore } from "./receipts";
 import type { LookupQuery } from "./catalog";
 import type { ObservationRow, ProbeRow, ProbeSummary, ReportRow, TrustStore } from "./store";
 import {
@@ -54,7 +55,13 @@ export interface TrustDeps {
   cache?: { get(k: string): Promise<string | null>; set(k: string, v: string): Promise<void> };
   /** Base URL used when the cron precomputes the vendors index. */
   publicBase?: string;
+  /** Signed test-buy receipts (verified + stored here; signed on the operator box only). */
+  receipts?: ReceiptStore;
+  /** EVM addresses whose payments are Lumi's own test-buys (Base receipts). */
+  evmBuyers?: string[];
 }
+
+export const RECEIPT_FREE_LIMITS = { perMinute: 10, perDay: 100, globalPerDay: 5_000 } as const;
 
 /** The precomputed vendors index is served while younger than this (rebuilt by the 30-minute cron and after trust writes). */
 export const VENDORS_INDEX_TTL_MS = 40 * 60_000;
@@ -309,8 +316,8 @@ export function methodologyDoc(base: string) {
     url: `${base}/v1/trust/methodology`,
     label: LABEL,
     what_is_measured: [
-      "Free probes: every 30 minutes Lumi sends one unpaid request to each listed endpoint and records whether it answers with a valid x402 v2 402 quote that offers an XRPL (xrpl:0) option paying an address listed for that vendor, the quoted price and asset, whether the quote carries a sourceTag, and the response time. Probes never send a payment.",
-      "Paid test-buys: Lumi buys one call per vendor per day from its own XRPL wallet (hard caps: 0.15 RLUSD + 0.05 XRP per day in total, and no endpoint priced above 0.05). Each record (in the paid vendor report; the free summary shows only date, HTTP status and data yes/no) shows the amount, asset, ledger tx hash, HTTP status, whether the response contained data, and latency. Every test-buy tx is checked on the XRPL ledger before it is stored.",
+      "Free probes: every 30 minutes Lumi sends one unpaid request to each curated vendor endpoint and records whether it answers with a valid x402 v2 402 quote that offers an XRPL (xrpl:0) option paying an address listed for that vendor (curated list; Bazaar catalog listings get their own quote checks, see x402_catalog), the quoted price and asset, whether the quote carries a sourceTag, and the response time. Probes never send a payment.",
+      "Paid test-buys, by chain. Curated vendor list (/v1/trust/vendors): bought on XRPL (xrpl:0) in RLUSD or XRP from Lumi's XRPL wallet, one call per vendor per day (hard caps: 0.15 RLUSD + 0.05 XRP per day in total, no endpoint priced above 0.05). CDP Bazaar catalog listings: bought in USDC on Base (eip155:8453) from Lumi's Base buyer wallet, through the facilitator the seller's own 402 names, one buy per seller domain plus queued re-buys (no listing priced above $0.05; re-buys capped at $0.10 per day). Catalog listings are not test-bought on XRPL and curated vendors are not test-bought on Base. Every test-buy tx is checked on-chain (successful, sent by a Lumi wallet, received by a listed payTo) before it is stored. Each record (in the paid vendor report or paid trust/check; free surfaces show only date, HTTP status and data yes/no) shows the amount, asset, tx hash, HTTP status, whether the response contained data, latency, and a signed receipt (see receipts).",
       "Agent reports: any agent that paid a listed vendor can POST /v1/reports. A report counts only if the payment is validated on-ledger (tesSUCCESS, sent by the reporter, delivered to a pay-to address listed for that vendor, within the last 7 days) AND the payer signs the challenge `lumi-report:<network>:<tx_hash>`. Unverified submissions are stored privately for abuse review and are never shown or scored.",
     ],
     x402_catalog: {
@@ -365,6 +372,13 @@ export function methodologyDoc(base: string) {
         response_excerpt: "optional, up to 4000 chars; kept private",
       },
       limits: "20 per IP per day, 5 per minute; one verified report per tx",
+    },
+    receipts: {
+      format: "counterparty_delivery_receipt v0.1 (proposed ARS evidence type): seller {vendor_id, endpoint, domain, pay_to}, payment {network, asset, amount, tx_hash, payer, ledger_result, ledger_index|block_number}, delivery {observed_at, http_status, data_returned, outcome, latency_ms}, issuer {methodology_url}, receipt_hash (SHA-256 of the canonical JSON body) and signer.",
+      signing: "Signed by the wallet that paid: message `lumi-receipt:<network>:<tx_hash>:<receipt_hash>`; XRPL via ripple-keypairs (UTF-8 hex of the message, with public_key), Base via EIP-191 personal_sign. Signed on Lumi's operator box; the API never holds wallet keys.",
+      coverage: "One per stored test-buy, curated (XRPL) and catalog (Base); earlier buys were backfilled (issued_at is the signing time, delivery.observed_at the buy time). Lumi's test-buys of its own endpoints are not counterparty evidence and get no receipt.",
+      served: "Paid only: purchases[].receipt in /v1/trust/check and paid_test_buys.history[].receipt in the vendor report. Free lookups stay answer-only.",
+      verify: `GET ${base}/v1/trust/receipts/verify (how-to, free) and POST ${base}/v1/trust/receipts/verify with a receipt (free; ?ledger=1 also checks the payment on-chain).`,
     },
     tips: { endpoint: `POST ${base}/v1/tips`, privacy: "Stored privately. Never shown, published, or returned by any endpoint, MCP tool or A2A skill." },
     self: "Lumi does not list or score its own API.",
@@ -578,6 +592,7 @@ export function createTrust(deps: TrustDeps): Trust {
     ]);
     const last = Math.max(probes[0]?.ts ?? 0, obs[0]?.ts ?? 0);
     if (!last || last < t - REPORT_FRESH_MS) return { ok: false, reason: "stale", last_observed_at: last ? iso(last) : null };
+    const rcpts: Map<string, Receipt> = deps.receipts ? await deps.receipts.byTx(obs.map((o) => o.tx_hash)).catch(() => new Map()) : new Map();
     const g = await gather(v);
 
     const windows = [1, 7, 30, 90].map((d) => {
@@ -713,7 +728,8 @@ export function createTrust(deps: TrustDeps): Trust {
         spent: [...spent.entries()].map(([asset, amount]) => ({ asset, amount: String(Math.round(amount * 1e6) / 1e6) })),
         http_statuses: Object.fromEntries(statuses),
         latency: latencyStats(obs.filter((o) => o.latency_ms != null).map((o) => o.latency_ms!)),
-        history: obs.map((o) => ({ ...obsView(o), delivered: o.data_returned ? "yes" : "no" })),
+        history: obs.map((o) => ({ ...obsView(o), delivered: o.data_returned ? "yes" : "no", ...(rcpts.has(o.tx_hash) ? { receipt: rcpts.get(o.tx_hash) } : {}) })),
+        receipts: { signed: obs.filter((o) => rcpts.has(o.tx_hash)).length, of: obs.length, format: "counterparty_delivery_receipt v0.1, signed by the paying wallet", verify: `${base}/v1/trust/receipts/verify` },
       },
       quote_checks: {
         about: "Every free probe in the retention window, newest first. endpoint is an index into endpoints[]. valid_quote = a valid x402 402 quote with an XRPL option paying a listed address.",
@@ -1068,6 +1084,81 @@ export function createTrust(deps: TrustDeps): Trust {
     return { kind: "trust_lookup", query: q, observed: false, note: "Catalog lookups are unavailable on this deployment." };
   }
 
+  // ---------------- signed test-buy receipts
+
+  async function receiptRoutes(request: Request, path: string, base: string): Promise<Response | null> {
+    const method = request.method;
+    if (path === "/v1/trust/receipts/verify") {
+      if (method === "GET" || method === "HEAD") return json(200, receiptVerifyDoc(base), { "Cache-Control": "public, max-age=3600" });
+      if (method !== "POST") return json(405, { error: "method_not_allowed" }, { Allow: "GET, POST, OPTIONS" });
+      const lim = await limited("receipt", await ipHash(request), RECEIPT_FREE_LIMITS.perMinute, RECEIPT_FREE_LIMITS.perDay, RECEIPT_FREE_LIMITS.globalPerDay);
+      if (lim) return lim;
+      let r: any;
+      try {
+        const text = await request.text();
+        if (text.length > MAX_BODY) return json(413, { error: "body_too_large", max_bytes: MAX_BODY });
+        r = JSON.parse(text);
+      } catch { return json(400, { error: "invalid_json" }); }
+      if (r && typeof r === "object" && r.receipt && !r.type) r = r.receipt;
+      const check = await verifyReceipt(r);
+      const out: Record<string, unknown> = { kind: "receipt_verification_result", ...check };
+      if (check.hash_ok && deps.receipts) {
+        const known = (await deps.receipts.byTx([String(r.payment.tx_hash)]).catch(() => new Map())).get(String(r.payment.tx_hash));
+        out.issued_by_lumi = known ? known.receipt_hash === r.receipt_hash : false;
+      }
+      if (new URL(request.url).searchParams.get("ledger") === "1" && check.ok) {
+        const p = r.payment;
+        const look = p.network === "xrpl:0" ? await lookupXrplPayment(deps.fetch, deps.xrplRpc, String(p.tx_hash)) : await lookupBaseUsdc(deps.fetch, deps.baseRpc, String(p.tx_hash));
+        if (!look.ok) out.ledger = { ok: false, reason: look.reason };
+        else {
+          const pay = look.payments.find((x) => x.from.toLowerCase() === String(p.payer).toLowerCase() && x.to.toLowerCase() === String(r.seller.pay_to).toLowerCase());
+          const errs: string[] = [];
+          if (!pay) errs.push("no_transfer_from_payer_to_pay_to");
+          else {
+            if (Math.abs(Number(pay.amount) - Number(p.amount)) > 1e-9) errs.push("amount_mismatch");
+            if (pay.asset !== p.asset) errs.push("asset_mismatch");
+            if (p.network === "xrpl:0" && pay.signingPubKey && r.signer.public_key && pay.signingPubKey.toUpperCase() !== String(r.signer.public_key).toUpperCase()) errs.push("signing_key_differs_from_tx");
+          }
+          out.ledger = { ok: !errs.length, errors: errs, checked_at: iso(now()) };
+        }
+      }
+      out.note = "Hash and signature prove the paying wallet signed this receipt. delivery.* is the tester's signed statement; it cannot be proven on-chain.";
+      return json(200, out, { "Cache-Control": "no-store" });
+    }
+    if (!deps.receipts) return json(404, { error: "not_found" });
+    if (path === "/v1/trust/receipts/pending" && (method === "GET" || method === "HEAD")) {
+      if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+      const n = Number(new URL(request.url).searchParams.get("limit") ?? 100);
+      return json(200, { pending: await deps.receipts.pending(Number.isFinite(n) ? n : 100), stored: await deps.receipts.count() }, { "Cache-Control": "no-store" });
+    }
+    if (path === "/v1/trust/receipts" && method === "POST") {
+      if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+      let b: any;
+      try { b = await request.json(); } catch { return json(400, { error: "invalid_json" }); }
+      const list: any[] = Array.isArray(b?.receipts) ? b.receipts.slice(0, 5) : [];
+      const xr = new Set(deps.buyers), ev = new Set((deps.evmBuyers ?? []).map((x) => x.toLowerCase()));
+      const results: Record<string, unknown>[] = [];
+      const ok: { tx_hash: string; network: string; kind: "vendor" | "catalog"; ref: string; receipt: Receipt }[] = [];
+      for (const r of list) {
+        const c = await verifyReceipt(r);
+        const tx = String(r?.payment?.tx_hash ?? "");
+        if (!c.ok) { results.push({ tx_hash: tx, stored: false, errors: c.errors }); continue; }
+        const payer = String(r.payment.payer);
+        if (!(r.payment.network === "xrpl:0" ? xr.has(payer) : ev.has(payer.toLowerCase()))) { results.push({ tx_hash: tx, stored: false, errors: ["payer_not_lumi_wallet"] }); continue; }
+        const buy = await deps.receipts.buy(tx);
+        if (!buy) { results.push({ tx_hash: tx, stored: false, errors: ["unknown_test_buy"] }); continue; }
+        const mm = receiptMatchesBuy(r, buy);
+        if (mm) { results.push({ tx_hash: tx, stored: false, errors: [mm] }); continue; }
+        ok.push({ tx_hash: tx, network: buy.network, kind: buy.kind, ref: buy.ref, receipt: r });
+        results.push({ tx_hash: tx, stored: true });
+      }
+      await deps.receipts.put(ok);
+      deps.log({ event: "receipts_stored", n: ok.length, rejected: list.length - ok.length });
+      return json(200, { stored: ok.length, results });
+    }
+    return null;
+  }
+
   async function handle(request: Request, path: string, base: string): Promise<Response | null> {
     const r = await handleInner(request, path, base);
     // A successful trust write (verified report/observation/reply, manual probe) can change scores: drop the index.
@@ -1083,6 +1174,10 @@ export function createTrust(deps: TrustDeps): Trust {
         if (lim) return lim;
       }
       const r = await deps.catalog.handle(request, new URL(request.url), base);
+      if (r) return r;
+    }
+    if (path.startsWith("/v1/trust/receipts")) {
+      const r = await receiptRoutes(request, path, base);
       if (r) return r;
     }
     if (method === "GET" || method === "HEAD") {

@@ -1,4 +1,5 @@
 /** Catalog orchestration: cron scheduling, queue consumer, lookups and owner-posted purchase evidence. */
+import type { Receipt, ReceiptStore } from "./receipts";
 import type { D1Like } from "../config";
 import { VENDORS } from "../vendors";
 import {
@@ -8,7 +9,7 @@ import {
 } from "./catalog";
 import { lookupBaseUsdc, lookupXrplPayment, EVM_TX_RE, XRPL_TX_RE, XRPL_ADDR_RE, EVM_ADDR_RE } from "./verify";
 import {
-  type EvidenceStore, type PayerAgg, type XrplCensusDoc, BASE_NET, XRPL_NET, LUMI_WALLETS, KNOWN_TESTERS, HUB_MIN, CENSUS_FRESH_MS, BASE_WINDOW_MAX, BASE_GROUP,
+  type EvidenceStore, type PayerAgg, type XrplCensusDoc, BASE_NET, XRPL_NET, LUMI_WALLETS, KNOWN_TESTERS, HUB_MIN, CENSUS_FRESH_MS, BASE_WINDOW_MAX, BASE_GROUP, BASE_BLOCK_MS,
   classifyPayers, xrplCensus, baseHead, baseLogs, baseFunder, vet402View, parseVet402, VET402,
 } from "./evidence";
 
@@ -39,6 +40,8 @@ export interface CatalogDeps {
   baseRpc: string;
   buyers: { xrpl: string[]; evm: string[] };
   self: SelfEntry;
+  /** Signed test-buy receipts, attached to purchases in paid lookups (trust/check). */
+  receipts?: ReceiptStore;
   isOwner(request: Request): Promise<boolean>;
   /** Lumi's own test-buys of the curated XRPL vendor list since `since` (trust store observations). */
   curatedBuys?: (since: number) => Promise<CuratedBuy[]>;
@@ -431,7 +434,7 @@ export function createCatalog(deps: CatalogDeps) {
         const payers: PayerAgg[] = rows.map((r) => ({ payer: r.payer, funder: fm.get(r.payer)?.funder ?? null, funder_known: fm.has(r.payer), n: r.n, last_ts: r.last_ts, last_tx: r.last_tx, usd: r.units / 1e6 }));
         out.push(censusView(BASE_NET, a, payers, { seller: seller.map((x) => x.toLowerCase()), lumi: lumiWallets("evm").map((x) => x.toLowerCase()), testers: ts.evm, hubs }, {
           source: "Base USDC Transfer logs into this payTo (Lumi forward index, public RPCs)",
-          as_of: iso(idx.last_run), window: { from: iso(idx.started_at), to: iso(idx.last_run), note: "forward-only from the index start; blocks skipped under load are listed in the catalog summary" },
+          as_of: iso(idx.last_run), window: { from: iso(idx.last_run - (idx.cursor - idx.started_block) * BASE_BLOCK_MS), to: iso(idx.last_run), note: "forward-only from the index start; blocks skipped under load are listed in the catalog summary" },
         }, free));
       }
     }
@@ -596,6 +599,13 @@ export function createCatalog(deps: CatalogDeps) {
         kind: "trust_lookup", query, observed: false, generated_at: iso(t),
         note: "Lumi has no observations for this URL, domain or payTo. It is not in the CDP x402 Bazaar catalog Lumi ingests (refreshed daily) nor in Lumi's curated list. No observation is not a negative signal.",
       };
+    }
+    if (!free && deps.receipts) {
+      try {
+        const lists = [...entries, ...curated].map((e: any) => (Array.isArray(e.purchases) ? e.purchases : [])) as any[][];
+        const rc: Map<string, Receipt> = await deps.receipts.byTx(lists.flat().map((x) => x.tx_hash));
+        for (const l of lists) for (const x of l) { const r = rc.get(x.tx_hash); if (r) x.receipt = r; }
+      } catch (e) { deps.log({ event: "receipts_error", error: String(e) }); }
     }
     const tiers: Record<string, number> = {};
     for (const e of entries) tiers[e.tier] = (tiers[e.tier] ?? 0) + 1;

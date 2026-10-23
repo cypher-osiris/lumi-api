@@ -112,6 +112,8 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/v1/trust/vendors/{id}/report", summary: "Paid ($0.02, x402): full observation history for one vendor; listed under paid_endpoints" },
       { method: "GET", path: "/v1/trust/methodology", summary: "How trust observations and scores are computed; how to report and how vendors reply" },
       { method: "POST", path: "/v1/reports", summary: "Report a paid call to a listed vendor (counts only with an on-ledger payment + payer signature)" },
+      { method: "GET", path: "/v1/trust/receipts/verify", summary: "How to verify a Lumi signed test-buy receipt (counterparty_delivery_receipt v0.1) yourself" },
+      { method: "POST", path: "/v1/trust/receipts/verify", summary: "Verify a signed test-buy receipt (hash, paying-wallet signature; ?ledger=1 also checks the payment on-chain), free" },
       { method: "POST", path: "/v1/tips", summary: "Send Lumi a private tip (stored privately; never published or returned)" },
       { method: "POST", path: "/v1/trust/replies", summary: "Vendor right to reply (signed by a listed pay-to address), or email hello@lumitrades.io" },
       { method: "POST", path: "/mcp", summary: "Remote MCP server (Streamable HTTP): free tools for everyone; paid tools return the price and how to pay" },
@@ -360,6 +362,18 @@ function trustPaths(): Record<string, unknown> {
         responses: r({ "201": "Verified and recorded", "400": "Invalid input", "404": "Unknown vendor", "409": "A verified report for this tx exists", "422": "Not verified (stored privately, not shown)", "429": "Rate limited", "503": "Ledger unreachable; nothing stored" }),
       },
     },
+    "/v1/trust/receipts/verify": {
+      get: { tags: tag, security: [], summary: "How to verify a signed test-buy receipt (free)", responses: r({ "200": "OK" }) },
+      post: {
+        tags: tag,
+        security: [],
+        summary: "Verify a signed test-buy receipt (free)",
+        description: "Body: a counterparty_delivery_receipt v0.1 (as served in paid trust/check and vendor reports). Checks the canonical SHA-256 receipt_hash, that the paying wallet signed `lumi-receipt:<network>:<tx_hash>:<receipt_hash>` (XRPL ripple-keypairs / Base EIP-191), and, with ?ledger=1, the payment on-chain. 10/min and 100/day per IP.",
+        parameters: [{ name: "ledger", in: "query", required: false, schema: { type: "string", enum: ["1"] } }],
+        requestBody: json({ type: { type: "string" }, version: { type: "string" }, receipt_hash: { type: "string" }, signer: { type: "object" }, payment: { type: "object" }, seller: { type: "object" }, delivery: { type: "object" } }, ["type", "version", "receipt_hash", "signer", "payment"]),
+        responses: r({ "200": "Verification result (ok true/false with errors)", "400": "Invalid JSON", "413": "Body too large", "429": "Rate limited" }),
+      },
+    },
     "/v1/tips": {
       post: {
         tags: tag,
@@ -547,7 +561,7 @@ after it is refused before settlement.
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\` (\`?url=|domain=|payTo=\` lookup), \`GET /v1/trust/catalog\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\` (\`?url=|domain=|payTo=\` lookup), \`GET /v1/trust/catalog\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET|POST /v1/trust/receipts/verify\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
 Every paid response is JSON with \`kind\`, \`timestamp\`, \`source: "${SOURCE}"\`, \`as_of\`, \`data_age_seconds\`, \`next_update\`, \`stale_after\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`. All timestamps are ISO 8601 UTC.
 lumitrades.io publishes market data, signals and analysis four times a day (6 AM, 12 PM, 6 PM and 11 PM US Central); the policy brief (\`/v1/institutional\`) once a day (not sold if older than 36 h).
