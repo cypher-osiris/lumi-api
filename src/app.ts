@@ -38,6 +38,8 @@ import { liteView, scanView, fundingView, fearGreedView, fearGreedFromContext, e
 import { lookupError } from "./trust/index";
 import type { LookupQuery } from "./trust/catalog";
 import { D1LiveStore, MemoryLiveStore, refreshLive, isFresh, LIVE_UNIVERSE, LIVE_MAX_AGE_MS, LIVE_CYCLE_MS, type LiveStore } from "./live";
+import { mcpServerCard, agentsJson } from "./wellknown";
+import { D1IdempotencyStore, MemoryIdempotencyStore, type IdempotencyStore } from "./idempotency";
 import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
 export interface AppOptions {
@@ -65,6 +67,8 @@ export interface AppOptions {
   trialStore?: TrialStore;
   /** Seller-monitoring + feed store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   commerceStore?: CommerceStore;
+  /** Idempotent-retry cache override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  idempotencyStore?: IdempotencyStore;
 }
 
 /** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
@@ -163,6 +167,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const deps: PaywallDeps = {
     fetch: doFetch,
     replay: makeReplayGuard({ durableObject: env.INVOICE_GUARD, kv: env.USED_INVOICES }),
+    idempotency: opts.idempotencyStore ?? (env.TRUST_DB ? new D1IdempotencyStore(env.TRUST_DB) : new MemoryIdempotencyStore()),
     log: opts.log ?? ((e) => console.log(JSON.stringify(e))),
   };
 
@@ -338,6 +343,12 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
    * a failure here is never charged.
    */
   async function prepare(route: PaidRoute, coinArg?: string, base = config.publicBaseUrl ?? "https://api.lumitrades.io"): Promise<Prepared> {
+    const p = await prepareRaw(route, coinArg, base);
+    if (p.ok) p.body = ensureFreshness(p.body, now());
+    return p;
+  }
+
+  async function prepareRaw(route: PaidRoute, coinArg?: string, base = config.publicBaseUrl ?? "https://api.lumitrades.io"): Promise<Prepared> {
     if (route === "vendor_report") return prepareVendorReport(coinArg ?? "", base);
     if (route === "trust_check") return prepareTrustCheck(coinArg ?? "", base);
     if (route === "scan") return prepareScan();
@@ -369,7 +380,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         return { ok: true, route, coin, body: isoTimestamps(withMeta(liveSignalView(coin, row) as Record<string, unknown>, meta)) };
       }
       if (!(await siteCoins()).some((c) => c.id === coin!.id)) {
-        return { ok: false, status: 503, error: { error: "data_stale", detail: `the live ${coin.symbol} signal is not fresh right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "120" } };
+        return notForSale("stale_data", `the live ${coin.symbol} signal is not fresh right now`, 120, ageSeconds((row as { computed_at?: number } | null)?.computed_at, t0));
       }
     }
     if (route === "levels" && coin && !(await siteCoins()).some((c) => c.id === coin!.id)) {
@@ -381,24 +392,25 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     try {
       loaded = { ...(await data.getOptional(OPTIONAL[route] ?? [])), ...(await data.getMany(NEEDS[route])) };
     } catch (err) {
-      return { ok: false, status: 503, error: { error: "data_unavailable", detail: String((err as Error).message), retryable: true, note: "Not charged." }, headers: { "Retry-After": "30" } };
+      return notForSale("data_unavailable", String((err as Error).message), 30, null);
     }
     const t = now();
     const stale = staleInputs(loaded, NEEDS[route], t, config.dataMaxAgeHours);
     if (stale.length) {
-      return { ok: false, status: 503, error: { error: "data_stale", detail: "Lumi's published data is missing or out of date, so this call is not for sale right now.", inputs: stale, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+      const asOfs = stale.map((x) => Date.parse(String(x.as_of ?? ""))).filter((v) => Number.isFinite(v));
+      return notForSale("stale_data", "Lumi's published data is missing or out of date, so this call is not for sale right now.", 300, asOfs.length ? ageSeconds(Math.min(...asOfs), t) : null, { inputs: stale });
     }
     // Optional inputs that are stale are dropped (their fields are omitted), never served as current.
     for (const f of OPTIONAL[route] ?? []) if (staleInputs(loaded, [f], t, config.dataMaxAgeHours).length) delete loaded[f];
     const list = await siteCoins();
     const body = buildBody(route, coin, loaded, list, t);
     if (body && !hasContent(route, body)) {
-      return { ok: false, status: 503, error: { error: "data_unavailable", detail: `the ${route} data is empty right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+      return notForSale("data_unavailable", `the ${route} data is empty right now`, 300, null);
     }
     if (!body) {
       return coin
         ? { ok: false, status: 404, error: { error: "no_data_for_coin", coin: coin.symbol, note: "Not charged." } }
-        : { ok: false, status: 503, error: { error: "data_unavailable", detail: `no ${route} data published right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+        : notForSale("data_unavailable", `no ${route} data published right now`, 300, null);
     }
     const meta = fileMeta(loaded, NEEDS[route], t, config.dataMaxAgeHours);
     return { ok: true, route, coin, body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)) };
@@ -407,9 +419,12 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   /** All-coins scan: every fresh live row; sold only when at least SCAN_MIN coins are fresh. Freshness = the oldest row. */
   async function prepareScan(): Promise<Prepared> {
     const t = now();
-    const rows = (await live.all().catch(() => [])).filter((r) => isFresh(r, t) && r.label);
+    const all = await live.all().catch(() => []);
+    const rows = all.filter((r) => isFresh(r, t) && r.label);
     if (rows.length < SCAN_MIN) {
-      return { ok: false, status: 503, error: { error: "data_stale", detail: `only ${rows.length} of ${LIVE_UNIVERSE.length} live signals are fresh right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "120" } };
+      // Data age = the age of the SCAN_MIN-th freshest coin (the scan needs that many).
+      const byAge = all.filter((r) => r.label && r.computed_at).map((r) => r.computed_at).sort((a, b) => b - a);
+      return notForSale("stale_data", `only ${rows.length} of ${LIVE_UNIVERSE.length} live signals are fresh right now`, 120, byAge.length ? ageSeconds(byAge[Math.min(SCAN_MIN, byAge.length) - 1], t) : null);
     }
     const oldest = Math.min(...rows.map((r) => r.computed_at));
     const meta = metaFrom(oldest, oldest + LIVE_MAX_AGE_MS, Math.max(t + 60_000, oldest + LIVE_CYCLE_MS), t);
@@ -436,7 +451,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         }
       } catch { /* fall through */ }
     }
-    return { ok: false, status: 503, error: { error: "data_stale", detail: `the ${route === "funding" ? "funding-rate" : "Fear & Greed"} feed is not fresh right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+    return notForSale("stale_data", `the ${route === "funding" ? "funding-rate" : "Fear & Greed"} feed is not fresh right now`, 300, ageSeconds(row?.fetched_at, t));
   }
 
   /** "Should I pay this x402 URL?" Validated before any quote; the verdict reads the trust catalog (same data as the free lookup). */
@@ -448,7 +463,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const amountUsd = amountRaw ? Number(amountRaw.replace(/^\$/, "")) : undefined;
     const bad = (detail: string) => ({ ok: false as const, status: 400, error: { error: "invalid_query", detail, example: `${base}/v1/trust/check?url=https://api.example.com/v1/data&payTo=0x...&amount=0.01`, note: "Not charged." } });
     if (!url) return bad("url is required: the x402 resource URL you are about to pay.");
-    const err = lookupError({ url, ...(payTo ? { payTo } : {}) }, { url: true, payTo: payTo !== undefined });
+    const err = lookupError({ url, ...(payTo ? { payTo } : {}) }, { url: true, payTo: payTo !== undefined }, "check");
     if (err) return { ok: false, status: 400, error: { ...err, note: "Not charged." } };
     if (amountRaw && !(amountUsd !== undefined && Number.isFinite(amountUsd) && amountUsd >= 0 && amountUsd < 1e6)) return bad("amount must be a USD number, e.g. 0.01.");
     let host = "";
@@ -463,7 +478,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       const cand = buyCandidate(body as any, exact);
       return { ok: true, route: "trust_check", body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)), ...(cand ? { onPaid: () => catalog.queueBuy(cand) } : {}) };
     } catch (e) {
-      return { ok: false, status: 503, error: { error: "data_unavailable", detail: "the trust catalog is unavailable right now", retryable: true, note: "Not charged." }, headers: { "Retry-After": "60" } };
+      return notForSale("data_unavailable", "the trust catalog is unavailable right now", 60, null);
     }
   }
 
@@ -473,23 +488,18 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (r.ok) {
       return hasContent("vendor_report", r.doc)
         ? { ok: true, route: "vendor_report", body: isoTimestamps(withMeta({ kind: "vendor_report", timestamp: new Date(now()).toISOString(), source: "api.lumitrades.io trust layer", ...r.doc, disclaimer: DISCLAIMER }, vendorMeta(r.doc))) }
-        : { ok: false, status: 503, error: { error: "data_unavailable", detail: "no observations for this vendor yet", retryable: true, note: "Not charged." }, headers: { "Retry-After": "1800" } };
+        : notForSale("data_unavailable", "no observations for this vendor yet", 1800, null);
     }
     if (r.reason === "unknown_vendor") {
       return { ok: false, status: 404, error: { error: "unknown_vendor", vendor_id: id.slice(0, 64), vendors: VENDORS.map((v) => v.id), note: "Not charged." } };
     }
-    return {
-      ok: false,
-      status: 503,
-      error: {
-        error: "data_stale",
-        detail: `Lumi has no observation of this vendor (probe or paid test-buy) in the last ${REPORT_FRESH_MS / 3_600_000} h, so the report is not for sale right now.`,
-        last_observed_at: r.last_observed_at,
-        retryable: true,
-        note: "Not charged.",
-      },
-      headers: { "Retry-After": "1800" },
-    };
+    return notForSale(
+      "stale_data",
+      `Lumi has no observation of this vendor (probe or paid test-buy) in the last ${REPORT_FRESH_MS / 3_600_000} h, so the report is not for sale right now.`,
+      1800,
+      ageSeconds(Date.parse(String(r.last_observed_at ?? "")), now()),
+      { last_observed_at: r.last_observed_at },
+    );
   }
 
   /** Vendor report freshness: the newest observation binds; sold only within 48 h of it. */
@@ -532,7 +542,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           : {
               "Access-Control-Allow-Origin": "*",
               "Access-Control-Allow-Methods": "GET, OPTIONS",
-              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, SIGN-IN-WITH-X, X-Lumi-Trial, Content-Type",
+              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, SIGN-IN-WITH-X, X-Lumi-Trial, Idempotency-Key, Content-Type",
               "Access-Control-Max-Age": "86400",
             },
       });
@@ -671,6 +681,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         return json(200, agentCard(config, base), { "Cache-Control": "public, max-age=300" });
       case "/.well-known/x402":
         return json(200, wellKnownX402(config, base), { "Cache-Control": "public, max-age=300" });
+      case "/.well-known/mcp/server-card.json":
+      case "/.well-known/mcp.json":
+        return json(200, mcpServerCard(base), { "Cache-Control": "public, max-age=300" });
+      case "/.well-known/agents.json":
+        return json(200, agentsJson(base), { "Cache-Control": "public, max-age=300" });
       case "/openapi.json":
         return json(200, openApi(config, base, await coins()), { "Cache-Control": "public, max-age=300" });
       case "/v1/samples":
@@ -700,16 +715,17 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
-    // A literally probed OpenAPI template (/v1/signal/{coin}, /v1/signal/:coin, /v1/trust/vendors/%7Bid%7D/report, ...):
-    // - without a payment header: the normal 402 price quote for the route (same accepts/prices/payTo as a concrete value), so
-    //   discovery scanners (x402scan probes the template URL verbatim) see the paywall, plus a note to fill the placeholder;
-    // - with a payment header: the 400 below. Nothing is verified or settled for an unfilled path.
+    // An unfilled path template (/v1/signal/{coin}, /v1/signal/:coin, /v1/trust/vendors/%7Bid%7D/report, ...):
+    // - the literal OpenAPI template ({coin} / {id}) without a payment header: the normal 402 price quote for the route (same
+    //   accepts/prices/payTo as a concrete value), because discovery crawlers (x402scan / @agentcash/discovery, Bazaar) request
+    //   the template URL verbatim and only list routes that answer 402; the quote carries a note to fill the placeholder;
+    // - any other placeholder style (:coin, <coin>, ${coin}, ...), or any template with a payment header: 400, never charged.
     const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
     if (rawArg !== undefined && PATH_TEMPLATE_RE.test(rawArg)) {
       const isReport = route === "vendor_report";
       const example = isReport ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/btc`;
       const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
-      if (!hasPayment) {
+      if (!hasPayment && rawArg === (isReport ? "{id}" : "{coin}")) {
         const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
         return paymentRequiredResponse(config, {
           routeKey: `${route}:template`,
@@ -735,9 +751,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       });
     }
 
-    // /v1/trust/check probed bare (no ?url=, as x402scan and other discovery scanners do): the normal 402 price quote, so the
-    // paywall is visible. With a payment header the missing url is refused below (400, nothing verified or settled).
-    if (route === "trust_check" && !url.searchParams.get("url")?.trim() && !(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT))) {
+    // /v1/trust/check probed bare (no query string at all, as x402scan and other discovery crawlers do): the normal 402 price
+    // quote, so the paywall is visible. A query without a usable url, or any request with a payment header and no url, is
+    // refused below (400, nothing verified or settled).
+    if (route === "trust_check" && !url.search.replace(/^\?/, "") && !(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT))) {
       const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
       const usd = config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route];
       const example = `${base}/v1/trust/check?url=https://api.example.com/v1/data&payTo=0x...&amount=0.01`;
@@ -799,6 +816,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       service: serviceMeta(route),
       // Remaining validity of the data, on the wall clock the paywall uses (the app clock is injectable for tests).
       ...(typeof body.stale_after === "string" ? { staleAfterMs: Date.now() + (Date.parse(body.stale_after) - now()) } : {}),
+      ...(typeof body.as_of === "string" && Number.isFinite(Date.parse(body.as_of)) ? { asOfMs: Date.now() + (Date.parse(body.as_of) - now()) } : {}),
     };
 
     // Free trial (x402 sign-in-with-x): eligible 402s carry a one-time challenge; a valid SIGN-IN-WITH-X retry (and no payment
@@ -984,6 +1002,36 @@ function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string
   }
 }
 
+/** Seconds since a millisecond timestamp, or null when unknown. */
+function ageSeconds(ms: number | null | undefined, t: number): number | null {
+  return typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? Math.max(0, Math.round((t - ms) / 1000)) : null;
+}
+
+/**
+ * 503 "not for sale" body, never charged: {error: "stale_data" | "data_unavailable", detail, data_age_seconds (null when
+ * unknown), retry_after_seconds, retryable, note} plus a matching Retry-After header.
+ */
+export function notForSale(code: "stale_data" | "data_unavailable", detail: string, retryAfter: number, dataAge: number | null, extra: Record<string, unknown> = {}): Prepared {
+  return {
+    ok: false,
+    status: 503,
+    error: { error: code, detail, data_age_seconds: dataAge, retry_after_seconds: retryAfter, retryable: true, ...extra, note: "Not charged." },
+    headers: { "Retry-After": String(retryAfter) },
+  };
+}
+
+/** Every paid body carries as_of, data_age_seconds and next_update (derived from as_of / timestamp / stale_after when a view lacks them). */
+export function ensureFreshness(body: Record<string, unknown>, t: number): Record<string, unknown> {
+  if (typeof body.data_age_seconds === "number" && "next_update" in body) return body;
+  const asOfMs = Date.parse(String(body.as_of ?? body.timestamp ?? "")) || t;
+  return {
+    ...body,
+    as_of: body.as_of ?? new Date(asOfMs).toISOString(),
+    data_age_seconds: typeof body.data_age_seconds === "number" ? body.data_age_seconds : Math.max(0, Math.round((t - asOfMs) / 1000)),
+    next_update: body.next_update ?? body.stale_after ?? null,
+  };
+}
+
 function safeDecode(s: string): string {
   try {
     return decodeURIComponent(s);
@@ -1009,7 +1057,7 @@ export function prefersHtml(accept: string | null | undefined): boolean {
 
 /** API sitemap: the human and machine-readable entry points (paid routes are listed in /openapi.json, not here). */
 export function sitemapXml(base: string): string {
-  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog", "/v1/monitor", "/v1/monitor/sellers", "/v1/monitor/corrections", "/v1/feed", "/v1/feed/license"];
+  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/.well-known/mcp/server-card.json", "/.well-known/agents.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog", "/v1/monitor", "/v1/monitor/sellers", "/v1/monitor/corrections", "/v1/feed", "/v1/feed/license"];
   const day = new Date().toISOString().slice(0, 10);
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
     paths.map((p) => `  <url><loc>${base}${p}</loc><lastmod>${day}</lastmod><changefreq>daily</changefreq></url>`).join("\n") +

@@ -1,6 +1,6 @@
 /**
  * "You only pay when you get data." Before any 402 quote (and therefore before any settlement), every input file a
- * route needs must be present, non-empty and recent. Otherwise the API answers 503 `data_stale` / `data_unavailable`
+ * route needs must be present, non-empty and recent. Otherwise the API answers 503 `stale_data` / `data_unavailable`
  * with "Not charged." and no payment is ever requested or settled.
  */
 

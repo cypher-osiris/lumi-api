@@ -1,5 +1,17 @@
 /** Public policy text for seller monitoring and the licence feed (leaf module: no imports, safe to use from trust/). */
 
+/** Final seller-monitoring terms (shown on GET /v1/monitor and the methodology). */
+export const MONITOR_TERMS = {
+  version: "2026-10-22",
+  terms: [
+    "Refunds: plans are not refundable once paid, except when Lumi cannot perform the monitoring it sold (for example it cannot reach or pay your endpoints because of a fault on Lumi's side). Then the unperformed part of the term is refunded.",
+    "Audit reports: the full report is private to the seller and is only shown with the management token. Only its report_hash and Lumi's signature over it are public, so anyone can check a report the seller chooses to share.",
+    "No warranty: monitoring results are dated observations (quote checks and test-buys), not a rating, endorsement, audit opinion or guarantee. They can be incomplete, delayed or wrong. Provided as is.",
+    "Liability: to the extent permitted by law, Lumi is not liable for losses from decisions made using monitoring results, alerts or reports. Not financial advice.",
+    "Terms: 30-day plans (Audit is one-off), no auto-renew; renewing means paying again. Changes to these terms are dated here.",
+  ],
+};
+
 export const MONITOR_SAFEGUARDS = [
   "Paying never changes a score, tier or label. The scoring and catalog code does not read monitoring tables; a monitored seller is checked exactly like everyone else.",
   "Seller-funded test-buys are labelled funding: 'seller-funded' everywhere they appear; Lumi's own independent checks stay separate.",
@@ -24,11 +36,12 @@ export const MONITOR_METHODOLOGY = {
   cadence: { monitor: "1 endpoint, 1 test-buy per 30-day term (+1 recheck after a failure)", monitor_plus: "up to 20 endpoints, weekly", audit: "one-off: every listed endpoint once (catalog listings for the payTo + endpoints the seller names)" },
   test_buy_cap: "Each test-buy is capped at $0.10 and funded from the plan fee; planned test-buy spend must stay within 50% of the fee. Endpoints above the cap are rejected at enrolment (Audit: quote-checked only, no buy).",
   safeguards: MONITOR_SAFEGUARDS,
+  terms: MONITOR_TERMS.terms,
 };
 
 export const FEED_LICENSE = {
   title: "Lumi Trust Data Licence (feed)",
-  version: "2026-10-22 (draft pending owner review)",
+  version: "2026-10-22",
   terms: [
     "Licence: a non-exclusive, non-transferable right to query the Lumi trust feed and use the results inside your own product (for example a facilitator, wallet, agent framework or marketplace) to inform your users.",
     "No resale: you may not resell, sublicense, republish or redistribute the raw data or a substantial part of it as a dataset, feed or API. Showing individual results to your own users is allowed.",
@@ -37,6 +50,8 @@ export const FEED_LICENSE = {
     "No warranty: the data is a set of dated observations (quote checks and test-buys), not a rating, endorsement, audit opinion or guarantee. It can be incomplete, delayed or wrong. Provided as is.",
     "Liability: to the extent permitted by law, Lumi is not liable for losses from decisions made using the data. Not financial advice.",
     "Commercial relationships: sellers that pay Lumi for monitoring are flagged in the data (commercial_relationship). Paying never changes a score.",
+    "Credits: metered credits are prepaid and never expire. They stay on your key until used.",
+    "Refunds: payments are not refundable, except where Lumi cannot provide the service that was paid for; then the unprovided part is refunded.",
     "Keys: keep your key secret; Lumi stores only a hash and cannot show it again. Lumi may suspend keys used to abuse the service or breach these terms.",
     "Terms: 30-day plans, no auto-renew; renewing means paying again. Changes to these terms are dated on this page.",
   ],

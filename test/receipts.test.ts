@@ -54,6 +54,17 @@ describe("signed test-buy receipts", () => {
     expect((await verifyReceipt(w)).errors).toContain("signature_invalid");
   });
 
+  it("labels the delivery source from the buy's own chain and asset (XRPL catalog buys are not 'Base USDC')", async () => {
+    const xcat: PendingBuy = { ...xbuy, kind: "catalog", ref: "seller.example/v1/data", asset: "XRP", amount: "0.5", source: "lumi_catalog_buy" };
+    const x = await signX(xcat);
+    expect(x.delivery.source).toBe("Lumi catalog test-buy (XRPL XRP)");
+    expect(x.delivery.source).not.toMatch(/Base|USDC/);
+    expect((await verifyReceipt(x)).ok).toBe(true);
+    expect((await signX({ ...xcat, asset: "RLUSD", amount: "0.01" })).delivery.source).toBe("Lumi catalog test-buy (XRPL RLUSD)");
+    expect((await signB(bbuy)).delivery.source).toBe("Lumi catalog test-buy (Base USDC)");
+    expect((await signX(xbuy)).delivery.source).toBe("Lumi daily test-buy (XRPL)");
+  });
+
   it("owner upload stores only receipts matching a Lumi test-buy; free verify works; pending lists unsigned buys", async () => {
     const rs = new MemoryReceiptStore();
     rs.buys = [xbuy, bbuy];

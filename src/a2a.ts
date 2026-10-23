@@ -63,7 +63,7 @@ const SKILLS: SkillDef[] = [
   { id: "scan", route: "scan", name: "All-coins scan: 50 live signals in one call", tags: ["crypto", "screener", "signals", "scan", "paid"], examples: ["scan all coins", "which coins look strongest?"], match: /\b(scan|screen|screener|all coins|strongest|weakest)\b/i },
   { id: "lite", route: "lite", name: "Lite coin signal (label, score, price)", tags: ["crypto", "signal", "lite", "paid"], examples: ["lite XRP"], match: /\blite\b/i, needsCoin: true },
   { id: "signal", route: "signal", name: "Coin signal (buy/sell read)", tags: ["crypto", "signal", "technical-analysis", "paid"], examples: ["signal XRP", "is BTC a buy?"], match: /\b(signal|buy|sell|rsi|macd)\b/i, needsCoin: true },
-  { id: "levels", route: "levels", name: "Support/resistance levels + 7-day projection", tags: ["crypto", "levels", "support", "resistance", "paid"], examples: ["levels ETH"], match: /\b(levels?|support|resistance|projection)\b/i, needsCoin: true },
+  { id: "levels", route: "levels", name: "Support/resistance + rule-based 7-day scenario levels (not forecasts)", tags: ["crypto", "levels", "support", "resistance", "paid"], examples: ["levels ETH"], match: /\b(levels?|support|resistance|projection|scenarios?)\b/i, needsCoin: true },
   { id: "slate", route: "slate", name: "Paper-trade slate (current ideas)", tags: ["crypto", "trade-ideas", "paper-trading", "paid"], examples: ["current trade ideas"], match: /\b(slate|ideas?|setups?)\b/i },
   { id: "market", route: "market", name: "BTC + macro market backdrop", tags: ["crypto", "bitcoin", "macro", "paid"], examples: ["BTC macro backdrop"], match: /\b(market|backdrop|macro|dominance)\b/i },
   { id: "macro_yen", route: "yen", name: "Yen carry-trade watch (USD/JPY, Nikkei)", tags: ["macro", "yen", "carry-trade", "japan", "paid"], examples: ["yen carry trade risk"], match: /\b(yen|jpy|usd\/?jpy|nikkei|carry|japan|boj)\b/i },
@@ -114,7 +114,10 @@ function priceLine(cfg: Config, route: PaidRoute): string {
 
 export function agentCard(cfg: Config, base: string) {
   const a2aUrl = `${base}/a2a`;
-  const skills = SKILLS.map((s) => {
+  // Card order leads with the trust check (matching order in SKILLS is unchanged).
+  const LEAD = ["trust_check", "vendor_trust", "vendor_report"];
+  const ordered = [...SKILLS.filter((s) => LEAD.includes(s.id)).sort((a, b) => LEAD.indexOf(a.id) - LEAD.indexOf(b.id)), ...SKILLS.filter((s) => !LEAD.includes(s.id))];
+  const skills = ordered.map((s) => {
     const ep = s.route ? PAID_ENDPOINTS.find((e) => e.route === s.route)! : undefined;
     return {
       id: s.id,
@@ -131,7 +134,9 @@ export function agentCard(cfg: Config, base: string) {
   return {
     name: "Lumi Trades",
     description:
-      "Crypto market reads for AI agents from Lumi Trades (lumitrades.io): daily market brief, per-coin signals and support/resistance levels, " +
+      "Should I pay this x402 URL? Lumi Trust checks a seller before you pay: allow / warn / block with coded reasons from daily CDP Bazaar index checks and Lumi's own on-chain test-buys, " +
+      "with signed delivery receipts (free lookup, paid check and vendor reports). " +
+      "Plus crypto market reads for AI agents from Lumi Trades (lumitrades.io): daily market brief, per-coin signals and support/resistance levels, " +
       "paper-trade ideas, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar for 13 coins, " +
       "and a daily policy brief (regulators, central banks, banks, tokenization). " +
       `Pay per call over x402 v2 with no API key or account, in ${settledIn(cfg)}. Also available as a remote MCP server. Analytics only, not financial advice.`,
@@ -161,6 +166,12 @@ export function agentCard(cfg: Config, base: string) {
             prices: priceTable(cfg).map((p) => ({ path: p.path, prices: p.prices })),
             plans: planPriceTable(base).map((p) => ({ path: p.path, name: p.name, price_usd: p.price_usd, term_days: p.term_days, auto_renew: false })),
             guarantee: "Inputs are checked (present, non-empty, fresh) before any 402 quote; stale data is answered with 503 'Not charged.'",
+            idempotency: "Send an Idempotency-Key header (or the x402 payment-identifier extension id) with a payment: a retry with the same key and payment returns the cached response and is never charged twice.",
+            attestation: {
+              type: "signed-receipts",
+              receipts: "counterparty_delivery_receipt v0.1 (SHA-256 receipt_hash, signed by the paying wallet) on Lumi Trust test-buys",
+              verify: `${base}/v1/trust/receipts/verify`,
+            },
           },
         },
         {

@@ -38,12 +38,12 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
   },
   {
     route: "levels",
-    name: "Lumi support/resistance levels + 7-day projection",
+    name: "Lumi support/resistance + 7-day scenario levels",
     method: "GET",
     path: "/v1/levels/{coin}",
     template: "/v1/levels/{coin}",
     summary:
-      "Use this when you need to know where price may stall or turn for one coin: support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and cited sources. " + NOT_CHARGED,
+      "Use this when you need to know where price may stall or turn for one coin: support/resistance levels, bias, rule-based 7-day bull/base/bear scenario levels (not forecasts), commentary, catalysts and cited sources. " + NOT_CHARGED,
     example: `/v1/levels/${EXAMPLE_COIN}`,
   },
   {
@@ -83,7 +83,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     path: "/v1/market",
     template: "/v1/market",
     summary:
-      "Use this when you need the whole crypto backdrop in one call: BTC levels/projection/signal, macro (USD/JPY note, total cap, dominance, Fear & Greed, BTC perp funding/OI) and breadth across tracked coins. " + NOT_CHARGED,
+      "Use this when you need the whole crypto backdrop in one call: BTC levels/scenario levels/signal, macro (USD/JPY note, total cap, dominance, Fear & Greed, BTC perp funding/OI) and breadth across tracked coins. " + NOT_CHARGED,
     example: "/v1/market",
   },
   {

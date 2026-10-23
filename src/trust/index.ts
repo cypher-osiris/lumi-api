@@ -109,11 +109,15 @@ const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][
 const PAYTO_RE = /^(?:0x[0-9a-fA-F]{40}|r[1-9A-HJ-NP-Za-km-z]{24,34}|[1-9A-HJ-NP-Za-km-z]{32,44})$/;
 
 /** Validates lookup inputs; returns a 400 body or null. Present-but-empty parameters are errors, not "list everything". */
-export function lookupError(q: Partial<LookupQuery>, present: { url?: boolean; domain?: boolean; payTo?: boolean } = {}): Record<string, unknown> | null {
-  const bad = (param: string, detail: string) => ({ error: `invalid_${param === "payTo" ? "pay_to" : param}`, param, detail, examples: ["?url=https://api.example.com/v1/data", "?domain=example.com", "?payTo=0x... or r..."] });
+export function lookupError(q: Partial<LookupQuery>, present: { url?: boolean; domain?: boolean; payTo?: boolean } = {}, context: "lookup" | "check" = "lookup"): Record<string, unknown> | null {
+  // Examples only name parameters the calling route documents (trust/check takes url, payTo and amount; no domain).
+  const examples = context === "check"
+    ? ["?url=https://api.example.com/v1/data", "?url=https://api.example.com/v1/data&payTo=0x...&amount=0.01"]
+    : ["?url=https://api.example.com/v1/data", "?domain=example.com", "?payTo=0x... or r..."];
+  const bad = (param: string, detail: string) => ({ error: `invalid_${param === "payTo" ? "pay_to" : param}`, param, detail, examples });
   if (present.url && !q.url) return bad("url", "url is empty: pass a full http(s) resource URL.");
   if (present.domain && !q.domain) return bad("domain", "domain is empty: pass a host name such as example.com.");
-  if (present.payTo && !q.payTo) return bad("payTo", "payTo is empty: pass an EVM (0x...), XRPL (r...) or Solana address.");
+  if (present.payTo && !q.payTo) return bad("payTo", "payTo is empty: pass an EVM (0x...) or XRPL classic (r...) address.");
   if (q.url) {
     let u: URL | null = null;
     try { u = new URL(q.url); } catch { /* invalid */ }
@@ -123,7 +127,7 @@ export function lookupError(q: Partial<LookupQuery>, present: { url?: boolean; d
     const host = q.domain.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/:\d+$/, "").toLowerCase();
     if (!HOST_RE.test(host)) return bad("domain", "domain must be a host name such as example.com (no scheme or path needed).");
   }
-  if (q.payTo && !PAYTO_RE.test(q.payTo)) return bad("payTo", "payTo must be an EVM (0x + 40 hex), XRPL classic (r...) or Solana (base58) address.");
+  if (q.payTo && !PAYTO_RE.test(q.payTo)) return bad("payTo", "payTo must be an EVM (0x + 40 hex) or XRPL classic (r...) address.");
   return null;
 }
 

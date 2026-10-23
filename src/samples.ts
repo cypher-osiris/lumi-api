@@ -133,6 +133,7 @@ function reshape(route: PaidRoute, s: Record<string, any>): string[] {
     if (n) omitted.push("paper-trade unrealized_pnl_pct, mark_price and status (not shown in free samples)");
   }
   if (route === "levels") {
+    drop(s, "scenarios", "scenarios");
     drop(s, "projection", "projection");
     for (const k of ["support", "resistance"]) if (Array.isArray(s[k]) && s[k].length > 1) { s[k] = s[k].slice(0, 1); omitted.push(`${k}[1..]`); }
   }

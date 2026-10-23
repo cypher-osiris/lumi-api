@@ -155,20 +155,27 @@ export function liveSignalView(coin: CoinRef, row: Json) {
   });
 }
 
+/** Label carried on 7-day scenario levels wherever they appear. */
+export const SCENARIO_LABEL = "rule-based scenario levels, not forecasts";
+
 export function levelsBlock(a: Json) {
   if (!a) return null;
+  const scenarios = a.projection
+    ? {
+        label: SCENARIO_LABEL,
+        horizon_days: num(a.projection.horizon_days),
+        bull: num(a.projection.bull),
+        base: num(a.projection.base),
+        bear: num(a.projection.bear),
+      }
+    : null;
   return {
     bias: a.bias ?? null,
     support: Array.isArray(a.support) ? a.support.filter((x: unknown) => num(x) !== null) : [],
     resistance: Array.isArray(a.resistance) ? a.resistance.filter((x: unknown) => num(x) !== null) : [],
-    projection: a.projection
-      ? {
-          horizon_days: num(a.projection.horizon_days),
-          bull: num(a.projection.bull),
-          base: num(a.projection.base),
-          bear: num(a.projection.bear),
-        }
-      : null,
+    // `scenarios` is the preferred name; `projection` is kept unchanged-in-shape for existing clients (same values, same label).
+    scenarios,
+    projection: scenarios ? { ...scenarios } : null,
     commentary: typeof a.commentary === "string" ? a.commentary : null,
     catalysts: Array.isArray(a.catalysts)
       ? a.catalysts.map((c: Json) => ({ date: c.date, kind: c.kind, text: c.text, source: c.source, url: c.url }))

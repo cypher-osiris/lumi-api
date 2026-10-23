@@ -11,7 +11,7 @@ import { OWN_WALLETS } from "../sales";
 import type { Config } from "../config";
 import { usdToDrops } from "../pricing";
 import type { Quote } from "../x402";
-import { SERVICE_ICON, SERVICE_NAME } from "../bazaar";
+import { SERVICE_ICON, TRUST_SERVICE_NAME } from "../bazaar";
 
 export type PlanId = "monitor" | "monitor_plus" | "audit" | "feed" | "feed_pro" | "feed_credits";
 
@@ -35,7 +35,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
   audit: { id: "audit", name: "Audit", usd: "99", days: null, family: "monitor", path: "/v1/monitor/subscribe/audit", summary: "One-off: one seller-funded test-buy of every listed endpoint of the seller, with a full report signed by Lumi's wallet." },
   feed: { id: "feed", name: "Feed", usd: "99", days: TERM_DAYS, family: "feed", path: "/v1/feed/subscribe/feed", summary: "30 days: 100,000 bulk lookups, delta feed, full evidence and receipts." },
   feed_pro: { id: "feed_pro", name: "Feed Pro", usd: "199", days: TERM_DAYS, family: "feed", path: "/v1/feed/subscribe/feed_pro", summary: "30 days: 500,000 lookups, delta feed, licensed full snapshot export, status-change webhooks, receipts." },
-  feed_credits: { id: "feed_credits", name: "Feed credits", usd: "1.5", days: null, family: "feed", path: "/v1/feed/credits", summary: "1,000 metered lookups (prepaid, no expiry) on top of the free 1,000/month." },
+  feed_credits: { id: "feed_credits", name: "Feed credits", usd: "1.5", days: null, family: "feed", path: "/v1/feed/credits", summary: "1,000 metered lookups (prepaid, credits never expire) on top of the free 1,000/month." },
 };
 export const MONITOR_PLANS: PlanId[] = ["monitor", "monitor_plus", "audit"];
 export const FEED_PLANS: PlanId[] = ["feed", "feed_pro"];
@@ -89,9 +89,9 @@ export function planQuote(cfg: Config, plan: PlanId, subject: string, usd: strin
     amountDrops: usdToDrops(usd, rate),
     amountsIou,
     amountEvm: cfg.evm ? String(Math.round(Number(usd) * 1e6)) : undefined,
-    description: `${SERVICE_NAME} ${p.name} ($${usd}${test ? ", TEST price for an owner-flagged Lumi test wallet" : ""}). ${p.summary} No auto-renew.`.slice(0, 500),
+    description: `${TRUST_SERVICE_NAME} ${p.name} ($${usd}${test ? ", TEST price for an owner-flagged Lumi test wallet" : ""}). ${p.summary} No auto-renew.`.slice(0, 500),
     resourceUrl,
-    service: { serviceName: SERVICE_NAME, tags: p.family === "monitor" ? ["monitoring", "x402", "trust"] : ["data", "trust", "x402"], iconUrl: SERVICE_ICON },
+    service: { serviceName: TRUST_SERVICE_NAME, tags: p.family === "monitor" ? ["monitoring", "x402", "trust"] : ["data", "trust", "x402"], iconUrl: SERVICE_ICON },
     liveDrops: true,
     xrpUsd: rate,
   };

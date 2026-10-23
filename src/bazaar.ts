@@ -18,6 +18,9 @@ export const BAZAAR_MAX_DESCRIPTION = 500;
  * at most 5 tags of <= 32 chars each. Each route gets its own tag set so the listings cover many search terms.
  */
 export const SERVICE_NAME = "Lumi Trades";
+/** The trust layer (pay-check, vendor reports, monitoring and feed plans) is listed under its own service name. */
+export const TRUST_SERVICE_NAME = "Lumi Trust";
+export const TRUST_ROUTES: PaidRoute[] = ["trust_check", "vendor_report"];
 export const SERVICE_ICON = "https://lumitrades.io/assets/icon-512.png";
 export const ROUTE_TAGS: Record<PaidRoute, string[]> = {
   signal: ["crypto-signals", "trading-signals", "technical-analysis", "bitcoin", "ethereum"],
@@ -40,7 +43,11 @@ export const ROUTE_TAGS: Record<PaidRoute, string[]> = {
 };
 
 export function serviceMeta(route: PaidRoute): { serviceName: string; tags: string[]; iconUrl: string } {
-  return { serviceName: SERVICE_NAME, tags: ROUTE_TAGS[route], iconUrl: SERVICE_ICON };
+  return { serviceName: serviceNameFor(route), tags: ROUTE_TAGS[route], iconUrl: SERVICE_ICON };
+}
+
+export function serviceNameFor(route: PaidRoute): string {
+  return TRUST_ROUTES.includes(route) ? TRUST_SERVICE_NAME : SERVICE_NAME;
 }
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -51,15 +58,21 @@ interface RouteMeta {
   /** Colon-style template for routes with a path parameter. */
   routeTemplate?: string;
   pathParam?: { name: string; schema: Record<string, Json> };
-  /** Optional query parameters (all optional). */
+  /** Query parameters. */
   query?: Record<string, Record<string, Json>>;
+  /** Query parameters that must be present (the request is refused with 400, never charged, without them). */
+  queryRequired?: string[];
   example: Record<string, Json>;
 }
 
+/** Coin input: ticker or CoinGecko id, case-insensitive (XRP, xrp and ripple are the same coin). */
+export const COIN_PATTERN = "^[A-Za-z0-9-]{1,40}$";
 const COIN_PARAM = {
   name: "coin",
-  schema: { type: "string", pattern: "^[A-Za-z0-9]{1,15}$", description: "Coin symbol, e.g. XRP, BTC, ETH, HBAR (list: GET /v1/coins, free)" },
+  schema: { type: "string", pattern: COIN_PATTERN, description: "Coin ticker or CoinGecko id, case-insensitive, e.g. XRP, BTC, ETH, HBAR (list: GET /v1/coins, free)" },
 };
+/** Vendor id input, identical in the OpenAPI document and the 402 bazaar schema. */
+export const VENDOR_ID_PATTERN = "^[a-z0-9][a-z0-9-]{0,63}$";
 const FORMAT_QUERY = {
   format: { type: "string", enum: ["json", "md"], description: "md returns the brief as text/markdown; default JSON (with a markdown field)" },
 };
@@ -73,8 +86,11 @@ const pay = (route: PaidRoute, usd: string = DEFAULT_PRICES[route].usd): Record<
   payer: "0x12ab...89cd",
 });
 
-/** Example freshness fields (present on every paid response). */
-const FRESH = (asOf: string, staleAfter: string): Record<string, Json> => ({ as_of: asOf, stale_after: staleAfter });
+/** Example freshness fields (present on every paid response): as_of, data_age_seconds, next_update, stale_after. */
+const FRESH = (asOf: string, staleAfter: string, ageSeconds = 600, nextUpdate?: string): Record<string, Json> => {
+  const next = nextUpdate ?? new Date(Math.min(Date.parse(asOf) + 6 * 3_600_000, Date.parse(staleAfter))).toISOString().replace(/\.\d{3}Z$/, "Z");
+  return { as_of: asOf, data_age_seconds: ageSeconds, next_update: next, stale_after: staleAfter };
+};
 
 /** Shared promise appended to every listing. */
 export const FAIR_USE =
@@ -83,9 +99,7 @@ export const FAIR_USE =
 export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   signal: {
     description:
-      "Use this when you need a fast, mechanical buy/sell read on one crypto coin before acting: overall label and score, " +
-      "1h/4h/1d labels and the indicator breakdown (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) with price context. " +
-      "50 top coins (BTC, ETH, SOL... see GET /v1/coins), computed live; 1h refreshed about every 13 minutes. " + FAIR_USE + " JSON.",
+      "Rule-based technical read for one of 50 large-cap crypto assets: overall label (Strong Buy to Strong Sell) and score, 1h/4h/1d labels, an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) and price with 24h change. Computed from public exchange candles; 1h data refreshes about every 13 minutes. Use when an agent needs an indicator-based read on a single coin. Analytics only, not financial advice. Not charged on unknown coins or stale data.",
     routeTemplate: "/v1/signal/:coin",
     pathParam: COIN_PARAM,
     example: {
@@ -101,8 +115,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   levels: {
     description:
-      "Use this when you need to know where price may stall or turn for one crypto coin: support and resistance levels, bias, " +
-      "a 7-day bull/base/bear projection, analyst commentary, upcoming catalysts and cited sources. " + FAIR_USE + " JSON.",
+      "Support and resistance levels for one of 13 tracked coins, with a directional bias label, rule-based 7-day bull/base/bear scenario levels, short commentary, dated catalysts and cited sources. Use when an agent needs price reference levels and context for a single coin. Scenarios are analysis, not forecasts or advice. Other coins return 404 without charge; see /v1/coins. Not charged on stale data.",
     routeTemplate: "/v1/levels/:coin",
     pathParam: COIN_PARAM,
     example: {
@@ -112,7 +125,8 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
       bias: "neutral-to-soft",
       support: [2.35, 2.28],
       resistance: [2.5, 2.62],
-      projection: { horizon_days: 7, bull: 2.62, base: 2.43, bear: 2.27 },
+      scenarios: { horizon_days: 7, bull: 2.62, base: 2.43, bear: 2.27, label: "rule-based scenario levels, not forecasts" },
+      projection: { horizon_days: 7, bull: 2.62, base: 2.43, bear: 2.27, label: "rule-based scenario levels, not forecasts" },
       commentary: "Holding the 2.35 pivot; a close above 2.50 flips the read.",
       catalysts: [{ date: "2026-10-28", title: "FOMC decision" }],
       sources: [{ title: "CoinGecko", url: "https://www.coingecko.com/en/coins/ripple" }],
@@ -122,8 +136,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   slate: {
     description:
-      "Use this when you need current, concrete crypto trade setups to evaluate (paper trades, not advice): direction, entry " +
-      "zone, stop, targets, leverage and conviction for each idea, plus no-setup notes. " + FAIR_USE + " JSON.",
+      "Lumi's current paper-trade setups, published for evaluation and not as advice: coin, direction, entry zone, stop, targets, leverage and conviction for each idea, plus notes where no setup qualifies. Use when an agent needs structured, current trade-setup data to evaluate or compare against its own analysis. Paper trades only; no performance is implied. Not charged on stale data.",
     example: {
       kind: "slate",
       ...FRESH("2026-10-22T11:05:00Z", "2026-10-22T23:05:00Z"),
@@ -133,9 +146,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   market: {
     description:
-      "Use this when you need the overall crypto market backdrop in one call: BTC levels, projection and signal; total market cap, " +
-      "BTC/ETH dominance, Fear & Greed, BTC perpetual funding and open interest, a USD/JPY note and up/down breadth across " +
-      "tracked coins. " + FAIR_USE + " JSON.",
+      "Crypto market backdrop in one call: BTC support/resistance and bias, macro context (total market cap, BTC dominance, Fear & Greed, USD/JPY note, BTC perpetual funding and open interest) and 24h breadth across 13 tracked coins. Use when an agent needs the overall market context before analysing individual coins. Analytics only, not financial advice. Not charged on stale data.",
     example: {
       kind: "market",
       btc_backdrop: { bias: "soft", support: [80000, 81000], resistance: [82500, 84800] },
@@ -147,9 +158,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   brief: {
     description:
-      "Use this when you need a ready-to-read daily crypto market brief: BTC price, levels and signal, Fear & Greed, funding, " +
-      "top/bottom movers, key levels, macro events in the next 48h, open paper trades and sourced news. JSON with a markdown " +
-      "field; format=md returns text/markdown. " + FAIR_USE,
+      "Daily crypto market brief as JSON with a ready-to-use markdown field (or text/markdown with format=md): headline, BTC price and signal label, key levels, Fear & Greed, funding, top and bottom movers, yen watch, events in the next 48 hours, open paper trades and sourced news. Use when an agent needs a single daily summary of the crypto market to read or republish. Analytics only, not financial advice. Not charged on invalid format or stale data.",
     query: FORMAT_QUERY,
     example: {
       kind: "brief",
@@ -165,9 +174,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   yen: {
     description:
-      "Use this when you need to check whether yen carry-trade stress could hit crypto: USD/JPY and Nikkei 225 (price, 1d/5d " +
-      "change, ranges), a rule-based carry-trade risk level (low/watch/elevated) around 155 USD/JPY with reasons, BTC context " +
-      "and upcoming Japan events (BOJ, CPI). " + FAIR_USE + " JSON.",
+      "Yen carry-trade monitor: USD/JPY and Nikkei 225 levels with daily and 5-day changes, a rule-based carry-trade risk level (low, watch or elevated) measured against the 155 USD/JPY line with reasons, and upcoming Japan events such as BOJ decisions and CPI releases, with sources. Use when an agent needs to assess whether yen funding stress could affect risk assets including crypto. Analytics only, not financial advice. Not charged on stale data.",
     example: {
       kind: "macro_yen",
       usd_jpy: { price: 157.08, change_pct: -0.62, change_5d_pct: -0.67 },
@@ -180,9 +187,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   sentiment: {
     description:
-      "Use this when you need a quick read of crypto crowd positioning: Fear & Greed (value, band, day-over-day change), BTC " +
-      "perpetual funding with a plain-English read and open interest, total market cap, volume, dominance and breadth / " +
-      "signal-label counts. " + FAIR_USE + " JSON.",
+      "Crypto positioning snapshot: Fear & Greed value, band and day-over-day change; BTC perpetual funding rate with a plain-English read and open interest; total market cap and BTC dominance; and 24h breadth across tracked coins. Use when an agent needs a compact read of market sentiment and derivatives positioning. Analytics only, not financial advice. Not charged on stale data.",
     example: {
       kind: "sentiment",
       fear_greed: { value: 49, classification: "Neutral", previous: 54, change: -5 },
@@ -195,9 +200,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   events: {
     description:
-      "Use this when you need to know what scheduled events could move crypto soon: timed macro releases and central-bank " +
-      "decisions (UTC and US Central, with why each matters) and dated per-coin catalysts such as network upgrades. Every row " +
-      "is sourced. " + FAIR_USE + " JSON.",
+      "Calendar of scheduled macro and crypto events: timed releases and policy decisions in UTC and US Central time with a note on relevance, plus dated per-coin catalysts such as network upgrades and conferences. Every row cites a source. Use when an agent needs to know which scheduled events in the coming days could affect crypto markets. For only the next 48 hours, /v1/events/next48h is lower cost. Not charged on stale data.",
     example: {
       kind: "events",
       next: { at_utc: "2026-10-22T23:30:00Z", title: "Japan September CPI", why: "Last national CPI before the BOJ meeting." },
@@ -209,8 +212,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   trades: {
     description:
-      "Use this when you need the full list of Lumi's crypto paper-trade ideas (not advice): entry, stop, targets, leverage and " +
-      "reasoning for every idea, newest first. " + FAIR_USE + " JSON.",
+      "Lumi's paper-trade history as a raw list: id, coin, direction, entry, stop, targets, leverage, status and reasoning for each idea. Paper trades only, published for evaluation and not as advice; no performance is implied. Use when an agent needs the historical record of Lumi's trade ideas, for example to audit or backtest them. Not charged on stale data.",
     example: {
       kind: "trades",
       count: 8,
@@ -221,20 +223,18 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   institutional: {
     description:
-      "Use this when you need a sourced daily summary of what regulators, central banks, banks and tokenization firms are " +
-      "doing in digital assets and stablecoins, and which networks each move touches. Each item has source URL, date, impact, " +
-      "confidence and a confirmed-vs-indirect link type. JSON with markdown; format=md for text. " + FAIR_USE,
+      "Daily sourced digest of digital-asset and stablecoin activity by central banks, standard-setters, regulators, banks and tokenization firms. Each item has a date, source URL, why it matters, impact, confidence and the tracked networks it touches, with a link_type separating confirmed links from indirect analysis. Also a summary, per-coin map and dated watch list. Use when an agent needs the regulatory and institutional context for digital assets. Neutral; not advice.",
     query: FORMAT_QUERY,
     example: {
       kind: "institutional_brief",
       date: "2026-10-22",
-      big_picture: ["US stablecoin rules move from law to implementation."],
+      big_picture: ["Stablecoin rules move from consultation to implementation."],
       items: [
         {
-          entity: "US Treasury / OCC",
-          headline: "OCC issues final GENIUS Act rule for payment stablecoin issuers",
+          entity: "Example regulator",
+          headline: "Regulator publishes final guidance for payment stablecoin issuers",
           date: "2026-10-21",
-          source_url: "https://occ.gov/news-issuances/news-releases/2026/nr-occ-2026-92.html",
+          source_url: "https://example.org/news/stablecoin-guidance",
           coins: ["RLUSD", "USDC"],
           link_type: "context",
           impact: "bullish",
@@ -249,14 +249,11 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   vendor_report: {
     description:
-      "Use this when you need evidence before paying an x402 API vendor on Lumi's trust list: every free 402-quote check " +
-      "(90-day retention) with status, price and latency; paid test-buys with tx hashes and delivered yes/no; latency " +
-      "percentiles; uptime over 24h/7d/30d/90d; quoted-price history and score components. Automated observations, not a " +
-      "rating. Not charged on bad input or stale data. JSON.",
+      "Full observation history for one x402 vendor on Lumi's curated trust list: unpaid 402-quote checks (90-day retention) with status, quoted price and latency; paid test purchases with ledger transaction hashes and delivered yes/no; uptime over 24h/7d/30d/90d; latency statistics; quoted-price history; score components with sample sizes. Use when deeper due diligence on a vendor is needed than the free summary at /v1/trust/vendors/{id}. Automated observations, not a rating.",
     routeTemplate: "/v1/trust/vendors/:id/report",
     pathParam: {
       name: "id",
-      schema: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,63}$", description: "Vendor id from GET /v1/trust/vendors (free)" },
+      schema: { type: "string", pattern: VENDOR_ID_PATTERN, description: "Vendor id from GET /v1/trust/vendors (free)" },
     },
     example: {
       kind: "trust_vendor_report",
@@ -272,9 +269,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   scan: {
     description:
-      "Use this when you need to screen the whole crypto market in one paid call instead of 50: the mechanical buy/sell label and " +
-      "score, 1h/4h/1d labels, 1h RSI, price and 24h change for every top-50 coin, strongest first, plus label counts and " +
-      "breadth. Computed live from exchange candles (1h refreshed about every 13 minutes). " + FAIR_USE + " JSON.",
+      "Market-wide screen of 50 large-cap crypto assets in one call: label, score, 1h/4h/1d labels, 1h RSI, price and 24h change per coin, sorted strongest first, plus label counts and a breadth summary. Computed live; freshness fields reflect the oldest coin included, and the scan is not sold when fewer than 40 coins are fresh. Use when an agent needs to compare many coins at once instead of making 50 single-coin calls. Analytics only, not financial advice.",
     example: {
       kind: "scan",
       count: 50,
@@ -287,9 +282,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   lite: {
     description:
-      "Use this when you only need the headline buy/sell read on one crypto coin, cheaply: overall label and score, 1h/4h/1d " +
-      "labels and price with 24h change. Top-50 coins (GET /v1/coins), computed live. GET /v1/signal/{coin} adds the full " +
-      "indicator breakdown. " + FAIR_USE + " JSON.",
+      "Low-cost headline read for one of 50 large-cap crypto assets: overall label and score, 1h/4h/1d labels, and price with 24h change. Same live computation as /v1/signal/{coin}, without the indicator breakdown. Use when an agent only needs the label and price for a single coin. Analytics only, not financial advice. Not charged on unknown coins or stale data.",
     routeTemplate: "/v1/lite/:coin",
     pathParam: COIN_PARAM,
     example: {
@@ -305,14 +298,13 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   trust_check: {
     description:
-      "Use this before your agent pays an unfamiliar x402 URL: allow / warn / block with reasons, from Lumi's daily CDP Bazaar " +
-      "index, free quote checks and Lumi's own test-buys (Base USDC for Bazaar listings; XRPL only for a small curated vendor list, counted separately). Pass url, and optionally the payTo and amount you were quoted to catch " +
-      "address or price mismatches. Observations, not a guarantee. Not charged on bad input. JSON.",
+      "Pre-payment check for an x402 resource URL. Returns allow, warn or block with coded reasons, built from a daily index of the CDP Bazaar catalog, unpaid 402-quote checks and on-chain test purchases. Optional payTo and amount inputs are compared with the listing to detect address or price mismatches. Use when an agent is about to pay an unfamiliar x402 endpoint and needs evidence first. Observations, not a guarantee. Not charged on invalid input.",
     query: {
       url: { type: "string", description: "The x402 resource URL you are about to pay (required)" },
       payTo: { type: "string", description: "The payTo address from its 402 quote (optional)" },
       amount: { type: "string", description: "The quoted price in USD, e.g. 0.01 (optional)" },
     },
+    queryRequired: ["url"],
     example: {
       kind: "trust_check",
       query: { url: "https://api.example.com/v1/data", payTo: "0x12ab...89cd" },
@@ -326,9 +318,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   funding: {
     description:
-      "Use this when you need crypto derivatives positioning: current perpetual funding rate for each top-50 coin listed on OKX " +
-      "(rate, 8h-normalised, annualised, next funding time), BTC read, median, most positive and negative, refreshed every " +
-      "15 minutes. Positive = longs pay shorts. " + FAIR_USE + " JSON.",
+      "Perpetual funding rates for the top-50 coins listed on OKX USDT swaps: rate, 8h-normalised rate, annualised rate, next funding time and a plain-English read, plus the BTC read, the median and the most positive and negative coins. Positive means longs pay shorts. Refreshed every 15 minutes. Use when an agent needs derivatives positioning data across many coins. Analytics only, not financial advice. Not charged on stale data.",
     example: {
       kind: "funding",
       venue: "OKX USDT perpetual swaps",
@@ -341,8 +331,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   fear_greed: {
     description:
-      "Use this when you need crypto market sentiment: the CoinMarketCap Fear & Greed index now, yesterday, last week and last " +
-      "month, change vs each, yearly high/low and a 30-day daily series, refreshed every 30 minutes. " + FAIR_USE + " JSON.",
+      "CoinMarketCap Crypto Fear & Greed index: current value and classification, change versus yesterday, last week and last month, yearly high and low, and a 30-day daily series. Refreshed every 30 minutes. Use when an agent needs a sentiment gauge with recent history rather than a single reading. Not charged on stale data.",
     example: {
       kind: "fear_greed",
       source: "CoinMarketCap",
@@ -356,9 +345,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   events_48h: {
     description:
-      "Use this when you need to know what could move crypto in the next 48 hours: scheduled macro releases and decisions (Fed, " +
-      "CPI, jobs, BOJ...) with exact UTC and US Central times, why each matters and its source, plus dated coin catalysts. " +
-      FAIR_USE + " JSON.",
+      "Scheduled macro releases, policy decisions and dated per-coin catalysts in the next 48 hours, with exact UTC and US Central times, a note on relevance and a source for each. An empty window is a valid result. Use when an agent needs a short-horizon event check before acting or scheduling. The full multi-day calendar is /v1/events. Not charged on stale data.",
     example: {
       kind: "events_48h",
       count: 2,
@@ -400,7 +387,7 @@ export function bazaarExtension(route: PaidRoute, arg?: string, query?: Record<s
   if (meta.query) {
     const present = Object.fromEntries(Object.entries(query ?? {}).filter(([k]) => k in meta.query!));
     if (Object.keys(present).length) input.queryParams = present;
-    inputProps.queryParams = { type: "object", properties: meta.query, additionalProperties: false };
+    inputProps.queryParams = { type: "object", properties: meta.query, ...(meta.queryRequired ? { required: meta.queryRequired } : {}), additionalProperties: false };
   } else if (!meta.pathParam) {
     // No inputs at all: still declare an (empty) query schema so discovery tools see an input schema.
     inputProps.queryParams = { type: "object", properties: {}, additionalProperties: false };
@@ -436,8 +423,8 @@ export function bazaarExtension(route: PaidRoute, arg?: string, query?: Record<s
 /** resource.description for a quote: the full summary when it fits CDP's limit, otherwise the Bazaar listing text. */
 /** Buyer-keyword headline per route, so Bazaar search and listings show what it is and what it costs first. */
 const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
-  signal: (c) => `${c ?? "Crypto"} crypto trading signal (buy/sell score)`,
-  levels: (c) => `${c ?? "Crypto"} support and resistance levels with 7-day price projection`,
+  signal: (c) => (c ? `${c} crypto trading signal (buy/sell score)` : "Crypto trading signal (buy/sell score)"),
+  levels: (c) => `${c ? `${c} support` : "Crypto support"} and resistance levels with 7-day scenario levels`,
   slate: () => "Crypto paper-trade ideas (entry, stop, targets)",
   market: () => "Crypto market backdrop (BTC levels, macro, dominance, funding)",
   brief: () => "Daily crypto market brief (BTC, movers, key levels, news)",
@@ -448,7 +435,7 @@ const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
   institutional: () => "Daily institutional & policy brief for digital assets (regulators, banks, tokenization)",
   vendor_report: (v) => `x402 vendor trust report${v ? ` for ${v}` : ""} (uptime, latency, test-buys)`,
   scan: () => "Crypto market scan: buy/sell signals for 50 coins in one call",
-  lite: (c) => `${c ?? "Crypto"} lite trading signal (label, score, price)`,
+  lite: (c) => (c ? `${c} lite trading signal (label, score, price)` : "Crypto lite trading signal (label, score, price)"),
   trust_check: () => "Should I pay this x402 URL? allow/warn/block check",
   funding: () => "Crypto perpetual funding rates (50 coins, OKX)",
   fear_greed: () => "Crypto Fear & Greed index (CoinMarketCap, 30-day history)",
@@ -461,8 +448,11 @@ const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
  */
 export function resourceDescription(route: PaidRoute, full: string, opts: { subject?: string; usd?: string } = {}): string {
   if (opts.usd) {
-    const d = `${HEADLINES[route](opts.subject)} - $${Number(opts.usd)}. ${BAZAAR_ROUTES[route].description}`;
-    return d.length <= BAZAAR_MAX_DESCRIPTION ? d : d.slice(0, BAZAAR_MAX_DESCRIPTION - 1).replace(/\s+\S*$/, "") + "…";
+    // Never cut the listing text: headline + price + text when it fits, else text + price, else the text alone.
+    const desc = BAZAAR_ROUTES[route].description;
+    const p = `$${Number(opts.usd)}`;
+    for (const d of [`${HEADLINES[route](opts.subject)} - ${p}. ${desc}`, `${desc} ${p} per call.`, desc]) if (d.length <= BAZAAR_MAX_DESCRIPTION) return d;
+    return desc.slice(0, BAZAAR_MAX_DESCRIPTION - 1).replace(/\s+\S*$/, "") + "…";
   }
   if (full.length <= BAZAAR_MAX_DESCRIPTION) return full;
   return BAZAAR_ROUTES[route].description.slice(0, BAZAAR_MAX_DESCRIPTION);

@@ -68,7 +68,7 @@ export function createFeed(deps: CommerceDeps, relationships: (payTos: string[],
       summary: "Licensed, keyed access to Lumi's x402 trust observations (quote checks, test-buys, payTo census) for facilitators, wallets and agent frameworks.",
       plans: [
         { plan: "free", price_usd: "0", lookups: `${FEED_LIMITS.freePerMonth}/month`, evidence: "answer-only", rate_limit_per_min: FEED_LIMITS.perMinute.free, signup: `GET ${base}/v1/feed/challenge?wallet=<address>, sign it, POST ${base}/v1/feed/keys` },
-        { plan: "feed_credits", price_usd: PLANS.feed_credits.usd, lookups: `${FEED_LIMITS.creditsPerPurchase} prepaid (no expiry)`, evidence: "answer-only", rate_limit_per_min: FEED_LIMITS.perMinute.credits, pay: `${base}/v1/feed/credits?key_id=<key id>` },
+        { plan: "feed_credits", price_usd: PLANS.feed_credits.usd, lookups: `${FEED_LIMITS.creditsPerPurchase} prepaid, never expire`, evidence: "answer-only", rate_limit_per_min: FEED_LIMITS.perMinute.credits, pay: `${base}/v1/feed/credits?key_id=<key id>` },
         { plan: "feed", price_usd: PLANS.feed.usd, term_days: 30, lookups: `${FEED_LIMITS.included.feed.toLocaleString("en-US")} per term`, evidence: "full (tx hashes, receipts)", delta: true, rate_limit_per_min: FEED_LIMITS.perMinute.feed, pay: `${base}/v1/feed/subscribe/feed?key_id=<key id> (omit key_id to get a new key)` },
         { plan: "feed_pro", price_usd: PLANS.feed_pro.usd, term_days: 30, lookups: `${FEED_LIMITS.included.feed_pro.toLocaleString("en-US")} per term`, evidence: "full (tx hashes, receipts)", delta: true, snapshot: true, webhooks: true, rate_limit_per_min: FEED_LIMITS.perMinute.feed_pro, pay: `${base}/v1/feed/subscribe/feed_pro?key_id=<key id>` },
       ],

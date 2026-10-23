@@ -1,3 +1,4 @@
+import { BAZAAR_ROUTES } from "../src/bazaar";
 import { describe, it, expect } from "vitest";
 import { createApp } from "../src/app";
 import { institutionalView, linkType } from "../src/institutional";
@@ -128,7 +129,7 @@ describe("/v1/institutional: never charged when stale or missing", () => {
     expect(maxAgeMs("institutional_brief", 12)).toBe(36 * H);
   });
 
-  it("serves up to 36 h old; refuses older with 503 data_stale, no quote, payment header ignored", async () => {
+  it("serves up to 36 h old; refuses older with 503 stale_data, no quote, payment header ignored", async () => {
     const ok = setup({ now: Date.parse("2026-10-22T12:00:00Z") + 35 * H });
     // other inputs are not needed by this route, so only the brief's age matters
     expect((await ok.get("/v1/institutional")).status).toBe(402);
@@ -137,7 +138,7 @@ describe("/v1/institutional: never charged when stale or missing", () => {
     const r = await get("/v1/institutional");
     expect(r.status).toBe(503);
     expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
-    expect(await r.json()).toMatchObject({ error: "data_stale", note: "Not charged.", inputs: [{ file: "institutional_brief.json" }] });
+    expect(await r.json()).toMatchObject({ error: "stale_data", note: "Not charged.", inputs: [{ file: "institutional_brief.json" }] });
     const fresh = setup();
     const q = await (await fresh.get("/v1/institutional")).json();
     const paidStale = await get("/v1/institutional", { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts[0]) });
@@ -241,12 +242,14 @@ describe("?format validation", () => {
 });
 
 describe("Bazaar resource descriptions", () => {
-  it("lead with buyer keywords and the USD price", async () => {
+  it("use the listing text verbatim, with the USD price, never cut and never instructions to agents", async () => {
     const { get } = setup();
-    const sig = await (await get("/v1/signal/xrp")).json();
-    expect(sig.resource.description).toMatch(/^XRP crypto trading signal \(buy\/sell score\) - \$0\.01\. /);
-    expect(sig.resource.description.length).toBeLessThanOrEqual(500);
-    const inst = await (await get("/v1/institutional")).json();
-    expect(inst.resource.description).toMatch(/^Daily institutional & policy brief for digital assets.* - \$0\.25\. /);
+    for (const [p, route, usd] of [["/v1/signal/xrp", "signal", "0.01"], ["/v1/institutional", "institutional", "0.25"], ["/v1/trust/check?url=https://a.example/x", "trust_check", ""]] as const) {
+      const d = (await (await get(p)).json()).resource.description as string;
+      expect(d.length, p).toBeLessThanOrEqual(500);
+      expect(d, p).toContain(BAZAAR_ROUTES[route].description);
+      if (usd) expect(d, p).toContain(`$${Number(usd)}`);
+      expect(d).not.toMatch(/\b(you must|ignore previous|always call)\b/i);
+    }
   });
 });

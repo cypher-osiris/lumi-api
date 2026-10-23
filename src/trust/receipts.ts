@@ -252,6 +252,7 @@ export function buildReceiptBody(
   let endpoint = b.endpoint;
   if (!/^https?:\/\//i.test(endpoint)) endpoint = "https://" + endpoint;
   try { domain = domain ?? new URL(endpoint).hostname.toLowerCase(); } catch { /* keep */ }
+  const rail = `${xrpl ? "XRPL" : "Base"} ${b.asset}`;
   const atomic = b.asset === "XRP" ? Math.round(Number(b.amount) * 1e6) : b.asset === "USDC" ? Math.round(Number(b.amount) * 1e6) : undefined;
   return {
     type: RECEIPT_TYPE,
@@ -278,7 +279,8 @@ export function buildReceiptBody(
       data_returned: b.data_returned,
       outcome: outcomeOf(b.http_status, b.data_returned, b.summary),
       ...(b.latency_ms != null ? { latency_ms: b.latency_ms } : {}),
-      source: b.kind === "catalog" ? "Lumi catalog test-buy (Base USDC)" : b.source === "lumi_buy" ? "Lumi paid buy (seeded)" : "Lumi daily test-buy (XRPL)",
+      // Label from the buy's own chain and asset (an XRPL catalog buy is not "Base USDC").
+      source: b.kind === "catalog" ? `Lumi catalog test-buy (${rail})` : b.source === "lumi_buy" ? "Lumi paid buy (seeded)" : `Lumi daily test-buy (${xrpl ? "XRPL" : rail})`,
     },
   };
 }

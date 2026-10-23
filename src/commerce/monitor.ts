@@ -8,7 +8,7 @@ import { verifyXrplSignature, xrplAddressOf } from "../trust/verify";
 import { explorerFor } from "../trust/catalog";
 import { sendPlainEmail } from "../sales";
 import { DAY_MS, MONITOR_LIMITS, MONITOR_PLANS, PLANS, TEST_PRICE_USD, hmacHex, iso, isTestWallet, planPriceUsd, planQuote, randHex, sha256, type PlanId } from "./plans";
-import { MONITOR_METHODOLOGY, MONITOR_SAFEGUARDS } from "./policy";
+import { MONITOR_METHODOLOGY, MONITOR_SAFEGUARDS, MONITOR_TERMS } from "./policy";
 import { makeChallenge, verifyProof } from "./proof";
 import { NO_STORE, acceptAsset, acceptUsd, bad, bearer, parse402, readJson, safeEmail, safeHttpsUrl, type CommerceDeps, type WaitUntil } from "./common";
 import type { Enrollment, FindingRow, MonitorEndpoint, PlanRow, RunRow } from "./store";
@@ -116,7 +116,9 @@ export function createMonitor(deps: CommerceDeps) {
       safeguards: MONITOR_SAFEGUARDS,
       corrections: `${base}/v1/monitor/corrections`,
       sellers: `${base}/v1/monitor/sellers`,
-      refunds: "Plans are not refundable once paid, except when Lumi cannot run the monitoring (then the term is extended or refunded at Lumi's discretion). Contact via lumitrades.io.",
+      refunds: `${MONITOR_TERMS.terms[0]} Contact via lumitrades.io.`,
+      audit_reports: MONITOR_TERMS.terms[1],
+      terms: MONITOR_TERMS,
       disclaimer: "Monitoring results are dated observations, not an endorsement, audit opinion or guarantee. Not financial advice.",
     };
   }

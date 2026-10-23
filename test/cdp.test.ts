@@ -3,7 +3,7 @@ import { seededStores } from "./stage_c_fixtures";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { cdpJwt, decodeExtensionResponses, CDP_FACILITATOR_URL } from "../src/cdp";
-import { BAZAAR_ROUTES, BAZAAR_MAX_DESCRIPTION, bazaarExtension, ROUTE_TAGS, SERVICE_NAME, SERVICE_ICON } from "../src/bazaar";
+import { BAZAAR_ROUTES, BAZAAR_MAX_DESCRIPTION, bazaarExtension, ROUTE_TAGS, SERVICE_NAME, SERVICE_ICON, serviceNameFor } from "../src/bazaar";
 import { PAID_ENDPOINTS } from "../src/catalog";
 import { PAID_ROUTES } from "../src/config";
 import { validateDiscoveryExtension, extractDiscoveryInfo, isValidRouteTemplate, sanitizeResourceServiceMetadata } from "@x402/extensions/bazaar";
@@ -101,7 +101,7 @@ describe("Bazaar metadata", () => {
       expect(body.extensions.bazaar.info.output.example.kind).toBe(BAZAAR_ROUTES[e.route].example.kind);
       // Bazaar service metadata survives the SDK's soft-drop sanitizer unchanged
       const meta = { serviceName: body.resource.serviceName, tags: body.resource.tags, iconUrl: body.resource.iconUrl };
-      expect(meta).toEqual({ serviceName: SERVICE_NAME, tags: ROUTE_TAGS[e.route], iconUrl: SERVICE_ICON });
+      expect(meta).toEqual({ serviceName: serviceNameFor(e.route), tags: ROUTE_TAGS[e.route], iconUrl: SERVICE_ICON });
       expect(sanitizeResourceServiceMetadata(meta as any)).toEqual(meta);
       expect(validateDiscoveryExtension(body.extensions.bazaar).valid).toBe(true);
     }

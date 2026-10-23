@@ -75,7 +75,7 @@ describe("paid vendor report: x402 terms", () => {
     const s = await late.get(PATH);
     expect(s.status).toBe(503);
     expect(s.headers.get("PAYMENT-REQUIRED")).toBeNull();
-    expect(await s.json()).toMatchObject({ error: "data_stale", note: "Not charged.", last_observed_at: expect.any(String) });
+    expect(await s.json()).toMatchObject({ error: "stale_data", note: "Not charged.", last_observed_at: expect.any(String) });
     // a vendor never observed at all
     expect((await setup().get("/v1/trust/vendors/monid/report")).status).toBe(503);
   });

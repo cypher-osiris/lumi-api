@@ -122,7 +122,9 @@ describe("you only pay when you get data", () => {
     expect(r.status).toBe(503);
     expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
     const b = await r.json();
-    expect(b).toMatchObject({ error: "data_stale", note: "Not charged.", retryable: true });
+    expect(b).toMatchObject({ error: "stale_data", note: "Not charged.", retryable: true, retry_after_seconds: expect.any(Number) });
+    expect(typeof b.data_age_seconds === "number" || b.data_age_seconds === null).toBe(true);
+    expect(b.data_age_seconds).toBeGreaterThan(86_400);
     // even a (forged) payment header cannot trigger settlement
     const r2 = await get(path, { "PAYMENT-SIGNATURE": paymentHeaderFor({ scheme: "exact", extra: { invoiceId: "x" } }) });
     expect(r2.status).toBe(503);

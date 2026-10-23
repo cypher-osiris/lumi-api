@@ -56,7 +56,7 @@ describe("stale refusal", () => {
     const r = staleRefusal({ staleAfterMs: NOW - 1 } as any, NOW)!;
     expect(r.status).toBe(503);
     const j: any = await r.json();
-    expect(j).toMatchObject({ error: "data_stale", settlementAttempted: false, retryable: true });
+    expect(j).toMatchObject({ error: "stale_data", settlementAttempted: false, retryable: true });
   });
 });
 

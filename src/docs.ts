@@ -4,7 +4,7 @@ import { COMMERCE_FREE_ENDPOINTS, commerceOpenApiPaths, commerceSkillMd, planPri
 import type { Config, PaidRoute } from "./config";
 import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable, EXAMPLE_COIN } from "./catalog";
-import { BAZAAR_ROUTES } from "./bazaar";
+import { BAZAAR_ROUTES, TRUST_ROUTES, VENDOR_ID_PATTERN, serviceNameFor } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SUMMARY, trialEligible } from "./trial";
 
@@ -33,7 +33,7 @@ export function freeTrialInfo(cfg: Config) {
   };
 }
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.1.1";
 
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
@@ -103,6 +103,8 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       { method: "GET", path: "/skill.md", summary: "Agent guide: what is offered, prices, how to pay, example code" },
       { method: "GET", path: "/.well-known/x402", summary: "x402 discovery manifest" },
       { method: "GET", path: "/.well-known/agent-card.json", summary: "A2A agent card (alias /.well-known/agent.json)" },
+      { method: "GET", path: "/.well-known/mcp/server-card.json", summary: "MCP Server Card for the remote MCP server (alias /.well-known/mcp.json)" },
+      { method: "GET", path: "/.well-known/agents.json", summary: "agents.json (v0.1.0) flows over /openapi.json, trust check first" },
       { method: "GET", path: "/openapi.json", summary: "OpenAPI 3.1 description with x-payment-info" },
       { method: "GET", path: "/v1/coins", summary: "Supported coins" },
       { method: "GET", path: "/v1/samples", summary: "Free truncated SAMPLE of every paid product (lists cut to 2, up to 10 min old) with USD price and full URL" },
@@ -146,6 +148,7 @@ export function wellKnownX402(cfg: Config, base: string) {
       mimeType: "application/json",
       method: e.method,
       description: e.summary,
+      serviceName: serviceNameFor(e.route),
       accepts: [
         ...(cfg.evm
           ? [{
@@ -186,7 +189,7 @@ export function wellKnownX402(cfg: Config, base: string) {
     docs: `${base}/skill.md`,
     mcp: { url: `${base}/mcp`, transport: "streamable-http" },
     ...(freeTrialInfo(cfg) ? { free_trial: freeTrialInfo(cfg) } : {}),
-    attestation: { type: "none" },
+    attestation: { type: "signed-receipts", receipts: "counterparty_delivery_receipt v0.1 (SHA-256 receipt_hash, signed by the paying wallet) on Lumi Trust test-buys, served in paid /v1/trust/check and vendor reports", verify: `${base}/v1/trust/receipts/verify`, monitor_reports: "Audit reports carry an Ed25519 signature over report_hash; only the hash and signature are public" },
     contact: "https://lumitrades.io",
     updated: new Date().toISOString(),
   };
@@ -195,17 +198,26 @@ export function wellKnownX402(cfg: Config, base: string) {
 /** Lumi's site coins (full coverage); the rest of the top-50 universe is signals-only (group "top50"). */
 const siteOnly = (coins: CoinRef[]) => coins.filter((c) => c.group !== "top50");
 
+/** Optional Idempotency-Key header on every paid route. */
+const IDEMPOTENCY_PARAM = {
+  name: "Idempotency-Key",
+  in: "header",
+  required: false,
+  description: "Optional retry key (16-128 characters: letters, digits, - or _). A retry with the same key and the same payment returns the cached response (header Idempotent-Replayed: true) and is never charged twice; the same key with a different payment is refused with 409. The x402 payment-identifier extension id works the same way. Cached for 24 hours.",
+  schema: { type: "string", minLength: 16, maxLength: 128, pattern: "^[A-Za-z0-9_-]{16,128}$" },
+};
+
 export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   const coinParam = {
     name: "coin",
     in: "path",
     required: true,
-    description: "Ticker or CoinGecko id (case-insensitive). Signals: any coin in GET /v1/coins.",
+    description: "Ticker (as listed in the enum) or CoinGecko id; matching is case-insensitive, so XRP, xrp and ripple are the same coin. Signals: any coin in GET /v1/coins. Unknown coins return 404, not charged.",
     schema: { type: "string", enum: coins.map((c) => c.symbol) },
-    example: EXAMPLE_COIN.toLowerCase(),
-    examples: { xrp: { value: "xrp" }, btc: { value: "btc" }, eth: { value: "eth" } },
+    example: EXAMPLE_COIN.toUpperCase(),
+    examples: { [EXAMPLE_COIN.toLowerCase()]: { value: EXAMPLE_COIN.toUpperCase() }, btc: { value: "BTC" }, eth: { value: "ETH" } },
   };
-  const levelsCoinParam = { ...coinParam, description: "Ticker or CoinGecko id (case-insensitive). Levels cover Lumi's watchlist and majors.", schema: { type: "string", enum: siteOnly(coins).map((c) => c.symbol) } };
+  const levelsCoinParam = { ...coinParam, description: "Ticker (as listed in the enum) or CoinGecko id, case-insensitive. Levels cover Lumi's watchlist and majors; other coins return 404, not charged.", schema: { type: "string", enum: siteOnly(coins).map((c) => c.symbol) } };
   const paths: Record<string, unknown> = {
     "/v1/coins": { get: { summary: "List supported coins (free)", security: [], responses: { "200": { description: "OK" } } } },
     "/v1/samples": { get: { summary: "Free truncated samples of every paid product (labelled SAMPLE)", security: [], responses: { "200": { description: "OK" } } } },
@@ -219,10 +231,12 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         operationId: e.route,
         summary: e.name,
         description: e.summary,
-        parameters: e.template.includes("{coin}")
+        ...(TRUST_ROUTES.includes(e.route) ? { tags: ["trust"] } : {}),
+        "x-service-name": serviceNameFor(e.route),
+        parameters: [...(e.template.includes("{coin}")
           ? [e.route === "levels" ? levelsCoinParam : coinParam]
           : e.template.includes("{id}")
-          ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab", examples: { printmoneylab: { value: "printmoneylab" } } }]
+          ? [{ name: "id", in: "path", required: true, description: "Vendor id from GET /v1/trust/vendors (free)", schema: { type: "string", pattern: VENDOR_ID_PATTERN }, example: "printmoneylab", examples: { printmoneylab: { value: "printmoneylab" } } }]
           : e.route === "trust_check"
           ? [
               { name: "url", in: "query", required: true, description: "The x402 resource URL you are about to pay (http/https)", schema: { type: "string", maxLength: 500 }, example: "https://api.example.com/v1/data" },
@@ -231,7 +245,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
             ]
           : e.route === "brief" || e.route === "institutional"
             ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
-            : [],
+            : []), IDEMPOTENCY_PARAM],
         ...(e.template.includes("{coin}")
           ? { "x-example-url": `${base}${e.template.replace("{coin}", EXAMPLE_COIN)}` }
           : e.template.includes("{id}")
@@ -247,46 +261,46 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           xrp_price: cfg.xrpPricing === "live"
             ? { mode: "live", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]), ...(cfg.xrpRate ? { xrp_usd: cfg.xrpRate.usd, as_of: cfg.xrpRate.as_of } : {}), note: "XRP amount = USD price / live XRP-USD rate (5-minute cache), rounded up to 0.0001 XRP; the 402 quote is binding" }
             : { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
-          scheme: "exact",
-          network: cfg.network,
-          asset: "XRP",
-          amount_drops: cfg.pricesDrops[e.route],
-          payTo: cfg.payTo,
-          ...(cfg.ious.length || cfg.evm
-            ? {
-                alternatives: [
-                  ...(cfg.evm
-                    ? [{
-                        price: { mode: "fixed", currency: "USDC", amount: cfg.evm.prices[e.route] },
-                        scheme: "exact",
-                        network: cfg.evm.network,
-                        asset: cfg.evm.asset,
-                        amount: cfg.evm.amounts[e.route],
-                        payTo: cfg.evm.payTo,
-                      }]
-                    : []),
-                  ...cfg.ious.map((o) => ({
-                    price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
-                    network: cfg.network,
-                    asset: o.currency,
-                    issuer: o.issuer,
-                    amount: o.prices[e.route],
-                  })),
-                ],
-              }
-            : {}),
+          // Payment options in the same order as the 402 accepts[]: Base USDC first, then XRP, then the XRPL IOUs.
+          ...(cfg.evm
+            ? { scheme: "exact", network: cfg.evm.network, asset: cfg.evm.asset, asset_symbol: "USDC", amount: cfg.evm.amounts[e.route], payTo: cfg.evm.payTo }
+            : { scheme: "exact", network: cfg.network, asset: "XRP", amount_drops: cfg.pricesDrops[e.route], payTo: cfg.payTo }),
+          alternatives: [
+            ...(cfg.evm ? [{ price: { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) }, scheme: "exact", network: cfg.network, asset: "XRP", amount_drops: cfg.pricesDrops[e.route], payTo: cfg.payTo }] : []),
+            ...cfg.ious.map((o) => ({
+              price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
+              scheme: "exact",
+              network: cfg.network,
+              asset: o.currency,
+              issuer: o.issuer,
+              amount: o.prices[e.route],
+              payTo: cfg.payTo,
+            })),
+          ],
         },
         responses: {
           "200": {
             description: "Paid data (JSON) with as_of, data_age_seconds, next_update and stale_after. Settlement receipt in the PAYMENT-RESPONSE header.",
             content: { "application/json": { example: { ...BAZAAR_ROUTES[e.route].example, payment: { ...(BAZAAR_ROUTES[e.route].example.payment as object), amount: String(Number(usdPrice(cfg, e.route) ?? 0)) } } } },
           },
-          "402": { description: "Payment required. x402 v2 PaymentRequired in the body and the PAYMENT-REQUIRED header." },
+          "402": { description: "Payment required. x402 v2 PaymentRequired in the body and the PAYMENT-REQUIRED header. accepts[] order: Base USDC, XRP, then XRPL IOUs." },
           ...(e.template.includes("{")
-            ? { "400": { description: "Path template not filled in (a literal {coin} or {id}); the body gives an example URL (never charged)." } }
+            ? { "400": { description: "Path template not filled in (e.g. :coin, <coin>, ${coin}), or any unfilled path sent with a payment header; the body gives an example URL (never charged). Without a payment header, the literal OpenAPI template path ({coin} / {id}, as discovery crawlers request it) returns the route's normal 402 quote with a note to fill the placeholder; a payment sent to it is refused with this 400." } }
+            : e.route === "trust_check"
+            ? { "400": { description: "url missing, empty or not an absolute http(s) URL, or payTo/amount malformed (never charged). A request with no query string at all, as discovery crawlers send it, returns the normal 402 quote; a payment sent without url is refused with this 400." } }
+            : e.route === "brief" || e.route === "institutional"
+            ? { "400": { description: "format is not json or md (never charged)." } }
             : {}),
-          "404": { description: e.template.includes("{id}") ? "Unknown vendor (never charged)." : "Unknown coin (never charged)." },
-          "503": { description: e.route === "vendor_report" ? "No observation of this vendor in the last 48 h, so the report is not sold (never charged)." : "Inputs missing or past stale_after (never charged)." },
+          ...(e.template.includes("{id}")
+            ? { "404": { description: "Unknown vendor id (never charged). Vendor ids: GET /v1/trust/vendors (free)." } }
+            : e.template.includes("{coin}")
+            ? { "404": { description: e.route === "levels" ? "Unknown coin, or a coin outside Lumi's levels watchlist (never charged)." : "Unknown coin (never charged)." } }
+            : {}),
+          "409": { description: "Idempotency-Key (or payment-identifier id) already used with a different payment (never charged)." },
+          "503": {
+            description: (e.route === "vendor_report" ? "No observation of this vendor in the last 48 h, so the report is not sold. " : "Inputs missing or past stale_after, so the data is not sold. ") + "Body: {error: 'stale_data' (or 'data_unavailable' when an upstream is down), data_age_seconds (null when unknown), retry_after_seconds, retryable, note}; Retry-After header set. Never charged.",
+            content: { "application/json": { example: { error: "stale_data", detail: "Inputs are past stale_after; not sold until refreshed.", data_age_seconds: 7260, retry_after_seconds: 300, retryable: true, note: "Not charged." } } },
+          },
         },
       },
     };
@@ -309,7 +323,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         "GET /v1/scan gives all coins' signal labels in one call; GET /v1/lite/{coin} gives a cheap label + score + price read; " +
         "GET /v1/funding gives perp funding rates; GET /v1/fear-greed gives CoinMarketCap Fear & Greed with history; GET /v1/events/next48h gives what is scheduled in the next 48 hours; " +
         "GET /v1/trust/check?url= answers 'should I pay this x402 URL?' with allow/warn/block and reasons; " +
-        "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
+        "GET /v1/levels/{coin} gives support/resistance, rule-based 7-day scenario levels (not forecasts) and commentary; GET /v1/slate gives current paper-trade ideas; " +
         "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
         "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives Fear & Greed, funding and breadth; " +
         "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the raw paper-trade history; " +
@@ -317,6 +331,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         `Each paid call is one x402 v2 'exact' payment: ${acceptsOrder(cfg)}` +
         (cfg.evm ? ` (Base: ${cfg.evm.network}, token ${cfg.evm.asset}; XRPL: ${cfg.network})` : ` (${cfg.network})`) +
         `; pick an option by network and asset. Unknown coins return 404 and stale data 503 before any payment is requested (not charged). ` +
+        `Retries: send the same Idempotency-Key header (or the x402 payment-identifier extension id) with the same payment and the cached response is returned without a second charge. ` +
         `Every response carries as_of, data_age_seconds, next_update and stale_after. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
     },
     ...(freeTrialInfo(cfg) ? { "x-free-trial": freeTrialInfo(cfg) } : {}),
@@ -355,7 +370,7 @@ function trustPaths(): Record<string, unknown> {
       { name: "popular", in: "query", required: false, description: "1 = most-used Bazaar listings first", schema: { type: "string", enum: ["1"] } },
       { name: "max_usd", in: "query", required: false, schema: { type: "number" } },
     ], responses: r({ "200": "OK" }) } },
-    "/v1/trust/vendors/{id}": { get: { tags: tag, summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
+    "/v1/trust/vendors/{id}": { get: { tags: tag, summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: VENDOR_ID_PATTERN }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
     "/v1/trust/methodology": { get: { tags: tag, security: [], summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
     "/v1/reports": {
       post: {
@@ -564,11 +579,11 @@ and \`stale_after\`. Past \`stale_after\` the endpoint answers 503 "Not charged.
 after it is refused before settlement.
 
 **You only pay when you get data.** Before a price is even quoted, the API loads and checks every input the endpoint needs
-(present, non-empty, recently refreshed). If anything is missing, empty or stale you get \`503\` with \`"note": "Not charged."\`
-and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
+(present, non-empty, recently refreshed). If anything is missing, empty or stale you get \`503\` with
+\`{ "error": "stale_data", "data_age_seconds", "retry_after_seconds", "note": "Not charged." }\` (\`data_unavailable\` when an input is missing) and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
 served right after a validated \`tesSUCCESS\`: a settled payment always returns the data you paid for.
 
-Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\` (\`?url=|domain=|payTo=\` lookup), \`GET /v1/trust/catalog\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET|POST /v1/trust/receipts/verify\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
+Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\` (\`?url=|domain=|payTo=\` lookup), \`GET /v1/trust/catalog\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET|POST /v1/trust/receipts/verify\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /.well-known/mcp/server-card.json\`, \`GET /.well-known/agents.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
 Every paid response is JSON with \`kind\`, \`timestamp\`, \`source: "${SOURCE}"\`, \`as_of\`, \`data_age_seconds\`, \`next_update\`, \`stale_after\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`. All timestamps are ISO 8601 UTC.
 lumitrades.io publishes market data, signals and analysis four times a day (6 AM, 12 PM, 6 PM and 11 PM US Central); the policy brief (\`/v1/institutional\`) once a day (not sold if older than 36 h).
@@ -609,6 +624,9 @@ ${iouNote(cfg)}2. Sign (do not submit) an XRPL \`Payment\` for exactly \`amount\
    with the data and a \`PAYMENT-RESPONSE\` header: base64 \`{ success, transaction, network, payer }\`.
 
 Quotes expire after ${cfg.invoiceTtlSeconds}s and each invoice can be paid once. If you get 402 again, read \`error\` and pay the fresh quote.
+**Idempotent retries:** send \`Idempotency-Key: <16-128 chars of A-Z a-z 0-9 _ ->\` (or the x402 \`payment-identifier\` extension id) with your payment.
+Retrying with the same key and the same payment returns the cached response (header \`Idempotent-Replayed: true\`) and never settles again;
+the same key with a different payment gets 409 \`idempotency_key_reused\`, not charged.
 503 with \`retryable: true, settlementAttempted: false\` is safe to retry with the same header. 409 \`settlement_status_unknown\`: look up your tx on the ledger before paying again.
 
 The x402-xrpl SDKs (T54, the reference XRPL implementation) do all of this for you.

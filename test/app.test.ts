@@ -279,7 +279,7 @@ describe("openapi scanner hints", () => {
     expect(paid.sort()).toEqual(wk.resources.map((r: any) => r.template).sort());
     expect(oa.info.version).toBe((await (await get("/health")).json()).version);
     expect(oa.components.securitySchemes.bearer.scheme).toBe("bearer");
-    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("xrp");
+    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("XRP");
     expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("printmoneylab");
     expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/XRP");
   });
@@ -288,10 +288,7 @@ describe("openapi scanner hints", () => {
     const { get, fac } = setup();
     const strip = (a: any[]) => a.map((x) => ({ network: x.network, asset: x.asset, amount: x.amount, payTo: x.payTo, scheme: x.scheme }));
     for (const [p, ex, concrete] of [["/v1/signal/{coin}", "/v1/signal/btc", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/btc", "/v1/levels/xrp"],
-      ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"],
-      ["/v1/signal/:coin", "/v1/signal/btc", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/btc", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/btc", "/v1/signal/xrp"],
-      ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/btc", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/btc", "/v1/signal/xrp"],
-      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"]]) {
+      ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"]]) {
       const q = await get(p);
       expect(q.status, p).toBe(402);
       const body = await q.json();
@@ -314,6 +311,27 @@ describe("openapi scanner hints", () => {
         expect(b.example).toBe(BASE + ex);
       }
     }
+    expect(fac.calls).toHaveLength(0);
+  });
+
+  it("other placeholder styles and a /v1/trust/check without url are a 400 (no quote, never charged); the bare probe keeps its 402", async () => {
+    const { get, fac } = setup();
+    for (const [p, ex] of [["/v1/signal/:coin", "/v1/signal/btc"], ["/v1/levels/:COIN", "/v1/levels/btc"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/btc"],
+      ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/btc"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/btc"], ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report"]]) {
+      const r = await get(p);
+      expect(r.status, p).toBe(400);
+      expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
+      const b = await r.json();
+      expect(b).toMatchObject({ error: "path_template_not_filled", note: "Not charged." });
+      expect(b.example).toBe(BASE + ex);
+    }
+    for (const p of ["/v1/trust/check?domain=a.example", "/v1/trust/check?url="]) {
+      const r = await get(p);
+      expect(r.status, p).toBe(400);
+      expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
+      expect(JSON.stringify(await r.json())).not.toContain("?domain=");
+    }
+    expect((await get("/v1/trust/check")).status).toBe(402);
     expect(fac.calls).toHaveLength(0);
   });
 

@@ -20,6 +20,7 @@ import type { SaleEvent } from "./sales";
 import type { Config, DurableObjectNamespaceLike, IouOption, KVLike } from "./config";
 import { isPaymentPayloadV2 } from "@x402/core/schemas";
 import { cdpAuthHeaders, decodeExtensionResponses } from "./cdp";
+import { IDEMPOTENCY_HEADER, IDEMPOTENCY_MAX_BODY, IDEMPOTENCY_TTL_MS, PAYMENT_IDENTIFIER, PAYMENT_IDENTIFIER_DECLARATION, idempotencyKey, sha256Hex, type IdempotencyStore } from "./idempotency";
 
 export const HEADER_PAYMENT_REQUIRED = "PAYMENT-REQUIRED";
 export const HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE";
@@ -96,6 +97,8 @@ export interface Quote {
   note?: string;
   /** The data behind this quote counts as stale after this time (ms): a payment is then refused before verify/settle (never charged). */
   staleAfterMs?: number;
+  /** When the data behind the quote was produced (wall clock ms), for data_age_seconds in a stale refusal. */
+  asOfMs?: number;
   /** Extra 402 extensions merged next to `bazaar` (e.g. the "sign-in-with-x" free-trial challenge). */
   extensions?: Record<string, unknown>;
   /** Optional top-level free-trial status (e.g. why a SIGN-IN-WITH-X trial attempt was not granted). */
@@ -365,7 +368,7 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
     error,
     resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json", ...(quote.service ?? {}) },
     accepts: buildAccepts(cfg, quote, invoiceId),
-    extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON, ...(quote.extensions ?? {}) },
+    extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON, [PAYMENT_IDENTIFIER]: PAYMENT_IDENTIFIER_DECLARATION, ...(quote.extensions ?? {}) },
     // Top level (not in `resource`, which clients echo to the facilitator): a free, zero-cost next step for hesitant buyers.
     ...(quote.samplesUrl ? { samples: quote.samplesUrl } : {}),
     ...(quote.note ? { note: quote.note } : {}),
@@ -395,7 +398,7 @@ const BAZAAR_GET_JSON = {
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Expose-Headers": `${HEADER_PAYMENT_REQUIRED}, ${HEADER_PAYMENT_RESPONSE}, X-Correlation-ID, Retry-After`,
+  "Access-Control-Expose-Headers": `${HEADER_PAYMENT_REQUIRED}, ${HEADER_PAYMENT_RESPONSE}, X-Correlation-ID, Retry-After, Idempotent-Replayed`,
 };
 
 export function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
@@ -465,6 +468,8 @@ export interface PaywallDeps {
   log?: (event: Record<string, unknown>) => void;
   /** Called once per successful settlement (sales ledger + alert). Errors are swallowed; it never blocks serving. */
   onSale?: (sale: SaleEvent) => Promise<void> | void;
+  /** Idempotent-retry cache (Idempotency-Key / payment-identifier). Absent = retries rely on the replay guard alone. */
+  idempotency?: IdempotencyStore;
 }
 
 /** USD list price of a quote (its stablecoin amount), so XRP and USDC sales can be summed on one scale. */
@@ -489,8 +494,90 @@ const LEGACY_UNKNOWN = /^(submit_failed:|submit_missing_tx_hash|validation_faile
 /**
  * Gate `serve` behind an x402 payment. `serve` only runs after the facilitator
  * reports a successful on-ledger settlement for exactly this quote.
+ *
+ * Idempotent retries: with an Idempotency-Key header (or payment-identifier extension id) and a payment, a served
+ * response is cached; the same key + same payment returns it again without settling, the same key + a different payment
+ * is refused with 409 (never charged). See src/idempotency.ts.
  */
 export async function requirePayment(
+  request: Request,
+  cfg: Config,
+  deps: PaywallDeps,
+  quote: Quote,
+  serve: (settlement: Settlement, paid: PaymentRequirements) => Promise<Response> | Response,
+): Promise<Response> {
+  const header = request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT);
+  const store = deps.idempotency;
+  if (!header) return requirePaymentOnce(request, cfg, deps, quote, serve);
+  const payload = decodePaymentPayload(header);
+  const k = idempotencyKey(request, payload as { extensions?: Record<string, unknown> } | null);
+  if (k.invalid) {
+    return json(400, {
+      error: "invalid_idempotency_key",
+      detail: `${k.invalid === IDEMPOTENCY_HEADER ? "The Idempotency-Key header" : "The payment-identifier id"} must be 16-128 characters: letters, digits, - or _.`,
+      note: "Not charged.",
+    });
+  }
+  if (!k.key || !store) return requirePaymentOnce(request, cfg, deps, quote, serve);
+
+  const invoiceId =
+    (typeof payload?.payload?.invoiceId === "string" && payload.payload.invoiceId) ||
+    (typeof payload?.accepted?.extra?.invoiceId === "string" && (payload.accepted.extra.invoiceId as string)) ||
+    "";
+  const keyHash = await sha256Hex(k.key);
+  const paymentHash = await sha256Hex(invoiceId ? `invoice:${invoiceId}` : `header:${header}`);
+  const replay = (r: { status: number; headers: Record<string, string>; body: string }) =>
+    new Response(r.body, { status: r.status, headers: { ...CORS, ...r.headers, "Cache-Control": "no-store", "Idempotent-Replayed": "true" } });
+  const lookup = async () => {
+    try {
+      return await store.get(keyHash, Date.now());
+    } catch (e) {
+      deps.log?.({ event: "idempotency_store_error", phase: "get", error: String(e).slice(0, 200) });
+      return null;
+    }
+  };
+
+  const hit = await lookup();
+  if (hit) {
+    if (hit.payment_hash !== paymentHash) {
+      return json(409, {
+        error: "idempotency_key_reused",
+        detail: "This idempotency key was already used with a different payment. Use a new key for a new purchase.",
+        note: "Not charged.",
+      });
+    }
+    deps.log?.({ event: "idempotent_replay", route: quote.routeKey });
+    return replay(hit);
+  }
+
+  const resp = await requirePaymentOnce(request, cfg, deps, quote, serve);
+  if (resp.status === 200 && resp.headers.get(HEADER_PAYMENT_RESPONSE)) {
+    const body = await resp.text();
+    const headers: Record<string, string> = {};
+    for (const h of ["Content-Type", HEADER_PAYMENT_RESPONSE, "Access-Control-Expose-Headers"]) {
+      const v = resp.headers.get(h);
+      if (v) headers[h] = v;
+    }
+    if (body.length <= IDEMPOTENCY_MAX_BODY) {
+      const t = Date.now();
+      await store
+        .put({ key_hash: keyHash, payment_hash: paymentHash, route: quote.routeKey, status: 200, headers, body, created_at: t, expires_at: t + IDEMPOTENCY_TTL_MS })
+        .catch((e) => deps.log?.({ event: "idempotency_store_error", phase: "put", error: String(e).slice(0, 200) }));
+    }
+    return new Response(body, { status: resp.status, headers: resp.headers });
+  }
+  // A concurrent duplicate lost the invoice race: once the winner has stored its response, serve that instead of a 402.
+  if (resp.status === 402) {
+    const err = await resp.clone().json().then((b: { error?: string }) => b?.error).catch(() => undefined);
+    if (err === "invoice_already_used") {
+      const again = await lookup();
+      if (again && again.payment_hash === paymentHash) return replay(again);
+    }
+  }
+  return resp;
+}
+
+async function requirePaymentOnce(
   request: Request,
   cfg: Config,
   deps: PaywallDeps,
@@ -639,8 +726,10 @@ export function staleRefusal(quote: Quote, now = Date.now()): Response | null {
   return json(
     503,
     {
-      error: "data_stale",
+      error: "stale_data",
       detail: "The data behind this quote passed its stale_after time, so the payment was not settled.",
+      data_age_seconds: quote.asOfMs !== undefined ? Math.max(0, Math.round((now - quote.asOfMs) / 1000)) : null,
+      retry_after_seconds: 300,
       stale_after: new Date(quote.staleAfterMs).toISOString(),
       retryable: true,
       settlementAttempted: false,

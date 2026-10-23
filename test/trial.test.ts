@@ -58,7 +58,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(decodeB64Json(plain.headers.get("PAYMENT-REQUIRED"))).toEqual(pb);
     expect(pb.accepts.length).toBeGreaterThan(0);
     expect(pb.extensions["sign-in-with-x"]).toBeUndefined();
-    expect(Object.keys(pb.extensions)).toEqual(["bazaar"]);
+    expect(Object.keys(pb.extensions)).toEqual(["bazaar", "payment-identifier"]);
     expect(pb.trial).toMatchObject({ available: true, free_calls_per_wallet: 3, opt_in_header: "X-Lumi-Trial: 1" });
     const r = await appFetch(BASE + "/v1/sentiment", TRIAL);
     expect(r.status).toBe(402);

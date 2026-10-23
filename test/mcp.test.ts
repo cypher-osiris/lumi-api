@@ -161,7 +161,7 @@ describe("remote MCP: tools", () => {
     for (const headers of [{}, { Authorization: `Bearer ${KEY}` }]) {
       const r = await call("lumi_market", {}, { headers });
       expect(r.body.result.isError).toBe(true);
-      expect(JSON.parse(textOf(r.body))).toMatchObject({ status: 503, error: "data_stale", note: "Not charged." });
+      expect(JSON.parse(textOf(r.body))).toMatchObject({ status: 503, error: "stale_data", note: "Not charged." });
     }
   });
 
