@@ -89,3 +89,19 @@ describe("catalog write budget leaves headroom under D1 Free (100k rows/day)", (
     expect(WRITE_BUDGET.evidence + 25_000).toBeLessThanOrEqual(100_000); // uncounted writes ~15-20k/day
   });
 });
+
+describe("free catalog GET survives the D1 daily write limit", () => {
+  it("rate-limit counter write failure (quota) fails open for the read-only catalog bucket; other errors still surface", async () => {
+    const { MemoryTrustStore } = await import("../src/trust/store");
+    const trustStore = new MemoryTrustStore([]);
+    let err = "D1_ERROR: Your account has exceeded D1's free tier daily row write limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue.";
+    trustStore.hit = async () => { throw new Error(err); };
+    const ENV = { XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s3cret" };
+    const app = createApp(ENV as any, { fetch: makeFetch(happyFacilitator()), log: () => {}, now: () => NOW, catalogStore: new MemoryCatalogStore(), trustStore });
+    const r = await app.fetch(new Request("https://api.lumitrades.io/v1/trust/catalog", { headers: { "CF-Connecting-IP": "203.0.113.9" } }));
+    expect(r.status).toBe(200);
+    err = "D1_ERROR: something else";
+    const r2 = await app.fetch(new Request("https://api.lumitrades.io/v1/trust/catalog", { headers: { "CF-Connecting-IP": "203.0.113.9" } }));
+    expect(r2.status).toBe(500);
+  });
+});

@@ -860,6 +860,7 @@ export function createTrust(deps: TrustDeps): Trust {
     return hmacHex(deps.ipSecret, `ip:${ip}`);
   }
 
+  const READ_ONLY_BUCKETS = new Set(["catalog"]);
   async function limited(bucket: string, who: string, perMinute: number, perDay: number, globalPerDay: number): Promise<Response | null> {
     const t = now();
     const checks: [string, number, number][] = [
@@ -868,7 +869,15 @@ export function createTrust(deps: TrustDeps): Trust {
       [`${bucket}:d:${Math.floor(t / DAY)}:*`, globalPerDay, (Math.floor(t / DAY) + 1) * DAY],
     ];
     for (const [key, max, expires] of checks) {
-      const n = await store.hit(key, expires);
+      let n: number;
+      try {
+        n = await store.hit(key, expires);
+      } catch (e) {
+        // Read-only buckets fail open when D1's daily write limit is hit: a free GET must not 503
+        // just because its rate-limit counter cannot be written (resets 00:00 UTC).
+        if (READ_ONLY_BUCKETS.has(bucket) && isStorageQuotaError(e)) return null;
+        throw e;
+      }
       if (n > max) {
         return json(429, { error: "rate_limited", retry_after_seconds: Math.ceil((expires - t) / 1000) }, { "Retry-After": String(Math.ceil((expires - t) / 1000)) });
       }
