@@ -94,6 +94,8 @@ export interface Quote {
   xrpUsd?: number;
   /** Optional top-level hint in the 402 body/header (e.g. for a literally probed path template). */
   note?: string;
+  /** The data behind this quote counts as stale after this time (ms): a payment is then refused before verify/settle (never charged). */
+  staleAfterMs?: number;
 }
 
 // ---------------------------------------------------------------- encoding
@@ -290,7 +292,7 @@ export function makeReplayGuard(opts: { durableObject?: DurableObjectNamespaceLi
 
 // ---------------------------------------------------------------- requirements
 
-/** XRP requirement (accepts[0], so clients that just take the first option keep paying in XRP). */
+/** XRP requirement (first XRPL option; Base USDC, when configured, is accepts[0]). */
 export function buildRequirements(cfg: Config, quote: Quote, invoiceId: string): PaymentRequirements {
   return {
     scheme: "exact",
@@ -304,11 +306,14 @@ export function buildRequirements(cfg: Config, quote: Quote, invoiceId: string):
 }
 
 /**
- * All accepted options for a quote: XRP first, then each stablecoin (RLUSD, USDC: XRPL issued tokens, 40-hex currency code,
- * issuer in extra.issuer, amount as the IOU value string), matching the x402-xrpl SDK's IOU wire format.
+ * All accepted options for a quote: Base USDC first (when configured; the option most x402 buyers and the Bazaar expect),
+ * then XRP, then each XRPL stablecoin (RLUSD, USDC: issued tokens, 40-hex currency code, issuer in extra.issuer, amount
+ * as the IOU value string), matching the x402-xrpl SDK's IOU wire format. XRPL SDKs pick their option by network/asset.
  */
 export function buildAccepts(cfg: Config, quote: Quote, invoiceId: string): PaymentRequirements[] {
-  const out = [buildRequirements(cfg, quote, invoiceId)];
+  const evm = buildEvmRequirement(cfg, quote, invoiceId);
+  const out: PaymentRequirements[] = evm ? [evm] : [];
+  out.push(buildRequirements(cfg, quote, invoiceId));
   for (const [o, amount] of offeredIous(cfg, quote)) {
     out.push({
       scheme: "exact",
@@ -320,13 +325,11 @@ export function buildAccepts(cfg: Config, quote: Quote, invoiceId: string): Paym
       extra: { invoiceId, sourceTag: cfg.sourceTag, issuer: o.issuer, symbol: o.symbol },
     });
   }
-  const evm = buildEvmRequirement(cfg, quote, invoiceId);
-  if (evm) out.push(evm);
   return out;
 }
 
 /**
- * Base USDC option (always after every XRPL option): x402 v2 `exact` scheme for EVM, EIP-3009 transferWithAuthorization.
+ * Base USDC option (accepts[0] when configured): x402 v2 `exact` scheme for EVM, EIP-3009 transferWithAuthorization.
  * `amount` is in atomic units (6 decimals), `asset` is the USDC contract, `extra.name`/`extra.version` are the token's
  * EIP-712 domain (what @x402/evm signs against). `extra.invoiceId` binds the payment to this quote: standard x402 clients
  * echo `accepted` back unchanged, so the invoice comes back with it.
@@ -492,6 +495,8 @@ export async function requirePayment(
   let quote = quote0;
   const header = request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT);
   if (!header) return paymentRequiredResponse(cfg, quote, "PAYMENT-SIGNATURE header is required");
+  const staleNow = staleRefusal(quote);
+  if (staleNow) return staleNow;
 
   const payload = decodePaymentPayload(header);
   // An unusable payment header re-quotes (402 + full accepts + PAYMENT-REQUIRED) so a client SDK can fix it and retry.
@@ -559,6 +564,8 @@ export async function requirePayment(
     return transient("invoice_guard_unavailable");
   }
   if (!claimed) return paymentRequiredResponse(cfg, quote, "invoice_already_used");
+  const staleXrpl = staleRefusal(quote);
+  if (staleXrpl) return staleXrpl;
 
   // ---- settle (submits the presigned Payment to the XRP Ledger)
   let settleResp: Response;
@@ -619,6 +626,23 @@ export async function requirePayment(
   out.headers.set(HEADER_PAYMENT_RESPONSE, settleResp.headers.get(HEADER_PAYMENT_RESPONSE) || encodeHeader(settlement));
   out.headers.set("Cache-Control", "no-store");
   return out;
+}
+
+/** Data went stale between the quote and the payment: refuse before anything is settled (never charged). */
+export function staleRefusal(quote: Quote, now = Date.now()): Response | null {
+  if (quote.staleAfterMs === undefined || now <= quote.staleAfterMs) return null;
+  return json(
+    503,
+    {
+      error: "data_stale",
+      detail: "The data behind this quote passed its stale_after time, so the payment was not settled.",
+      stale_after: new Date(quote.staleAfterMs).toISOString(),
+      retryable: true,
+      settlementAttempted: false,
+      note: "Not charged.",
+    },
+    { "Retry-After": "300" },
+  );
 }
 
 function transient(reason: string, retryAfter?: string | null): Response {
@@ -756,6 +780,8 @@ async function requireEvmPayment(
   } catch {
     return transient("invoice_guard_unavailable");
   }
+  const staleEvm = staleRefusal(quote);
+  if (staleEvm) return staleEvm;
 
   // ---- settle (the facilitator submits transferWithAuthorization on Base) with the facilitator that verified.
   // Fallback after a CDP settle failure is safe: an EIP-3009 authorization (from + nonce) can execute on-chain at most

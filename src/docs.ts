@@ -3,9 +3,30 @@
 import type { Config, PaidRoute } from "./config";
 import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
+import { BAZAAR_ROUTES } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.9.3";
+export const VERSION = "0.10.0";
+
+/** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
+export function acceptsIndex(cfg: Config) {
+  const off = cfg.evm ? 1 : 0;
+  return { evm: cfg.evm ? 0 : -1, xrp: off, iou: (i: number) => off + 1 + i, xrplRange: cfg.ious.length ? `${off}-${off + cfg.ious.length}` : String(off) };
+}
+
+/** Plain-English accepts order for docs. */
+export function acceptsOrder(cfg: Config): string {
+  const ix = acceptsIndex(cfg);
+  return [
+    ...(cfg.evm ? [`USDC on ${cfg.evm.networkName} (accepts[0])`] : []),
+    `XRP (accepts[${ix.xrp}])`,
+    ...cfg.ious.map((o, i) => `${o.symbol} on the XRP Ledger (accepts[${ix.iou(i)}])`),
+  ].join(", ");
+}
+
+export const FRESHNESS_FIELDS =
+  "Every paid response carries as_of (when the data was produced), data_age_seconds, next_update (expected next refresh) and stale_after; " +
+  "past stale_after the call is refused with 503 'Not charged.' and no payment is settled.";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -15,11 +36,11 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       "Pay-per-call crypto market reads from Lumi Trades (lumitrades.io) for AI agents. " +
       `No API keys or accounts: each paid call is settled in ${settledIn(cfg)} via the x402 protocol (HTTP 402, exact scheme).`,
     human_summary:
-      "Lumi publishes indicator signals, support/resistance levels, a paper-trade slate and a BTC/macro backdrop for 13 coins, plus a daily " +
-      "market brief, a yen carry-trade watch, a sentiment snapshot (CoinMarketCap Fear & Greed + funding), an events calendar and its raw paper-trade history, " +
-      "plus a premium daily Institutional & Policy Brief (BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR). " +
-      `Agents call an endpoint, receive HTTP 402 with a price in XRP${cfg.ious.length ? ` (accepts[0])${cfg.ious.map((o, i) => `, ${o.symbol} (accepts[${i + 1}])`).join("")}` : ""}` +
-      `${cfg.evm ? ` or USDC on ${cfg.evm.networkName} (accepts[${cfg.ious.length + 1}])` : ""}, sign a small XRPL Payment${cfg.evm ? " or an EIP-3009 USDC authorization" : ""}, retry, and get JSON back.`,
+      "Use Lumi when you need a current crypto read before acting: indicator signals and support/resistance levels per coin, current paper-trade " +
+      "ideas, the BTC/macro backdrop, a daily market brief, a yen carry-trade watch, a sentiment snapshot (Fear & Greed + funding), an events calendar " +
+      "and the raw paper-trade history, plus a daily Institutional & Policy Brief and paid x402 vendor reports. " +
+      `Agents call an endpoint, receive HTTP 402 with the price in ${acceptsOrder(cfg)}, sign ${cfg.evm ? "an EIP-3009 USDC authorization or " : ""}a small XRPL Payment, retry, and get JSON back. ` +
+      FRESHNESS_FIELDS,
     source: SOURCE,
     payment: {
       protocol: "x402",
@@ -27,7 +48,8 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       scheme: "exact",
       network: cfg.network,
       network_name: cfg.networkName,
-      asset: "XRP",
+      asset: cfg.evm ? "USDC" : "XRP",
+      accepts_order: acceptsOrder(cfg),
       assets: assetsInfo(cfg),
       pay_to: cfg.payTo,
       facilitator: cfg.facilitatorUrl,
@@ -42,7 +64,9 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
     },
     guarantee:
       "You only pay when you get data: inputs are fetched and validated (present, non-empty, fresh) before any 402 quote; " +
-      "otherwise 503 'Not charged.' and no payment can be settled. The paid body is built before settlement.",
+      "otherwise 503 'Not charged.' and no payment can be settled. Bad input (unknown coin, bad format) returns 4xx before any quote, never charged. " +
+      "A payment arriving after the data's stale_after is refused before settlement. The paid body is built before settlement.",
+    freshness: FRESHNESS_FIELDS,
     free_endpoints: [
       { method: "GET", path: "/", summary: "This index" },
       { method: "GET", path: "/health", summary: "Liveness + config summary" },
@@ -89,6 +113,18 @@ export function wellKnownX402(cfg: Config, base: string) {
       method: e.method,
       description: e.summary,
       accepts: [
+        ...(cfg.evm
+          ? [{
+              scheme: "exact",
+              network: cfg.evm.network,
+              asset: cfg.evm.asset,
+              asset_symbol: "USDC",
+              amount: cfg.evm.amounts[e.route],
+              amount_usdc: cfg.evm.prices[e.route],
+              payTo: cfg.evm.payTo,
+              extra: { name: cfg.evm.eip712.name, version: cfg.evm.eip712.version },
+            }]
+          : []),
         {
           scheme: "exact",
           network: cfg.network,
@@ -106,18 +142,6 @@ export function wellKnownX402(cfg: Config, base: string) {
           amount: o.prices[e.route],
           payTo: cfg.payTo,
         })),
-        ...(cfg.evm
-          ? [{
-              scheme: "exact",
-              network: cfg.evm.network,
-              asset: cfg.evm.asset,
-              asset_symbol: "USDC",
-              amount: cfg.evm.amounts[e.route],
-              amount_usdc: cfg.evm.prices[e.route],
-              payTo: cfg.evm.payTo,
-              extra: { name: cfg.evm.eip712.name, version: cfg.evm.eip712.version },
-            }]
-          : []),
       ],
     })),
     facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [...(cfg.evm.cdp ? [cfg.evm.cdp.url] : []), cfg.evm.facilitatorUrl] : [])],
@@ -139,8 +163,8 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     required: true,
     description: "Ticker or CoinGecko id (case-insensitive)",
     schema: { type: "string", enum: coins.map((c) => c.symbol) },
-    example: "xrp",
-    examples: { xrp: { value: "xrp" }, btc: { value: "btc" } },
+    example: "btc",
+    examples: { btc: { value: "btc" }, eth: { value: "eth" } },
   };
   const paths: Record<string, unknown> = {
     "/v1/coins": { get: { summary: "List supported coins (free)", security: [], responses: { "200": { description: "OK" } } } },
@@ -162,7 +186,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
             ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
             : [],
         ...(e.template.includes("{coin}")
-          ? { "x-example-url": `${base}${e.template.replace("{coin}", "xrp")}` }
+          ? { "x-example-url": `${base}${e.template.replace("{coin}", "btc")}` }
           : e.template.includes("{id}")
           ? { "x-example-url": `${base}${e.template.replace("{id}", "printmoneylab")}` }
           : {}),
@@ -181,13 +205,6 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           ...(cfg.ious.length || cfg.evm
             ? {
                 alternatives: [
-                  ...cfg.ious.map((o) => ({
-                    price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
-                    network: cfg.network,
-                    asset: o.currency,
-                    issuer: o.issuer,
-                    amount: o.prices[e.route],
-                  })),
                   ...(cfg.evm
                     ? [{
                         price: { mode: "fixed", currency: "USDC", amount: cfg.evm.prices[e.route] },
@@ -198,18 +215,28 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
                         payTo: cfg.evm.payTo,
                       }]
                     : []),
+                  ...cfg.ious.map((o) => ({
+                    price: { mode: "fixed", currency: o.symbol, amount: o.prices[e.route] },
+                    network: cfg.network,
+                    asset: o.currency,
+                    issuer: o.issuer,
+                    amount: o.prices[e.route],
+                  })),
                 ],
               }
             : {}),
         },
         responses: {
-          "200": { description: "Paid data (JSON). Settlement receipt in the PAYMENT-RESPONSE header." },
+          "200": {
+            description: "Paid data (JSON) with as_of, data_age_seconds, next_update and stale_after. Settlement receipt in the PAYMENT-RESPONSE header.",
+            content: { "application/json": { example: { ...BAZAAR_ROUTES[e.route].example, payment: { ...(BAZAAR_ROUTES[e.route].example.payment as object), amount: String(Number(usdPrice(cfg, e.route) ?? 0)) } } } },
+          },
           "402": { description: "Payment required. x402 v2 PaymentRequired in the body and the PAYMENT-REQUIRED header." },
           ...(e.template.includes("{")
             ? { "400": { description: "Path template not filled in (a literal {coin} or {id}); the body gives an example URL (never charged)." } }
             : {}),
           "404": { description: e.template.includes("{id}") ? "Unknown vendor (never charged)." : "Unknown coin (never charged)." },
-          "503": { description: e.route === "vendor_report" ? "No observation of this vendor in the last 48 h, so the report is not sold (never charged)." : "Inputs missing or stale (never charged)." },
+          "503": { description: e.route === "vendor_report" ? "No observation of this vendor in the last 48 h, so the report is not sold (never charged)." : "Inputs missing or past stale_after (never charged)." },
         },
       },
     };
@@ -223,21 +250,20 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
       description:
         `Pay-per-call crypto market reads from lumitrades.io for AI agents: per-coin buy/sell signal scores, support/resistance levels, ` +
         `paper-trade ideas, macro backdrop, sentiment, events, a daily market brief and a daily Institutional & Policy Brief, ` +
-        `plus free x402 vendor lookups. No API key: pay $0.01-$0.25 per call in ${settledIn(cfg)} via x402.`,
+        `plus free x402 vendor lookups. No API key: pay a few cents per call in ${settledIn(cfg)} via x402. ` +
+        `Not charged on bad input or stale data; every response carries as_of, data_age_seconds, next_update and stale_after.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context for ${coins.map((c) => c.symbol).join(", ")}. ` +
         "GET /v1/coins (free) lists supported coins; GET /v1/samples (free) previews every paid product, truncated. GET /v1/signal/{coin} gives the indicator-based buy/sell read; " +
         "GET /v1/levels/{coin} gives support/resistance, a 7-day projection and commentary; GET /v1/slate gives current paper-trade ideas; " +
         "GET /v1/market gives the BTC and macro backdrop; GET /v1/brief gives today's whole market brief (JSON + markdown); " +
-        "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives CoinMarketCap Fear & Greed, funding and breadth; " +
+        "GET /v1/macro/yen gives USD/JPY, Nikkei and a carry-trade risk level; GET /v1/sentiment gives Fear & Greed, funding and breadth; " +
         "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the raw paper-trade history; " +
-        "GET /v1/institutional gives the daily Institutional & Policy Brief (BIS, IMF, US regulators, banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR, confirmed vs indirect-alignment links). Each paid call is one x402 v2 'exact' payment on the XRP Ledger " +
-        (cfg.ious.length
-          ? "in XRP (accepts[0])" + cfg.ious.map((o, i) => ` or ${o.symbol} (accepts[${i + 1}], issuer ${o.issuer})`).join("") + " "
-          : "in XRP ") +
-        `(${cfg.network})` +
-        (cfg.evm ? `, or one x402 v2 'exact' payment in USDC on ${cfg.evm.networkName} (${cfg.evm.network}, token ${cfg.evm.asset}, last accepts entry)` : "") +
-        `; unknown coins return 404 before any payment is requested. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
+        "GET /v1/institutional gives the daily sourced Institutional & Policy Brief (regulators, central banks, banks, tokenization; confirmed vs indirect-alignment links). " +
+        `Each paid call is one x402 v2 'exact' payment: ${acceptsOrder(cfg)}` +
+        (cfg.evm ? ` (Base: ${cfg.evm.network}, token ${cfg.evm.asset}; XRPL: ${cfg.network})` : ` (${cfg.network})`) +
+        `; pick an option by network and asset. Unknown coins return 404 and stale data 503 before any payment is requested (not charged). ` +
+        `Every response carries as_of, data_age_seconds, next_update and stale_after. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
     },
     servers: [{ url: base }],
     externalDocs: { description: "Agent guide", url: `${base}/skill.md` },
@@ -331,15 +357,16 @@ export function settledIn(cfg: Config): string {
   return `XRP${orIous(cfg)} on the XRP Ledger${cfg.evm ? `, or USDC on ${cfg.evm.networkName}` : ""}`;
 }
 
-/** Every payment network, in `accepts` order (XRPL first). */
+/** Every payment network, in `accepts` order (Base USDC first when configured, then the XRP Ledger). */
 export function paymentNetworks(cfg: Config) {
+  const ix = acceptsIndex(cfg);
   const out: Record<string, unknown>[] = [
     {
       network: cfg.network,
       name: cfg.networkName === "mainnet" ? "XRP Ledger" : `XRP Ledger ${cfg.networkName}`,
       scheme: "exact",
       assets: ["XRP", ...cfg.ious.map((o) => o.symbol)],
-      accepts_index: cfg.ious.length ? `0-${cfg.ious.length}` : "0",
+      accepts_index: ix.xrplRange,
       pay_to: cfg.payTo,
       facilitator: cfg.facilitatorUrl,
       source_tag: cfg.sourceTag,
@@ -347,14 +374,14 @@ export function paymentNetworks(cfg: Config) {
     },
   ];
   if (cfg.evm) {
-    out.push({
+    out.unshift({
       network: cfg.evm.network,
       name: cfg.evm.networkName,
       scheme: "exact",
       assets: ["USDC"],
       token: cfg.evm.asset,
       decimals: cfg.evm.decimals,
-      accepts_index: String(cfg.ious.length + 1),
+      accepts_index: "0",
       pay_to: cfg.evm.payTo,
       facilitator: cfg.evm.cdp ? cfg.evm.cdp.url : cfg.evm.facilitatorUrl,
       ...(cfg.evm.cdp ? { fallback_facilitator: cfg.evm.facilitatorUrl } : {}),
@@ -365,7 +392,8 @@ export function paymentNetworks(cfg: Config) {
 }
 
 function assetsInfo(cfg: Config) {
-  const out: Record<string, unknown>[] = [{ symbol: "XRP", asset: "XRP", unit: "drops in accepts[].amount", accepts_index: 0 }];
+  const ix = acceptsIndex(cfg);
+  const out: Record<string, unknown>[] = [{ symbol: "XRP", asset: "XRP", unit: "drops in accepts[].amount", accepts_index: ix.xrp }];
 
   cfg.ious.forEach((o, i) =>
     out.push({
@@ -374,18 +402,18 @@ function assetsInfo(cfg: Config) {
       asset: o.currency,
       issuer: o.issuer,
       unit: 'IOU value string in accepts[].amount (e.g. "0.01" = 1 US cent)',
-      accepts_index: i + 1,
+      accepts_index: ix.iou(i),
       note: `Payer needs a ${o.symbol} trust line to ${o.issuer} and a balance.`,
     }),
   );
   if (cfg.evm) {
-    out.push({
+    out.unshift({
       symbol: "USDC",
       name: `Circle USDC on ${cfg.evm.networkName}`,
       network: cfg.evm.network,
       asset: cfg.evm.asset,
       unit: 'atomic units (6 decimals) in accepts[].amount (e.g. "10000" = 0.01 USDC)',
-      accepts_index: cfg.ious.length + 1,
+      accepts_index: 0,
       pay_to: cfg.evm.payTo,
       note: "EIP-3009 signature only; the facilitator pays gas. Payer needs USDC on Base, no ETH.",
     });
@@ -395,10 +423,11 @@ function assetsInfo(cfg: Config) {
 
 function iouNote(cfg: Config): string {
   if (!cfg.ious.length) return "";
+  const ix = acceptsIndex(cfg);
   const lines = cfg.ious
     .map(
       (o, i) =>
-        `   \`accepts[${i + 1}]\` is the same quote in **${o.symbol}** (${IOU_NAMES[o.symbol]}): \`{ asset: "${o.currency}", amount: "<value, e.g. 0.01>", extra: { issuer: "${o.issuer}", invoiceId, sourceTag, symbol: "${o.symbol}" } }\`.`,
+        `   \`accepts[${ix.iou(i)}]\` is the same quote in **${o.symbol}** (${IOU_NAMES[o.symbol]}): \`{ asset: "${o.currency}", amount: "<value, e.g. 0.01>", extra: { issuer: "${o.issuer}", invoiceId, sourceTag, symbol: "${o.symbol}" } }\`.`,
     )
     .join("\n");
   return `${lines}
@@ -409,7 +438,7 @@ function iouNote(cfg: Config): string {
 
 export function skillMd(cfg: Config, base: string, coins: CoinRef[]): string {
   const rows = priceTable(cfg)
-    .map((p) => `| \`${p.method} ${p.path}\` | ${p.price_xrp} XRP (${p.price_drops} drops)${p.prices.slice(1).map((x) => ` or ${x.amount} ${x.asset}${"chain" in x ? ` on ${x.chain}` : ""}`).join("")} | ${p.summary} |`)
+    .map((p) => `| \`${p.method} ${p.path}\` | ${p.prices.map((x) => (x.asset === "XRP" && !("chain" in x) ? `${p.price_xrp} XRP (${p.price_drops} drops)` : `${x.amount} ${x.asset}${"chain" in x ? ` on ${x.chain}` : ""}`)).join(" or ")} | ${p.summary} |`)
     .join("\n");
   const net = cfg.network;
   const wsUrl = net === "xrpl:0" ? "wss://xrplcluster.com" : "wss://s.altnet.rippletest.net:51233";
@@ -452,6 +481,11 @@ Which one to call:
 
 Fields that are not available at request time are omitted, never filled with guesses.
 
+**Not charged on bad input or stale data.** Unknown coins, bad parameters or unfilled path templates get a 4xx before any quote.
+Every paid response carries \`as_of\` (when the data was produced), \`data_age_seconds\`, \`next_update\` (expected next refresh)
+and \`stale_after\`. Past \`stale_after\` the endpoint answers 503 "Not charged." instead of a quote, and a payment that arrives
+after it is refused before settlement.
+
 **You only pay when you get data.** Before a price is even quoted, the API loads and checks every input the endpoint needs
 (present, non-empty, recently refreshed). If anything is missing, empty or stale you get \`503\` with \`"note": "Not charged."\`
 and **no 402 quote**, so no payment can be signed or settled. The response body is built *before* the payment is settled and is
@@ -459,16 +493,19 @@ served right after a validated \`tesSUCCESS\`: a settled payment always returns 
 
 Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v1/samples\`, \`GET /v1/trust/vendors\` (\`?url=|domain=|payTo=\` lookup), \`GET /v1/trust/catalog\`, \`GET /v1/trust/vendors/{id}\`, \`GET /v1/trust/methodology\`, \`GET /.well-known/x402\`, \`GET /.well-known/agent-card.json\`, \`GET /openapi.json\`, \`POST /mcp\`, \`POST /a2a\`.
 
-Every paid response is JSON with \`timestamp\`, \`source: "${SOURCE}"\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`.
-Data is refreshed from lumitrades.io roughly every minute; analysis text is updated a few times a day; the Institutional & Policy Brief once a day (not sold if older than 36 h).
+Every paid response is JSON with \`kind\`, \`timestamp\`, \`source: "${SOURCE}"\`, \`as_of\`, \`data_age_seconds\`, \`next_update\`, \`stale_after\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`. All timestamps are ISO 8601 UTC.
+lumitrades.io publishes market data, signals and analysis four times a day (6 AM, 12 PM, 6 PM and 11 PM US Central); the Institutional & Policy Brief once a day (not sold if older than 36 h).
 
 ## How payment works
 
-1. \`GET ${base}/v1/signal/XRP\` with no payment -> **HTTP 402**. The body (and the base64 \`PAYMENT-REQUIRED\` header) is an x402 v2 \`PaymentRequired\`:
-   \`accepts[0] = { scheme: "exact", network: "${net}", asset: "XRP", amount: "<drops>", payTo: "${cfg.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { invoiceId, sourceTag: ${cfg.sourceTag} } }\`
+\`accepts[]\` order: ${acceptsOrder(cfg)}. Choose by \`network\` + \`asset\`, not by position; all options share one invoice that can be paid once.
+${cfg.evm ? `Most x402 clients (\`@x402/fetch\` + \`@x402/evm\`) simply take \`accepts[0]\`, USDC on ${cfg.evm.networkName}: see "Paying with USDC" below. The XRPL flow:
+` : ""}
+1. \`GET ${base}/v1/signal/BTC\` with no payment -> **HTTP 402**. The body (and the base64 \`PAYMENT-REQUIRED\` header) is an x402 v2 \`PaymentRequired\`:
+   \`accepts[${acceptsIndex(cfg).xrp}] = { scheme: "exact", network: "${net}", asset: "XRP", amount: "<drops>", payTo: "${cfg.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { invoiceId, sourceTag: ${cfg.sourceTag} } }\`
 ${iouNote(cfg)}2. Sign (do not submit) an XRPL \`Payment\` for exactly \`amount\` drops to \`payTo\`, with \`SourceTag\`, a \`LastLedgerSequence\`,
    and the invoice bound via a Memo (\`MemoData = hex(utf8(invoiceId))\`) and/or \`InvoiceID = SHA-256(invoiceId)\`.
-3. Retry the same request with header \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <accepts[0]>, payload: { signedTxBlob, invoiceId } })\`.
+3. Retry the same request with header \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <accepts[${acceptsIndex(cfg).xrp}]>, payload: { signedTxBlob, invoiceId } })\`.
 4. The server has the facilitator (${cfg.facilitatorUrl}) verify and submit your payment. On a validated \`tesSUCCESS\` you get **200**
    with the data and a \`PAYMENT-RESPONSE\` header: base64 \`{ success, transaction, network, payer }\`.
 
@@ -477,12 +514,12 @@ Quotes expire after ${cfg.invoiceTtlSeconds}s and each invoice can be paid once.
 
 The x402-xrpl SDKs (T54, the reference XRPL implementation) do all of this for you.
 ${cfg.evm ? `
-### Paying with USDC on ${cfg.evm.networkName} instead
+### Paying with USDC on ${cfg.evm.networkName} (accepts[0])
 
-The same 402 also lists \`accepts[${cfg.ious.length + 1}]\` = \`{ scheme: "exact", network: "${cfg.evm.network}", asset: "${cfg.evm.asset}", amount: "<atomic USDC, 6 decimals: 10000 = 0.01>", payTo: "${cfg.evm.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { name: "${cfg.evm.eip712.name}", version: "${cfg.evm.eip712.version}", invoiceId, symbol: "USDC", decimals: 6 } }\`.
+The same 402 lists \`accepts[0]\` = \`{ scheme: "exact", network: "${cfg.evm.network}", asset: "${cfg.evm.asset}", amount: "<atomic USDC, 6 decimals: 10000 = 0.01>", payTo: "${cfg.evm.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { name: "${cfg.evm.eip712.name}", version: "${cfg.evm.eip712.version}", invoiceId, symbol: "USDC", decimals: 6 } }\`.
 Sign an EIP-3009 \`transferWithAuthorization\` for exactly \`amount\` to \`payTo\` and retry with \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <that entry, unchanged>, payload: { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } })\`.
 Lumi's facilitator (${cfg.evm.cdp ? `Coinbase CDP, fallback ${cfg.evm.facilitatorUrl}` : cfg.evm.facilitatorUrl}) verifies it and submits it on ${cfg.evm.networkName}, paying the gas: your wallet needs USDC only, no ETH. Same rules: one invoice, one payment, never charged when data is stale.
-The official x402 client packages (\`@x402/fetch\` + \`@x402/evm\`) do this for you and skip the XRPL options automatically.
+The official x402 client packages (\`@x402/fetch\` + \`@x402/evm\`) do this for you; USDC on ${cfg.evm.networkName} is the first option, so they pick it by default.
 ` : ""}
 
 ## Example: TypeScript / Node (npm \`x402-xrpl\`)
@@ -779,7 +816,7 @@ ${quickHtml}
 <h2>What you can buy</h2>
 <div class="tbl"><table><thead><tr><th>Endpoint</th><th>USD</th><th>XRP</th><th>What you get</th></tr></thead><tbody>
 ${rows}</tbody></table></div>
-<p class="note">Coins: ${esc(coins.map((c) => c.symbol).join(", "))}. You only pay when you get data: stale inputs return 503 "Not charged." before any quote.</p>
+<p class="note">Coins: ${esc(coins.map((c) => c.symbol).join(", "))}. Every response carries <code>as_of</code>, <code>data_age_seconds</code>, <code>next_update</code> and <code>stale_after</code> (ISO UTC). You only pay when you get data: not charged on bad input (4xx before any quote) or stale data (503 "Not charged." past <code>stale_after</code>).</p>
 ${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
 <h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
 <p class="note">Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}

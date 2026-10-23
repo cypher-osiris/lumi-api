@@ -8,7 +8,7 @@
  * Examples are deliberately short: the whole PaymentRequired also travels base64-encoded in a response header.
  */
 
-import type { PaidRoute } from "./config";
+import { DEFAULT_PRICES, type PaidRoute } from "./config";
 
 /** CDP rejects verify/settle when resource.description is longer than this. */
 export const BAZAAR_MAX_DESCRIPTION = 500;
@@ -20,17 +20,17 @@ export const BAZAAR_MAX_DESCRIPTION = 500;
 export const SERVICE_NAME = "Lumi Trades";
 export const SERVICE_ICON = "https://lumitrades.io/assets/icon-512.png";
 export const ROUTE_TAGS: Record<PaidRoute, string[]> = {
-  signal: ["crypto-signals", "trading-signals", "technical-analysis", "xrp", "bitcoin"],
-  levels: ["support-resistance", "technical-analysis", "price-levels", "xrp", "crypto"],
-  slate: ["trade-ideas", "paper-trading", "crypto-trading", "xrp", "crypto"],
+  signal: ["crypto-signals", "trading-signals", "technical-analysis", "bitcoin", "ethereum"],
+  levels: ["support-resistance", "technical-analysis", "price-levels", "bitcoin", "crypto"],
+  slate: ["trade-ideas", "paper-trading", "crypto-trading", "bitcoin", "crypto"],
   market: ["market-data", "bitcoin", "funding-rates", "open-interest", "crypto"],
-  brief: ["market-brief", "crypto-news", "daily-report", "xrp", "crypto"],
+  brief: ["market-brief", "crypto-news", "daily-report", "bitcoin", "crypto"],
   yen: ["macro", "forex", "yen-carry-trade", "japan", "bitcoin"],
   sentiment: ["sentiment", "fear-and-greed", "funding-rates", "open-interest", "crypto"],
   events: ["economic-calendar", "events", "macro", "bitcoin", "crypto"],
   trades: ["paper-trading", "trade-history", "trade-ideas", "trading", "crypto"],
-  institutional: ["regulation", "stablecoins", "tokenization", "xrp", "xrpl"],
-  vendor_report: ["x402", "trust-score", "xrpl", "security", "due-diligence"],
+  institutional: ["regulation", "stablecoins", "tokenization", "policy", "crypto"],
+  vendor_report: ["x402", "trust-score", "api-monitoring", "security", "due-diligence"],
 };
 
 export function serviceMeta(route: PaidRoute): { serviceName: string; tags: string[]; iconUrl: string } {
@@ -58,81 +58,92 @@ const FORMAT_QUERY = {
   format: { type: "string", enum: ["json", "md"], description: "md returns the brief as text/markdown; default JSON (with a markdown field)" },
 };
 
-const PAYMENT_EXAMPLE: Record<string, Json> = {
+/** Example `payment` block of a paid response, at the route's real (default) Base USDC price. */
+const pay = (route: PaidRoute, usd: string = DEFAULT_PRICES[route].usd): Record<string, Json> => ({
   network: "eip155:8453",
   asset: "USDC",
-  amount: "0.01",
+  amount: usd,
   transaction: "0x5f0c...e41a",
   payer: "0x12ab...89cd",
-};
+});
+
+/** Example freshness fields (present on every paid response). */
+const FRESH = (asOf: string, staleAfter: string): Record<string, Json> => ({ as_of: asOf, stale_after: staleAfter });
+
+/** Shared promise appended to every listing. */
+export const FAIR_USE =
+  "Every response carries as_of, data_age_seconds, next_update and stale_after. Not charged on bad input or stale data.";
 
 export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   signal: {
     description:
-      "Mechanical buy/sell signal for one crypto coin (BTC, ETH, XRP, SOL, HBAR and more): overall label and score, per-timeframe " +
-      "(1h/4h/1d) labels and an indicator breakdown (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) with price context. JSON.",
+      "Use this when you need a fast, mechanical buy/sell read on one crypto coin before acting: overall label and score, " +
+      "1h/4h/1d labels and the indicator breakdown (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) with price context. " +
+      "BTC, ETH, SOL and the other coins in GET /v1/coins. " + FAIR_USE + " JSON.",
     routeTemplate: "/v1/signal/:coin",
     pathParam: COIN_PARAM,
     example: {
       kind: "signal",
-      coin: { symbol: "XRP", name: "XRP" },
+      coin: { symbol: "BTC", name: "Bitcoin" },
       label: "Sell",
       score: -0.34,
-      price: { usd: 1.33, change_24h_pct: -2.19 },
+      price: { usd: 81984, change_24h_pct: -1.62 },
       timeframes: { "1h": { label: "Sell", score: -0.3 }, "4h": { label: "Neutral", score: 0 }, "1d": { label: "Strong Sell", score: -0.7 } },
-      generated_utc: "2026-10-22T11:17:26Z",
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:17:26Z", "2026-10-22T23:17:26Z"),
+      payment: pay("signal"),
     },
   },
   levels: {
     description:
-      "Support and resistance levels for one crypto coin with bias, a 7-day bull/base/bear price projection, analyst commentary, " +
-      "upcoming catalysts and cited sources. JSON.",
+      "Use this when you need to know where price may stall or turn for one crypto coin: support and resistance levels, bias, " +
+      "a 7-day bull/base/bear projection, analyst commentary, upcoming catalysts and cited sources. " + FAIR_USE + " JSON.",
     routeTemplate: "/v1/levels/:coin",
     pathParam: COIN_PARAM,
     example: {
       kind: "levels",
-      coin: { symbol: "XRP", name: "XRP" },
-      price: { usd: 1.33 },
+      coin: { symbol: "ETH", name: "Ethereum" },
+      price: { usd: 3920 },
       bias: "neutral-to-soft",
-      support: [1.323, 1.3],
-      resistance: [1.369, 1.4],
-      projection: { horizon_days: 7, bull: 1.4, base: 1.33, bear: 1.27 },
-      commentary: "Holding the 1.32-1.33 pivot; a close above 1.37 flips the read.",
+      support: [3850, 3780],
+      resistance: [4010, 4100],
+      projection: { horizon_days: 7, bull: 4100, base: 3930, bear: 3760 },
+      commentary: "Holding the 3.85k pivot; a close above 4.01k flips the read.",
       catalysts: [{ date: "2026-10-28", title: "FOMC decision" }],
-      sources: [{ title: "CoinGecko", url: "https://www.coingecko.com/en/coins/ripple" }],
-      payment: PAYMENT_EXAMPLE,
+      sources: [{ title: "CoinGecko", url: "https://www.coingecko.com/en/coins/ethereum" }],
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-23T11:05:00Z"),
+      payment: pay("levels"),
     },
   },
   slate: {
     description:
-      "Current crypto paper-trade ideas: direction, entry zone, stop, targets, leverage, conviction and status for each idea, " +
-      "plus no-setup notes. JSON.",
+      "Use this when you need current, concrete crypto trade setups to evaluate (paper trades, not advice): direction, entry " +
+      "zone, stop, targets, leverage and conviction for each idea, plus no-setup notes. " + FAIR_USE + " JSON.",
     example: {
       kind: "slate",
-      as_of: "2026-10-22T11:05:00Z",
-      ideas: [{ coin: "BTC", direction: "long", entry_zone: { low: 81800, high: 82300 }, stop: 80800, targets: [84500, 86000], leverage: 3, conviction: "medium", status: "open" }],
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-22T23:05:00Z"),
+      ideas: [{ coin: "BTC", direction: "long", entry_zone: { low: 81800, high: 82300 }, stop: 80800, targets: [84500, 86000], leverage: 3, conviction: "medium" }],
+      payment: pay("slate"),
     },
   },
   market: {
     description:
-      "Crypto market backdrop: BTC levels, projection and signal; macro context (USD/JPY yen note, total market cap, BTC/ETH dominance, " +
-      "Fear & Greed, BTC perpetual funding and open interest) and up/down breadth across 13 tracked coins. JSON.",
+      "Use this when you need the overall crypto market backdrop in one call: BTC levels, projection and signal; total market cap, " +
+      "BTC/ETH dominance, Fear & Greed, BTC perpetual funding and open interest, a USD/JPY note and up/down breadth across " +
+      "tracked coins. " + FAIR_USE + " JSON.",
     example: {
       kind: "market",
       btc_backdrop: { bias: "soft", support: [80000, 81000], resistance: [82500, 84800] },
       macro: { total_mcap_usd: 2742576601668, btc_dominance_pct: 60.04, fear_greed: { value: 49, classification: "Neutral" } },
       breadth: { coins_tracked: 13, up_24h: 1, down_24h: 12 },
-      analysis_as_of: "2026-10-22T11:05:00Z",
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-22T23:05:00Z"),
+      payment: pay("market"),
     },
   },
   brief: {
     description:
-      "Daily crypto market brief: BTC price, levels and signal, Fear & Greed, funding, top/bottom movers, key levels for 13 coins, " +
-      "yen watch, macro events in the next 48h, paper trades and sourced news. JSON with a ready-to-use markdown field; " +
-      "format=md returns text/markdown.",
+      "Use this when you need a ready-to-read daily crypto market brief: BTC price, levels and signal, Fear & Greed, funding, " +
+      "top/bottom movers, key levels, macro events in the next 48h, open paper trades and sourced news. JSON with a markdown " +
+      "field; format=md returns text/markdown. " + FAIR_USE,
     query: FORMAT_QUERY,
     example: {
       kind: "brief",
@@ -142,63 +153,71 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
       key_levels: [{ coin: "ETH", support: 3800, resistance: 4100 }],
       events_next_48h: [{ at_utc: "2026-10-22T23:30:00Z", title: "Japan September CPI" }],
       markdown: "# Lumi daily brief, Oct 22 2026 ...",
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-24T11:05:00Z"),
+      payment: pay("brief"),
     },
   },
   yen: {
     description:
-      "Yen carry-trade watch for crypto traders: USD/JPY and Nikkei 225 (price, 1d/5d change, ranges), a rule-based carry-trade risk " +
-      "level (low/watch/elevated) around the 155 USD/JPY line with reasons, BTC context and upcoming Japan events (BOJ, CPI). JSON.",
+      "Use this when you need to check whether yen carry-trade stress could hit crypto: USD/JPY and Nikkei 225 (price, 1d/5d " +
+      "change, ranges), a rule-based carry-trade risk level (low/watch/elevated) around 155 USD/JPY with reasons, BTC context " +
+      "and upcoming Japan events (BOJ, CPI). " + FAIR_USE + " JSON.",
     example: {
       kind: "macro_yen",
       usd_jpy: { price: 157.08, change_pct: -0.62, change_5d_pct: -0.67 },
       nikkei_225: { price: 62907.84, change_pct: -2.65 },
       carry_trade_risk: { level: "watch", key_level: 155, distance_to_key_level_pct: 1.34, reasons: ["USD/JPY within 1.5% of 155"] },
       japan_events: [{ date: "2026-10-30", title: "BOJ policy decision" }],
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-22T23:05:00Z"),
+      payment: pay("yen"),
     },
   },
   sentiment: {
     description:
-      "Crypto sentiment snapshot: CoinMarketCap Fear & Greed (value, band, day-over-day change), BTC perpetual funding rate with a " +
-      "plain-English read and open interest, total market cap, volume and dominance, and breadth / signal-label counts across 13 coins. JSON.",
+      "Use this when you need a quick read of crypto crowd positioning: Fear & Greed (value, band, day-over-day change), BTC " +
+      "perpetual funding with a plain-English read and open interest, total market cap, volume, dominance and breadth / " +
+      "signal-label counts. " + FAIR_USE + " JSON.",
     example: {
       kind: "sentiment",
       fear_greed: { value: 49, classification: "Neutral", previous: 54, change: -5 },
       derivatives: { instrument: "BTC-USDT-SWAP (OKX)", funding_rate_pct: 0.00657, open_interest_usd: 2462680121 },
       global: { total_mcap_usd: 2742576601668, btc_dominance_pct: 60.04 },
       breadth: { coins_tracked: 13, up_24h: 1, down_24h: 12 },
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-22T23:05:00Z"),
+      payment: pay("sentiment"),
     },
   },
   events: {
     description:
-      "Calendar of upcoming macro and crypto events that can move prices: timed releases and central-bank decisions (UTC and US Central, " +
-      "with why each matters) and dated per-coin catalysts such as network upgrades. Every row is sourced. JSON.",
+      "Use this when you need to know what scheduled events could move crypto soon: timed macro releases and central-bank " +
+      "decisions (UTC and US Central, with why each matters) and dated per-coin catalysts such as network upgrades. Every row " +
+      "is sourced. " + FAIR_USE + " JSON.",
     example: {
       kind: "events",
       next: { at_utc: "2026-10-22T23:30:00Z", title: "Japan September CPI", why: "Last national CPI before the BOJ meeting." },
       upcoming_timed: [{ at_utc: "2026-10-28T18:00:00Z", title: "FOMC rate decision", url: "https://www.federalreserve.gov/" }],
       upcoming_by_date: [{ date: "2026-11-03", coin: "XLM", title: "Protocol 30 validator vote" }],
-      payment: PAYMENT_EXAMPLE,
+      ...FRESH("2026-10-22T11:05:00Z", "2026-10-24T11:05:00Z"),
+      payment: pay("events"),
     },
   },
   trades: {
     description:
-      "Crypto paper-trade history as a raw list: entry, stop, targets, leverage, status and reasoning for every idea. JSON.",
+      "Use this when you need the full list of Lumi's crypto paper-trade ideas (not advice): entry, stop, targets, leverage and " +
+      "reasoning for every idea, newest first. " + FAIR_USE + " JSON.",
     example: {
       kind: "trades",
       count: 8,
-      trades: [{ id: "T007", coin: "BTC", direction: "long", entry: 82300, stop: 80800, targets: [84500, 86000], leverage: 3, status: "open" }],
-      payment: PAYMENT_EXAMPLE,
+      trades: [{ id: "T007", coin: "BTC", direction: "long", entry: 82300, stop: 80800, targets: [84500, 86000], leverage: 3, reasoning: "Reclaim of 82k with funding flat." }],
+      ...FRESH("2026-10-22T11:22:28Z", "2026-10-22T23:22:28Z"),
+      payment: pay("trades"),
     },
   },
   institutional: {
     description:
-      "Daily sourced institutional and policy brief: what central banks, standard-setters, regulators, banks and tokenization firms " +
-      "(BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC and others) are doing and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR " +
-      "(plus RLUSD/USDC). Each item has source URL, date, impact, confidence and a link type separating confirmed links from " +
-      "indirect alignment. JSON with a markdown field; format=md returns text/markdown.",
+      "Use this when you need a sourced daily summary of what regulators, central banks, banks and tokenization firms are " +
+      "doing in digital assets and stablecoins, and which networks each move touches. Each item has source URL, date, impact, " +
+      "confidence and a confirmed-vs-indirect link type. JSON with markdown; format=md for text. " + FAIR_USE,
     query: FORMAT_QUERY,
     example: {
       kind: "institutional_brief",
@@ -218,14 +237,16 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
       ],
       watch_next: [{ date: "2026-10-29", what: "BOJ policy meeting" }],
       markdown: "# Institutional & Policy Brief, Oct 22 2026 ...",
-      payment: { ...PAYMENT_EXAMPLE, amount: "0.25" },
+      ...FRESH("2026-10-22T11:20:32Z", "2026-10-24T11:20:32Z"),
+      payment: pay("institutional"),
     },
   },
   vendor_report: {
     description:
-      "Detailed observation report for one x402 API vendor on Lumi's trust list: every free 402-quote check (90-day retention) with " +
-      "status, price and latency; paid test-buys with tx hashes and delivered yes/no; latency percentiles; uptime over 24h/7d/30d/90d; " +
-      "quoted-price history; verified agent reports and score components. Automated observations, not a rating. JSON.",
+      "Use this when you need evidence before paying an x402 API vendor on Lumi's trust list: every free 402-quote check " +
+      "(90-day retention) with status, price and latency; paid test-buys with tx hashes and delivered yes/no; latency " +
+      "percentiles; uptime over 24h/7d/30d/90d; quoted-price history and score components. Automated observations, not a " +
+      "rating. Not charged on bad input or stale data. JSON.",
     routeTemplate: "/v1/trust/vendors/:id/report",
     pathParam: {
       name: "id",
@@ -239,7 +260,8 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
       windows: { "24h": { uptime_pct: 100 }, "7d": { uptime_pct: 99.4 } },
       paid_test_buys: { count: 6, delivered: 6, delivery_pct: 100 },
       quote_checks: { columns: ["checked_at", "endpoint", "http_status", "valid_quote", "price"], rows: [["2026-10-22T12:30:00Z", 0, 402, true, "0.01"]] },
-      payment: { ...PAYMENT_EXAMPLE, amount: "0.02" },
+      ...FRESH("2026-10-22T12:30:00Z", "2026-10-24T12:30:00Z"),
+      payment: pay("vendor_report"),
     },
   },
 };
@@ -263,8 +285,9 @@ export function schemaFor(v: Json, depth = 0): Record<string, Json> {
  * The `bazaar` extension for one request. `arg` is the concrete path parameter (coin symbol / vendor id) of this URL,
  * `query` the recognised query parameters actually present.
  */
-export function bazaarExtension(route: PaidRoute, arg?: string, query?: Record<string, string>): Record<string, Json> {
-  const meta = BAZAAR_ROUTES[route];
+export function bazaarExtension(route: PaidRoute, arg?: string, query?: Record<string, string>, usd?: string): Record<string, Json> {
+  const meta0 = BAZAAR_ROUTES[route];
+  const meta = usd ? { ...meta0, example: { ...meta0.example, payment: pay(route, String(Number(usd))) } } : meta0;
   const input: Record<string, Json> = { type: "http", method: "GET" };
   const inputProps: Record<string, Json> = {
     type: { type: "string", const: "http" },
@@ -315,7 +338,7 @@ const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
   sentiment: () => "Crypto sentiment (Fear & Greed, BTC funding, open interest)",
   events: () => "Crypto and macro events calendar (Fed, CPI, BOJ, upgrades)",
   trades: () => "Crypto paper-trade history (entries, stops, targets, status)",
-  institutional: () => "Daily institutional & policy brief for XRP, XLM, XDC, QNT, AXL, HBAR",
+  institutional: () => "Daily institutional & policy brief for digital assets (regulators, banks, tokenization)",
   vendor_report: (v) => `x402 vendor trust report${v ? ` for ${v}` : ""} (uptime, latency, test-buys)`,
 };
 

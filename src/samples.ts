@@ -84,6 +84,28 @@ export function sampleEntry(cfg: Config, base: string, route: PaidRoute) {
 
 const OMIT = "[sample: omitted, in the paid response]";
 
+/** Fields removed from every paper-trade object in free samples: unrealised P/L, mark price and status. */
+export const SAMPLE_TRADE_HIDDEN = ["unrealized_pnl_pct", "pnl_pct", "mark_price", "status", "exit_price", "targets_hit", "outcome", "result", "r_multiple"];
+
+/** Recursively drop SAMPLE_TRADE_HIDDEN keys from objects that look like trade ideas (have a direction or entry). Returns the count removed. */
+export function stripTradeOutcome(v: unknown, depth = 0): number {
+  if (depth > 8 || !v || typeof v !== "object") return 0;
+  let n = 0;
+  if (Array.isArray(v)) {
+    for (const x of v) n += stripTradeOutcome(x, depth + 1);
+    return n;
+  }
+  const o = v as Record<string, unknown>;
+  const tradeLike = "direction" in o || "entry" in o || "entry_zone" in o || "stop" in o;
+  for (const k of Object.keys(o)) {
+    if (tradeLike && SAMPLE_TRADE_HIDDEN.includes(k)) {
+      delete o[k];
+      n++;
+    } else n += stripTradeOutcome(o[k], depth + 1);
+  }
+  return n;
+}
+
 /** Route-specific trims so a sample previews the product without replacing it. Returns the omitted field paths. */
 function reshape(route: PaidRoute, s: Record<string, any>): string[] {
   const omitted: string[] = [];
@@ -97,6 +119,11 @@ function reshape(route: PaidRoute, s: Record<string, any>): string[] {
     const keys = Object.keys(s.timeframes);
     for (const k of keys.slice(1)) drop(s.timeframes, k, `timeframes.${k}`);
     if (keys[0]) drop(s.timeframes[keys[0]], "indicators", `timeframes.${keys[0]}.indicators`);
+  }
+  // Paper-trade samples never show live P/L or outcome-like status (the track record is not public in samples).
+  if (route === "slate" || route === "trades" || route === "brief") {
+    const n = stripTradeOutcome(s);
+    if (n) omitted.push("paper-trade unrealized_pnl_pct, mark_price and status (not shown in free samples)");
   }
   if (route === "levels") {
     drop(s, "projection", "projection");

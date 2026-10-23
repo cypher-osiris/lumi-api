@@ -54,7 +54,7 @@ function buyer(pk = generatePrivateKey()) {
 
 async function payXrpl(app: ReturnType<typeof createApp>, path: string) {
   const q = await (await app.fetch(new Request(BASE + path))).json();
-  return app.fetch(new Request(BASE + path, { headers: { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts[0]) } }));
+  return app.fetch(new Request(BASE + path, { headers: { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts.find((a: any) => a.network.startsWith("xrpl:"))) } }));
 }
 
 describe("sales ledger", () => {

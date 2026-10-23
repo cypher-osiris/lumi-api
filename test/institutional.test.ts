@@ -45,7 +45,7 @@ describe("/v1/institutional: 402 terms ($0.25)", () => {
     expect(decodeB64Json(r.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
     expect(body.resource.url).toBe(`${BASE}/v1/institutional`);
     expect(body.accepts.map((a: any) => [a.network, a.extra?.symbol ?? a.asset, a.amount])).toEqual([
-      ["xrpl:1", "XRP", "190000"], ["xrpl:1", "RLUSD", "0.25"], ["xrpl:1", "USDC", "0.25"], ["eip155:84532", "USDC", "250000"],
+      ["eip155:84532", "USDC", "250000"], ["xrpl:1", "XRP", "190000"], ["xrpl:1", "RLUSD", "0.25"], ["xrpl:1", "USDC", "0.25"],
     ]);
     expect(new Set(body.accepts.map((a: any) => a.extra.invoiceId)).size).toBe(1);
     expect(fac.calls).toHaveLength(0);
@@ -56,7 +56,7 @@ describe("/v1/institutional: 402 terms ($0.25)", () => {
     const idx = await (await get("/")).json();
     const row = idx.paid_endpoints.find((p: any) => p.path === "/v1/institutional");
     expect(row).toMatchObject({ price_xrp: "0.19", price_drops: "190000", price_rlusd: "0.25", price_usdc: "0.25", price_base_usdc: "0.25" });
-    expect(row.summary).toMatch(/BIS.*IMF.*XRP, XLM, XDC, QNT, AXL and HBAR/s);
+    expect(row.summary).toMatch(/^Use this when you need .*central banks.*regulators/s);
     expect(idx.mcp.tools.paid).toContain("lumi_institutional_brief");
     const oa = await (await get("/openapi.json")).json();
     const op = oa.paths["/v1/institutional"].get;
@@ -74,7 +74,7 @@ describe("/v1/institutional: payload", () => {
   async function paid(path = "/v1/institutional", override?: Record<string, unknown>) {
     const { get, fac } = setup({ override });
     const q = await (await get(path)).json();
-    const r = await get(path, { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts[1]) });
+    const r = await get(path, { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts[2]) });
     expect(r.status).toBe(200);
     expect(fac.calls.map((c) => c.path)).toEqual(["/verify", "/settle"]);
     return r;
@@ -213,7 +213,7 @@ describe("institutional brief over MCP and A2A", () => {
     const { a2a } = setup();
     const p = await a2a([{ text: "what are the BIS and IMF doing that matters for XRP?" }]);
     expect(p[1].data.url).toBe(`${BASE}/v1/institutional`);
-    expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.19", "0.25", "0.25", "0.25"]);
+    expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.25", "0.19", "0.25", "0.25"]);
     expect((await a2a([{ text: "today's crypto market brief" }]))[1].data.url).toBe(`${BASE}/v1/brief`);
     expect((await a2a([{ data: { skill: "institutional" } }]))[1].data.url).toBe(`${BASE}/v1/institutional`);
   });
@@ -247,6 +247,6 @@ describe("Bazaar resource descriptions", () => {
     expect(sig.resource.description).toMatch(/^XRP crypto trading signal \(buy\/sell score\) - \$0\.01\. /);
     expect(sig.resource.description.length).toBeLessThanOrEqual(500);
     const inst = await (await get("/v1/institutional")).json();
-    expect(inst.resource.description).toMatch(/^Daily institutional & policy brief for XRP.* - \$0\.25\. /);
+    expect(inst.resource.description).toMatch(/^Daily institutional & policy brief for digital assets.* - \$0\.25\. /);
   });
 });

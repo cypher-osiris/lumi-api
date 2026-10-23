@@ -277,18 +277,18 @@ describe("openapi scanner hints", () => {
     expect(paid.sort()).toEqual(wk.resources.map((r: any) => r.template).sort());
     expect(oa.info.version).toBe((await (await get("/health")).json()).version);
     expect(oa.components.securitySchemes.bearer.scheme).toBe("bearer");
-    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("xrp");
+    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("btc");
     expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("printmoneylab");
-    expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/xrp");
+    expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/btc");
   });
 
   it("quotes an unpaid literally probed paid template (402, same rails/prices/payTo), refuses a paid one with 400 and no facilitator call", async () => {
     const { get, fac } = setup();
     const strip = (a: any[]) => a.map((x) => ({ network: x.network, asset: x.asset, amount: x.amount, payTo: x.payTo, scheme: x.scheme }));
-    for (const [p, ex, concrete] of [["/v1/signal/{coin}", "/v1/signal/xrp", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp", "/v1/levels/xrp"],
+    for (const [p, ex, concrete] of [["/v1/signal/{coin}", "/v1/signal/btc", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/btc", "/v1/levels/xrp"],
       ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"],
-      ["/v1/signal/:coin", "/v1/signal/xrp", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/xrp", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/xrp", "/v1/signal/xrp"],
-      ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/xrp", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/xrp", "/v1/signal/xrp"],
+      ["/v1/signal/:coin", "/v1/signal/btc", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/btc", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/btc", "/v1/signal/xrp"],
+      ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/btc", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/btc", "/v1/signal/xrp"],
       ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"]]) {
       const q = await get(p);
       expect(q.status, p).toBe(402);

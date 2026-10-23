@@ -60,7 +60,7 @@ describe("paid vendor report: x402 terms", () => {
     expect(decodeB64Json(r.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
     expect(body.resource.url).toBe(`${BASE}${PATH}`);
     expect(body.accepts.map((a: any) => [a.network, a.extra?.symbol ?? a.asset, a.amount])).toEqual([
-      ["xrpl:1", "XRP", "15000"], ["xrpl:1", "RLUSD", "0.02"], ["xrpl:1", "USDC", "0.02"], ["eip155:84532", "USDC", "20000"],
+      ["eip155:84532", "USDC", "20000"], ["xrpl:1", "XRP", "15000"], ["xrpl:1", "RLUSD", "0.02"], ["xrpl:1", "USDC", "0.02"],
     ]);
     expect(fac.calls).toHaveLength(0);
   });
@@ -83,7 +83,7 @@ describe("paid vendor report: x402 terms", () => {
   it("a paid call settles and returns the report with the payment receipt", async () => {
     const { get, fac } = setup();
     const q = await (await get(PATH)).json();
-    const r = await get(PATH, { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts[1]) });
+    const r = await get(PATH, { "PAYMENT-SIGNATURE": paymentHeaderFor(q.accepts[2]) });
     expect(r.status).toBe(200);
     const b = await r.json();
     expect(b.kind).toBe("trust_vendor_report");
@@ -176,7 +176,7 @@ describe("paid vendor report: docs, MCP and A2A", () => {
     const { a2a } = setup();
     const p = await a2a([{ text: "vendor report asksurf" }]);
     expect(p[1].data.url).toBe(`${BASE}${PATH}`);
-    expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.015", "0.02", "0.02", "0.02"]);
+    expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.02", "0.015", "0.02", "0.02"]);
     expect((await a2a([{ data: { skill: "vendor_report", vendor_id: "asksurf" } }]))[1].data.url).toBe(`${BASE}${PATH}`);
     expect((await a2a([{ data: { skill: "vendor_report" } }]))[1].data.error).toBe("missing_vendor_id");
     expect((await a2a([{ text: "vendor trust scores" }]))[0].text).toMatch(/observations/);

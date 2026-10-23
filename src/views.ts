@@ -199,7 +199,7 @@ export function slateView(trades: Json, coins: CoinRef[]) {
     }
   }
   return envelope("slate", {
-    as_of: trades?.slate?.as_of ?? null,
+    slate_as_of: trades?.slate?.as_of ?? null,
     rules: trades?.slate?.rules ?? null,
     ideas: active.map((t) => tradeView(t, coins)),
     no_setup_notes: noSetup,

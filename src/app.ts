@@ -14,7 +14,7 @@ import { agentCard, handleA2a, A2A_CORS } from "./a2a";
 import {
   coinList, resolveCoin, signalView, levelsView, slateView, marketView, DISCLAIMER, SOURCE, type CoinRef,
 } from "./views";
-import { staleInputs, hasContent } from "./freshness";
+import { staleInputs, hasContent, fileMeta, withMeta, isoTimestamps, metaFrom, nextHalfHour } from "./freshness";
 import { briefView, yenView, sentimentView, eventsView, tradesView } from "./products";
 import { institutionalView } from "./institutional";
 import { handleMcp, isOwnerKey, MCP_CORS, type McpDeps } from "./mcp";
@@ -281,7 +281,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         ? { ok: false, status: 404, error: { error: "no_data_for_coin", coin: coin.symbol, note: "Not charged." } }
         : { ok: false, status: 503, error: { error: "data_unavailable", detail: `no ${route} data published right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
     }
-    return { ok: true, route, coin, body: body as Record<string, unknown> };
+    const meta = fileMeta(loaded, NEEDS[route], t, config.dataMaxAgeHours);
+    return { ok: true, route, coin, body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)) };
   }
 
   /** Paid vendor report: unknown vendor -> 404, no observation in 48 h -> 503; both before any 402 and never charged. */
@@ -289,7 +290,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const r = await trust.vendorReport(id.trim().toLowerCase(), base);
     if (r.ok) {
       return hasContent("vendor_report", r.doc)
-        ? { ok: true, route: "vendor_report", body: r.doc }
+        ? { ok: true, route: "vendor_report", body: isoTimestamps(withMeta(r.doc, vendorMeta(r.doc))) }
         : { ok: false, status: 503, error: { error: "data_unavailable", detail: "no observations for this vendor yet", retryable: true, note: "Not charged." }, headers: { "Retry-After": "1800" } };
     }
     if (r.reason === "unknown_vendor") {
@@ -307,6 +308,15 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       },
       headers: { "Retry-After": "1800" },
     };
+  }
+
+  /** Vendor report freshness: the newest observation binds; sold only within 48 h of it. */
+  function vendorMeta(doc: Record<string, any>) {
+    const c = doc?.coverage ?? {};
+    const last = Math.max(Date.parse(c.last_probe_at ?? "") || 0, Date.parse(c.last_paid_test_buy_at ?? "") || 0);
+    if (!last) return null;
+    const t = now();
+    return metaFrom(last, last + REPORT_FRESH_MS, nextHalfHour(t), t);
   }
 
   const mcpDeps: Omit<McpDeps, "quote"> = {
@@ -508,7 +518,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
     if (rawArg !== undefined && PATH_TEMPLATE_RE.test(rawArg)) {
       const isReport = route === "vendor_report";
-      const example = isReport ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/xrp`;
+      const example = isReport ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/btc`;
       const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
       if (!hasPayment) {
         const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
@@ -522,9 +532,9 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           amountEvm: config.evm?.amounts[route],
           description: resourceDescription(route, `Lumi API ${endpoint.template}: ${endpoint.summary}`, { usd: config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route] }),
           resourceUrl: `${base}${path}`,
-          bazaar: bazaarExtension(route, isReport ? "printmoneylab" : "xrp"),
+          bazaar: bazaarExtension(route, isReport ? "printmoneylab" : "btc", undefined, config.evm?.prices[route]),
           service: serviceMeta(route),
-          note: `Replace ${rawArg} with ${isReport ? "a vendor id, e.g. printmoneylab (GET /v1/trust/vendors, free)" : "a coin, e.g. xrp (GET /v1/coins, free)"} and request that URL for a fresh quote before paying: ${example}. A payment sent to this placeholder URL is refused and not charged.`,
+          note: `Replace ${rawArg} with ${isReport ? "a vendor id, e.g. printmoneylab (GET /v1/trust/vendors, free)" : "a coin, e.g. btc (GET /v1/coins, free)"} and request that URL for a fresh quote before paying: ${example}. A payment sent to this placeholder URL is refused and not charged.`,
         }, "PAYMENT-SIGNATURE header is required");
       }
       return json(400, {
@@ -573,8 +583,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         route,
         coin?.symbol ?? vendorId,
         wantsMarkdown && url.searchParams.has("format") ? { format: "md" } : undefined,
+        config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route],
       ),
       service: serviceMeta(route),
+      // Remaining validity of the data, on the wall clock the paywall uses (the app clock is injectable for tests).
+      ...(typeof body.stale_after === "string" ? { staleAfterMs: Date.now() + (Date.parse(body.stale_after) - now()) } : {}),
     };
 
     return requirePayment(request, config, paywallDeps(ctx), quote, (s: Settlement, paid: PaymentRequirements) => {

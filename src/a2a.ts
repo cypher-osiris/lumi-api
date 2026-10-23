@@ -128,7 +128,7 @@ export function agentCard(cfg: Config, base: string) {
           uri: "https://x402.org",
           description:
             "Paid skills are HTTP endpoints priced with x402 v2 (HTTP 402 + PAYMENT-REQUIRED / PAYMENT-SIGNATURE / PAYMENT-RESPONSE). " +
-            "accepts[] lists the XRP Ledger options first, then USDC on Base. Payment happens at the REST URL, not in-band over A2A.",
+            "accepts[] lists USDC on Base first, then XRP, RLUSD and USDC on the XRP Ledger; pick by network and asset. Payment happens at the REST URL, not in-band over A2A.",
           required: false,
           params: {
             x402Version: 2,

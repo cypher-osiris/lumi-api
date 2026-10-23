@@ -104,8 +104,8 @@ describe("Base USDC in the 402", () => {
       const body = await r.json();
       expect(decodeB64Json(r.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
       expect(PaymentRequiredV2Schema.safeParse(body).success).toBe(true);
-      expect(body.accepts.map((a: any) => a.network)).toEqual(["xrpl:1", "xrpl:1", "xrpl:1", "eip155:84532"]);
-      const b = body.accepts[3];
+      expect(body.accepts.map((a: any) => a.network)).toEqual(["eip155:84532", "xrpl:1", "xrpl:1", "xrpl:1"]);
+      const b = body.accepts[0];
       expect(b).toEqual({
         scheme: "exact", network: "eip155:84532", amount: atomic, asset: SEPOLIA_USDC, payTo: EVM_PAY_TO, maxTimeoutSeconds: 300,
         extra: { name: "USDC", version: "2", invoiceId: body.accepts[0].extra.invoiceId, symbol: "USDC", decimals: 6 },
@@ -113,7 +113,7 @@ describe("Base USDC in the 402", () => {
       // XRPL options are byte-for-byte the same shape as without Base (only the invoice nonce differs)
       const without = (await (await plain.get(path)).json()).accepts;
       const strip = (a: any) => ({ ...a, extra: { ...a.extra, invoiceId: "-" } });
-      expect(body.accepts.slice(0, 3).map(strip)).toEqual(without.map(strip));
+      expect(body.accepts.slice(1).map(strip)).toEqual(without.map(strip));
     }
   });
 });
@@ -166,7 +166,7 @@ describe("Base payment with the official @x402/fetch client", () => {
     expect((await replay.json()).error).toBe("invoice_already_used");
     // same signed authorization, new invoice
     const second = await (await get("/v1/slate")).json();
-    const reused = { ...payload, accepted: second.accepts[3] };
+    const reused = { ...payload, accepted: second.accepts[0] };
     const r = await get("/v1/slate", { "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(reused)).toString("base64") });
     expect(r.status).toBe(402);
     expect((await r.json()).error).toBe("authorization_already_used");
@@ -254,10 +254,10 @@ describe("Base payment with the official @x402/fetch client", () => {
   it("leaves the XRPL flow unchanged when Base is enabled", async () => {
     const { get, evm, xrpl } = setup();
     const body = await (await get("/v1/signal/XRP")).json();
-    const r = await get("/v1/signal/XRP", { "PAYMENT-SIGNATURE": paymentHeaderFor(body.accepts[0]) });
+    const r = await get("/v1/signal/XRP", { "PAYMENT-SIGNATURE": paymentHeaderFor(body.accepts[1]) });
     expect(r.status).toBe(200);
     expect(xrpl.calls.map((c) => c.path)).toEqual(["/verify", "/settle"]);
-    expect(xrpl.calls[0].body).toEqual({ paymentPayload: expect.any(Object), paymentRequirements: body.accepts[0] });
+    expect(xrpl.calls[0].body).toEqual({ paymentPayload: expect.any(Object), paymentRequirements: body.accepts[1] });
     expect(evm.calls).toHaveLength(0);
     expect((await r.json()).payment).toMatchObject({ asset: "XRP", amount: "0.005", amount_drops: "5000", network: "xrpl:1" });
   });
@@ -267,19 +267,20 @@ describe("discovery lists both networks", () => {
   it("index, health, /.well-known/x402, openapi, skill.md, llms.txt", async () => {
     const { get } = setup();
     const index = await (await get("/")).json();
-    expect(index.version).toBe("0.9.3");
-    expect(index.payment.networks.map((n: any) => n.network)).toEqual(["xrpl:1", "eip155:84532"]);
-    expect(index.payment.assets[3]).toMatchObject({ symbol: "USDC", network: "eip155:84532", asset: SEPOLIA_USDC, accepts_index: 3 });
+    expect(index.version).toBe("0.10.0");
+    expect(index.payment.networks.map((n: any) => n.network)).toEqual(["eip155:84532", "xrpl:1"]);
+    expect(index.payment.assets[0]).toMatchObject({ symbol: "USDC", network: "eip155:84532", asset: SEPOLIA_USDC, accepts_index: 0 });
+    expect(index.payment.assets[1]).toMatchObject({ symbol: "XRP", accepts_index: 1 });
     expect(index.free_endpoints.map((e: any) => e.path)).toContain("/.well-known/agent-card.json");
-    expect(index.paid_endpoints[0].prices.at(-1)).toMatchObject({ asset: "USDC", network: "eip155:84532", amount: "0.01" });
+    expect(index.paid_endpoints[0].prices[0]).toMatchObject({ asset: "USDC", network: "eip155:84532", amount: "0.01" });
     expect((await (await get("/health")).json()).evm).toMatchObject({ network: "eip155:84532", pay_to: EVM_PAY_TO });
     const wk = await (await get("/.well-known/x402")).json();
-    expect(wk.resources[0].accepts.at(-1)).toMatchObject({ network: "eip155:84532", asset: SEPOLIA_USDC, amount: "10000", payTo: EVM_PAY_TO });
+    expect(wk.resources[0].accepts[0]).toMatchObject({ network: "eip155:84532", asset: SEPOLIA_USDC, amount: "10000", payTo: EVM_PAY_TO });
     expect(wk.facilitators).toEqual([FACILITATOR, EVM_FAC]);
     expect(wk.agent_card).toBe(`${BASE}/.well-known/agent-card.json`);
     const oa = await (await get("/openapi.json")).json();
-    expect(oa.info.version).toBe("0.9.3");
-    expect(oa.paths["/v1/brief"].get["x-payment-info"].alternatives.at(-1)).toMatchObject({ network: "eip155:84532", amount: "30000" });
+    expect(oa.info.version).toBe("0.10.0");
+    expect(oa.paths["/v1/brief"].get["x-payment-info"].alternatives[0]).toMatchObject({ network: "eip155:84532", amount: "30000" });
     for (const p of ["/skill.md", "/llms.txt"]) {
       const md = await (await get(p)).text();
       expect(md).toContain("eip155:84532");

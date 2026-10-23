@@ -30,7 +30,7 @@ describe("A2A agent card", () => {
     expect(await (await get("/.well-known/agent.json")).json()).toEqual(card);
     expect(card).toMatchObject({
       name: "Lumi Trades",
-      version: "0.9.3",
+      version: "0.10.0",
       provider: { organization: "Lumi Trades", url: "https://lumitrades.io" },
       documentationUrl: `${BASE}/skill.md`,
       capabilities: { streaming: false, pushNotifications: false },
@@ -51,8 +51,8 @@ describe("A2A agent card", () => {
     expect(card.iconUrl).toBe("https://lumitrades.io/assets/icon-512.png");
     for (const s of card.skills) expect(s).toMatchObject({ id: expect.any(String), name: expect.any(String), description: expect.any(String), tags: expect.any(Array) });
     const x402 = card.capabilities.extensions.find((e: any) => e.uri === "https://x402.org");
-    expect(x402.params.networks.map((n: any) => n.network)).toEqual(["xrpl:1", "eip155:84532"]);
-    expect(x402.params.networks[1]).toMatchObject({ pay_to: EVM_PAY_TO });
+    expect(x402.params.networks.map((n: any) => n.network)).toEqual(["eip155:84532", "xrpl:1"]);
+    expect(x402.params.networks[0]).toMatchObject({ pay_to: EVM_PAY_TO });
     const mcp = card.capabilities.extensions.find((e: any) => e.uri === "https://modelcontextprotocol.io");
     expect(mcp.params.url).toBe(`${BASE}/mcp`);
   });
@@ -69,7 +69,7 @@ describe("A2A JSON-RPC", () => {
     expect(m.parts[0].text).toMatch(/13 coins/);
     expect(m.parts[1].data.coins).toHaveLength(13);
     const cat = await rpc(send1([{ data: { skill: "catalog" } }]));
-    expect(cat.body.result.message.parts[1].data.networks.map((n: any) => n.network)).toEqual(["xrpl:1", "eip155:84532"]);
+    expect(cat.body.result.message.parts[1].data.networks.map((n: any) => n.network)).toEqual(["eip155:84532", "xrpl:1"]);
     expect(fac.calls).toHaveLength(0);
   });
 
@@ -81,7 +81,7 @@ describe("A2A JSON-RPC", () => {
     const d = m.parts[1].data;
     expect(d).toMatchObject({ status: "payment_required", charged: false, url: `${BASE}/v1/signal/XRP` });
     expect(d.options.map((o: any) => [o.network, o.asset, o.amount])).toEqual([
-      ["xrpl:1", "XRP", "0.005"], ["xrpl:1", "RLUSD", "0.01"], ["xrpl:1", "USDC", "0.01"], ["eip155:84532", "USDC", "0.01"],
+      ["eip155:84532", "USDC", "0.01"], ["xrpl:1", "XRP", "0.005"], ["xrpl:1", "RLUSD", "0.01"], ["xrpl:1", "USDC", "0.01"],
     ]);
     expect(d.x402.x402Version).toBe(2);
     expect(fac.calls).toHaveLength(0);

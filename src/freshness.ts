@@ -93,3 +93,96 @@ export function hasContent(route: string, body: Json): boolean {
       return false;
   }
 }
+
+// ---------------------------------------------------------------- freshness metadata on every paid response
+
+/** Lumi's site publishing schedule (US Central): market data, signals, analysis, events, brief and the trade tracker. */
+export const SITE_HOURS_CT = [6, 12, 18, 23];
+/** A scheduled run publishes about this long after the hour. */
+const SITE_LAG_MS = 25 * 60_000;
+const MIN = 60_000;
+
+/** Local hour in America/Chicago (DST-aware via Intl). */
+export function chicagoHour(t: number): number {
+  const h = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "2-digit", hourCycle: "h23" }).format(new Date(t));
+  return Number(h) % 24;
+}
+
+/** Expected time of the next scheduled site refresh after `t` (ms). */
+export function nextSiteUpdate(t: number): number {
+  const start = Math.floor(t / H) * H;
+  for (let k = 0; k < 30; k++) {
+    const c = start + k * H;
+    if (c + SITE_LAG_MS > t && SITE_HOURS_CT.includes(chicagoHour(c))) return c + SITE_LAG_MS;
+  }
+  return t + 6 * H;
+}
+
+/** Next 30-minute cron boundary (trust probes), plus a couple of minutes. */
+export function nextHalfHour(t: number): number {
+  const c = Math.floor(t / (30 * MIN)) * 30 * MIN + 30 * MIN;
+  return c + 2 * MIN;
+}
+
+export interface FreshnessMeta {
+  /** When the data in this response was produced (oldest required input), ISO 8601 UTC. */
+  as_of: string;
+  /** Seconds between as_of and this response. */
+  data_age_seconds: number;
+  /** Expected time of the next refresh of these inputs. */
+  next_update: string;
+  /** After this time the inputs count as stale and the call is not sold (503 "Not charged."). */
+  stale_after: string;
+}
+
+export const isoS = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+export function metaFrom(asOf: number, staleAfter: number, nextUpdate: number, now: number): FreshnessMeta {
+  return {
+    as_of: isoS(asOf),
+    data_age_seconds: Math.max(0, Math.round((now - asOf) / 1000)),
+    next_update: isoS(Math.min(Math.max(nextUpdate, now), Math.max(staleAfter, now))),
+    stale_after: isoS(staleAfter),
+  };
+}
+
+/** Freshness metadata for a route built from published site files (the oldest required input binds). */
+export function fileMeta(loaded: Record<string, Json>, files: DataFile[], now: number, baseHours: number): FreshnessMeta | null {
+  let asOf = Infinity;
+  let staleAfter = Infinity;
+  let next = Infinity;
+  for (const f of files) {
+    const max = maxAgeMs(f, baseHours);
+    const ts = loaded[f] ? fileTimestamp(f, loaded[f]) : null;
+    if (max === null || !ts) continue;
+    const t = Date.parse(ts);
+    asOf = Math.min(asOf, t);
+    staleAfter = Math.min(staleAfter, t + max);
+    next = Math.min(next, f === "institutional_brief" ? (t + 24 * H > now ? t + 24 * H : now + H) : nextSiteUpdate(now));
+  }
+  if (!Number.isFinite(asOf)) return null;
+  return metaFrom(asOf, staleAfter, next, now);
+}
+
+/** Put the common fields first: kind, timestamp, source, freshness, then the product. */
+export function withMeta(body: Record<string, unknown>, meta: FreshnessMeta | null): Record<string, unknown> {
+  if (!meta) return body;
+  const { kind, timestamp, source, ...rest } = body;
+  return { kind, timestamp, source, ...meta, ...rest, ...meta };
+}
+
+const ISO_DT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+/** Normalise every full date-time string to ISO 8601 UTC ("2026-10-22T23:20:00Z"); dates and free text are untouched. */
+export function isoTimestamps<T>(v: T, depth = 0): T {
+  if (typeof v === "string") {
+    if (!ISO_DT.test(v)) return v;
+    const t = Date.parse(v);
+    return (Number.isNaN(t) ? v : isoS(t)) as unknown as T;
+  }
+  if (depth > 12 || !v || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => isoTimestamps(x, depth + 1)) as unknown as T;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = k === "markdown" ? x : isoTimestamps(x, depth + 1);
+  return out as T;
+}
