@@ -401,6 +401,9 @@ export function bazaarExtension(route: PaidRoute, arg?: string, query?: Record<s
     const present = Object.fromEntries(Object.entries(query ?? {}).filter(([k]) => k in meta.query!));
     if (Object.keys(present).length) input.queryParams = present;
     inputProps.queryParams = { type: "object", properties: meta.query, additionalProperties: false };
+  } else if (!meta.pathParam) {
+    // No inputs at all: still declare an (empty) query schema so discovery tools see an input schema.
+    inputProps.queryParams = { type: "object", properties: {}, additionalProperties: false };
   }
   if (meta.pathParam && arg !== undefined) {
     input.pathParams = { [meta.pathParam.name]: arg };
