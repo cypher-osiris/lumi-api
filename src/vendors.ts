@@ -248,7 +248,7 @@ export const VENDORS: Vendor[] = [
     name: "Brük agent API (XRPL checks)",
     homepage: "https://bruk-agent-api.fly.dev",
     pay_to: { xrpl: ["r36sbDCAsaCj44ZUXWY2jjGE1jBpsCoRQ4"] },
-    endpoints: [{ url: "https://bruk-agent-api.fly.dev/v1/send-check?destination=rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De", method: "GET", listed_price: "0.00385", listed_asset: "XRP", test_buy: true }],
+    endpoints: [{ url: "https://bruk-agent-api.fly.dev/v1/send-check?amount=5&currency=RLUSD&destination=r36sbDCAsaCj44ZUXWY2jjGE1jBpsCoRQ4", method: "GET", listed_price: "0.00385", listed_asset: "XRP", test_buy: true }],
   },
 ];
 

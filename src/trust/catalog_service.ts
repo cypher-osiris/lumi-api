@@ -86,13 +86,16 @@ export interface CuratedBuy {
  * Oct 22-23 2026; each buy re-verified on the ledger when it was merged). A fixed, dated fact, not a live count:
  * new XRPL hosts listed after Oct 23 2026 are not covered by it.
  */
+const SWEEP_COUNTS = { as_of: "2026-10-23", as_of_label: "Oct 23 2026", hosts_checked: 98, hosts_total: 98, hosts_bought: 93, delivered: 82 } as const;
+// Counts from /workspace/notes/xrpl_testbuys_2026-10-23.json bazaar_coverage (98 third-party XRPL hosts; Lumi's own host excluded).
+// Curated-vendor buys that are not Bazaar hosts (e.g. cloudpayx) are not part of this sweep.
 export const XRPL_BAZAAR_SWEEP = {
-  statement: "93 of 98 XRPL Bazaar hosts bought, 82 delivered, checked 98 of 98, as of Oct 23 2026",
-  as_of: "2026-10-23",
-  hosts_checked: 98,
-  hosts_total: 98,
-  hosts_bought: 93,
-  delivered: 82,
+  statement: `${SWEEP_COUNTS.hosts_bought} of ${SWEEP_COUNTS.hosts_total} XRPL Bazaar hosts bought, ${SWEEP_COUNTS.delivered} delivered, checked ${SWEEP_COUNTS.hosts_checked} of ${SWEEP_COUNTS.hosts_total}, as of ${SWEEP_COUNTS.as_of_label}`,
+  as_of: SWEEP_COUNTS.as_of,
+  hosts_checked: SWEEP_COUNTS.hosts_checked,
+  hosts_total: SWEEP_COUNTS.hosts_total,
+  hosts_bought: SWEEP_COUNTS.hosts_bought,
+  delivered: SWEEP_COUNTS.delivered,
   note: "Dated snapshot. Hosts not bought had no payable XRPL quote within Lumi's limits at the time; that is a dated observation, not a judgement of the seller.",
 } as const;
 
