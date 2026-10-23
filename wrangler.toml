@@ -101,7 +101,7 @@ database_id = "7ddfc495-8500-40cf-88eb-6d7d4121f19b"
 migrations_dir = "migrations"
 
 # */30: free 402-quote checks of allowlisted vendors and the x402 catalog (no payment).
-# every minute: live signals for the 4 stalest coins of the top-50 universe (src/live.ts; must match LIVE_CRON in src/index.ts).
+# every minute: live signals for the 4 stalest coins (1 daily refresh) of the top-50 universe (src/live.ts; must match LIVE_CRON in src/index.ts).
 [triggers]
 crons = ["*/30 * * * *", "* * * * *"]
 

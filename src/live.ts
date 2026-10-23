@@ -35,7 +35,7 @@ export const LIVE_UNIVERSE: LiveCoin[] = [
 ];
 
 export const LIVE_CHUNK = 4;
-export const LIVE_DAILY_CHUNK = 2;
+export const LIVE_DAILY_CHUNK = 1;
 /** A live row older than this is not served (the route falls back to the site file or refuses, never charged). */
 export const LIVE_MAX_AGE_MS = 75 * 60_000;
 /** Daily-candle analysis is refreshed when older than this. */
@@ -272,8 +272,13 @@ export interface LiveRow {
   attempt_at?: number;
 }
 
+/** Scheduling columns only (no doc parse): what the cron needs to pick the stalest coins cheaply. */
+export interface LiveIndex { id: string; computed_at: number; daily_at: number; attempt_at: number }
+
 export interface LiveStore {
   all(): Promise<LiveRow[]>;
+  index(): Promise<LiveIndex[]>;
+  getMany(ids: string[]): Promise<LiveRow[]>;
   get(id: string): Promise<LiveRow | null>;
   put(rows: LiveRow[]): Promise<void>;
 }
@@ -281,6 +286,8 @@ export interface LiveStore {
 export class MemoryLiveStore implements LiveStore {
   rows = new Map<string, LiveRow>();
   async all() { return [...this.rows.values()]; }
+  async index() { return [...this.rows.values()].map((r) => ({ id: r.id, computed_at: r.computed_at, daily_at: r.daily_at, attempt_at: r.attempt_at ?? 0 })); }
+  async getMany(ids: string[]) { return ids.map((id) => this.rows.get(id)).filter((r): r is LiveRow => !!r); }
   async get(id: string) { return this.rows.get(id) ?? null; }
   async put(rows: LiveRow[]) { for (const r of rows) this.rows.set(r.id, r); }
 }
@@ -292,6 +299,15 @@ export class D1LiveStore implements LiveStore {
   }
   async all() {
     const out = await this.db.prepare("SELECT doc, computed_at, daily_at FROM live_signals").all();
+    return (out.results ?? []).map((x) => this.parse(x));
+  }
+  async index() {
+    const out = await this.db.prepare("SELECT id, computed_at, daily_at, COALESCE(json_extract(doc, '$.attempt_at'), 0) AS attempt_at FROM live_signals").all();
+    return (out.results ?? []).map((x) => ({ id: String(x.id), computed_at: Number(x.computed_at), daily_at: Number(x.daily_at), attempt_at: Number(x.attempt_at) }));
+  }
+  async getMany(ids: string[]) {
+    if (!ids.length) return [];
+    const out = await this.db.prepare(`SELECT doc, computed_at, daily_at FROM live_signals WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all();
     return (out.results ?? []).map((x) => this.parse(x));
   }
   async get(id: string) {
@@ -339,12 +355,13 @@ export async function computeCoin(f: typeof fetch, coin: LiveCoin, prev: LiveRow
 
 /** One cron slice: the LIVE_CHUNK stalest coins (missing first), daily candles for up to LIVE_DAILY_CHUNK of them. */
 export async function refreshLive(store: LiveStore, f: typeof fetch, now: number, chunk = LIVE_CHUNK, dailyChunk = LIVE_DAILY_CHUNK) {
-  const rows = new Map((await store.all()).map((r) => [r.id, r]));
-  const tried = (id: string) => { const r = rows.get(id); return Math.max(r?.computed_at ?? 0, r?.attempt_at ?? 0); };
+  const idx = new Map((await store.index()).map((r) => [r.id, r]));
+  const tried = (id: string) => { const r = idx.get(id); return Math.max(r?.computed_at ?? 0, r?.attempt_at ?? 0); };
   const order = [...LIVE_UNIVERSE].sort((a, b) => tried(a.id) - tried(b.id)).slice(0, chunk);
+  const rows = new Map((await store.getMany(order.map((c) => c.id).filter((id) => idx.has(id)))).map((r) => [r.id, r]));
   const dailyDue = new Set(
-    order.filter((c) => now - (rows.get(c.id)?.daily_at ?? 0) > DAILY_REFRESH_MS)
-      .sort((a, b) => (rows.get(a.id)?.daily_at ?? 0) - (rows.get(b.id)?.daily_at ?? 0))
+    order.filter((c) => now - (idx.get(c.id)?.daily_at ?? 0) > DAILY_REFRESH_MS)
+      .sort((a, b) => (idx.get(a.id)?.daily_at ?? 0) - (idx.get(b.id)?.daily_at ?? 0))
       .slice(0, dailyChunk).map((c) => c.id),
   );
   const done: LiveRow[] = [];
