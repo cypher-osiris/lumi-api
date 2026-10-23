@@ -135,8 +135,12 @@ const STATS_STALE_MS = 60 * 60_000;
 export const FREE_BROWSE_MAX = 100;
 export const FREE_BROWSE_PAGE = 25;
 export const FREE_LOOKUP_ENTRIES = 5;
-/** D1 Free allows 100k rows written per day (index entries count). Catalog work stays well under it. */
-export const WRITE_BUDGET = { ingest: 55_000, probe: 85_000, evidence: 95_000 };
+/**
+ * D1 Free allows 100k rows written per day (index entries count), shared with writes this counter does not see
+ * (traffic batches, live signals, meta, rate limits, trust probes, receipts: ~15-20k/day). Catalog work stops at
+ * these counted totals so the database keeps ~30k of headroom; a large Bazaar backfill spreads over several days.
+ */
+export const WRITE_BUDGET = { ingest: 40_000, probe: 60_000, evidence: 70_000 };
 /** A paid trust/check result worth a test-buy: exact listing, no Lumi purchase in 30 days, and a suspicious signal. */
 export function buyCandidate(body: any, exact: any, t = Date.now()) {
   const e = exact?.catalog?.entries?.[0];

@@ -80,3 +80,12 @@ describe("XRP/USD last-known memo is throttled", () => {
     expect(sets).toBeLessThanOrEqual(Math.ceil((2 * H) / XRP_MEMO_MS) + 1);
   });
 });
+
+describe("catalog write budget leaves headroom under D1 Free (100k rows/day)", () => {
+  it("counted catalog phases stop well before the daily limit", async () => {
+    const { WRITE_BUDGET } = await import("../src/trust/catalog_service");
+    expect(WRITE_BUDGET.ingest).toBeLessThan(WRITE_BUDGET.probe);
+    expect(WRITE_BUDGET.probe).toBeLessThanOrEqual(WRITE_BUDGET.evidence);
+    expect(WRITE_BUDGET.evidence + 25_000).toBeLessThanOrEqual(100_000); // uncounted writes ~15-20k/day
+  });
+});
