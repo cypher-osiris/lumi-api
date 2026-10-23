@@ -167,7 +167,7 @@ describe("catalog pipeline", () => {
   it("daily D1 write budget: jobs are skipped once it is used up", async () => {
     const store = new MemoryCatalogStore();
     await store.upsert(ITEMS.map(toListing).filter(Boolean) as any, NOW);
-    await store.setMeta("writes:2026-10-22", "99000");
+    await store.setMeta("writes:2026-10-22", "200000");
     const app = createApp(ENV as any, { fetch: catalogFetch(makeFetch(happyFacilitator())), now: () => NOW, catalogStore: store, queue: { sendBatch: async () => {} } });
     expect(await app.queue({ kind: "probe", after: 0 })).toEqual({ skipped: "daily write budget" });
     expect(await app.queue({ kind: "ingest", offset: 0 })).toEqual({ skipped: "daily write budget" });

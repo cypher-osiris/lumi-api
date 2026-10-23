@@ -136,11 +136,13 @@ export const FREE_BROWSE_MAX = 100;
 export const FREE_BROWSE_PAGE = 25;
 export const FREE_LOOKUP_ENTRIES = 5;
 /**
- * D1 Free allows 100k rows written per day (index entries count), shared with writes this counter does not see
- * (traffic batches, live signals, meta, rate limits, trust probes, receipts: ~15-20k/day). Catalog work stops at
- * these counted totals so the database keeps ~30k of headroom; a large Bazaar backfill spreads over several days.
+ * Daily stop points on ONE shared counter (rows written today, UTC day, index entries included): each job kind runs
+ * only while the counter is below its threshold. Writes this counter does not see (traffic batches, live signals,
+ * meta, rate limits, trust probes, receipts) add ~15-20k/day. Sized for Workers Paid (50M D1 rows written/month
+ * included): ~200k counted + ~20k uncounted is ~6.6M/month (~13% of the allowance; even 3x200k would be ~36%).
+ * Kept as a safety net against runaway jobs, not as a quota.
  */
-export const WRITE_BUDGET = { ingest: 40_000, probe: 60_000, evidence: 70_000 };
+export const WRITE_BUDGET = { ingest: 200_000, probe: 200_000, evidence: 200_000 };
 /** A paid trust/check result worth a test-buy: exact listing, no Lumi purchase in 30 days, and a suspicious signal. */
 export function buyCandidate(body: any, exact: any, t = Date.now()) {
   const e = exact?.catalog?.entries?.[0];

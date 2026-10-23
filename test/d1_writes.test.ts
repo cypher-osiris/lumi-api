@@ -81,12 +81,14 @@ describe("XRP/USD last-known memo is throttled", () => {
   });
 });
 
-describe("catalog write budget leaves headroom under D1 Free (100k rows/day)", () => {
-  it("counted catalog phases stop well before the daily limit", async () => {
+describe("catalog write budget stays a small share of the Workers Paid D1 allowance (50M rows/month)", () => {
+  it("counted catalog phases are capped per day, well under the monthly allowance", async () => {
     const { WRITE_BUDGET } = await import("../src/trust/catalog_service");
-    expect(WRITE_BUDGET.ingest).toBeLessThan(WRITE_BUDGET.probe);
+    expect(WRITE_BUDGET.ingest).toBeLessThanOrEqual(WRITE_BUDGET.probe);
     expect(WRITE_BUDGET.probe).toBeLessThanOrEqual(WRITE_BUDGET.evidence);
-    expect(WRITE_BUDGET.evidence + 25_000).toBeLessThanOrEqual(100_000); // uncounted writes ~15-20k/day
+    // Worst case even if every phase used its full cap separately, plus ~25k/day uncounted writes, over 31 days.
+    const perDay = WRITE_BUDGET.ingest + WRITE_BUDGET.probe + WRITE_BUDGET.evidence + 25_000;
+    expect(perDay * 31).toBeLessThanOrEqual(0.5 * 50_000_000);
   });
 });
 
