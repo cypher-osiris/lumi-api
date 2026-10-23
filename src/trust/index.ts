@@ -18,6 +18,7 @@ import type { Catalog } from "./catalog_service";
 import { XRPL_BAZAAR_SWEEP } from "./catalog_service";
 import { receiptMatchesBuy, receiptVerifyDoc, verifyReceipt, type Receipt, type ReceiptStore } from "./receipts";
 import { dataReturnedView, deliveryCounts, deliveryState, deliveryText, guardBuy, inconclusiveReason, INCONCLUSIVE_REASONS, isInconclusiveReason } from "./delivery";
+import { isStorageQuotaError, storageUnavailableBody } from "./storage_errors";
 import type { LookupQuery } from "./catalog";
 import type { ObservationRow, ProbeRow, ProbeSummary, ReportRow, TrustStore } from "./store";
 import {
@@ -1113,7 +1114,15 @@ export function createTrust(deps: TrustDeps): Trust {
       source: "lumi_test_buy",
       inconclusive: b.inconclusive ?? null,
     });
-    const ins = await store.addObservation(row);
+    let ins: Awaited<ReturnType<TrustStore["addObservation"]>>;
+    try {
+      ins = await store.addObservation(row);
+    } catch (e) {
+      if (!isStorageQuotaError(e)) throw e;
+      deps.log({ event: "trust_observation_storage_unavailable", vendor: vendor.id, tx });
+      const su = storageUnavailableBody(now());
+      return json(503, { ...su.body, tx_hash: tx }, { "Retry-After": String(su.retryAfter) });
+    }
     deps.log({ event: "trust_observation", vendor: vendor.id, inserted: ins === "inserted" });
     if (ins === "duplicate") return json(200, { recorded: false, duplicate: true, tx_hash: tx });
     return json(201, { recorded: true, observation: obsView(row) });

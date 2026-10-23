@@ -26,6 +26,7 @@ import { TEST_PRICE_USD } from "./commerce/plans";
 import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
+import { isStorageQuotaError, storageUnavailableBody } from "./trust/storage_errors";
 import { D1CatalogStore, MemoryCatalogStore, type CatalogStore } from "./trust/catalog";
 import { createCatalog, buyCandidate, type Catalog, type CatalogJob, type QueueLike } from "./trust/catalog_service";
 import { D1EvidenceStore, MemoryEvidenceStore, type EvidenceStore } from "./trust/evidence";
@@ -967,6 +968,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         return await handle(request, ctx);
       } catch (err) {
         console.error(JSON.stringify({ event: "unhandled_error", error: String(err) }));
+        if (isStorageQuotaError(err)) {
+          const su = storageUnavailableBody(Date.now());
+          return json(503, su.body, { "Retry-After": String(su.retryAfter) });
+        }
         return json(500, { error: "internal_error" });
       }
     },

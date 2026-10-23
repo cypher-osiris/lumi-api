@@ -406,6 +406,35 @@ describe("trust: owner observations ingest", () => {
     expect(d.score.samples.paid_test_buys).toBe(2);
   });
 
+  it("D1 write-limit on ingest: 503 storage_unavailable (retryable), not 500; stores nothing; retry later records it once", async () => {
+    // Regression (Oct 23 2026): D1's free-tier daily row write limit was exhausted before the 04:24 CT test-buy run;
+    // every ingest threw D1_ERROR and surfaced as an opaque 500 internal_error.
+    const { req, store, logs } = setup({ txs });
+    const orig = store.addObservation.bind(store);
+    let down = true;
+    store.addObservation = async (row) => {
+      if (down) throw new Error("D1_ERROR: Your account has exceeded D1's free tier daily row write limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue.");
+      return orig(row);
+    };
+    const r = await req("/v1/trust/observations", { method: "POST", body, headers: auth });
+    expect(r.status).toBe(503);
+    expect(r.headers.get("Retry-After")).toBe(String(6 * 3600)); // NOW = 18:00Z -> 6 h to 00:00 UTC
+    const j: any = await r.json();
+    expect(j).toMatchObject({ error: "storage_unavailable", retryable: true, recorded: false, tx_hash: tx });
+    expect(store.obs.some((o) => o.tx_hash === tx)).toBe(false);
+    expect(logs.some((l) => l.event === "trust_observation_storage_unavailable")).toBe(true);
+    down = false;
+    expect((await req("/v1/trust/observations", { method: "POST", body, headers: auth })).status).toBe(201);
+    expect((await req("/v1/trust/observations", { method: "POST", body, headers: auth })).status).toBe(200);
+    expect(store.obs.filter((o) => o.tx_hash === tx)).toHaveLength(1);
+  });
+
+  it("other store errors on ingest still propagate (not masked as storage_unavailable)", async () => {
+    const { req, store } = setup({ txs });
+    store.addObservation = async () => { throw new Error("D1_ERROR: no such column: inconclusive"); };
+    await expect(req("/v1/trust/observations", { method: "POST", body, headers: auth })).rejects.toThrow(/no such column/);
+  });
+
   it("rejects wrong sender, wrong amount, bad wording, unknown endpoint, bogus tx", async () => {
     const { req } = setup({ txs });
     const post = (b: any) => req("/v1/trust/observations", { method: "POST", body: b, headers: auth });
@@ -488,5 +517,28 @@ describe("trust: scoring", () => {
     const e = evmReporter();
     expect(recoverEvmSigner("hello", e.sign("hello"))).toBe(e.address);
     expect(recoverEvmSigner("hello2", e.sign("hello"))).not.toBe(e.address);
+  });
+});
+
+describe("app: storage quota errors map to 503", () => {
+  it("an unhandled D1 write-limit error returns 503 storage_unavailable with Retry-After; other errors stay 500", async () => {
+    const { isStorageQuotaError, secondsToUtcMidnight } = await import("../src/trust/storage_errors");
+    expect(isStorageQuotaError(new Error("D1_ERROR: Your account has exceeded D1's free tier daily row write limit."))).toBe(true);
+    expect(isStorageQuotaError(new Error("D1_ERROR: no such table: x"))).toBe(false);
+    expect(isStorageQuotaError("TypeError: x is undefined")).toBe(false);
+    expect(secondsToUtcMidnight(Date.parse("2026-10-23T09:30:00Z"))).toBe(14.5 * 3600);
+    expect(secondsToUtcMidnight(Date.parse("2026-10-23T23:59:59.5Z"))).toBe(60);
+    const mk = (msg: string) => {
+      const s = new MemoryTrustStore(SEED_OBSERVATIONS);
+      s.observations = async () => { throw new Error(msg); };
+      s.probeSummary = async () => { throw new Error(msg); };
+      return createApp({ XRPL_NETWORK: "xrpl:1", PAY_TO: BUYER, FACILITATOR_URL: "https://f.test", DATA_BASE_URL: "https://d.test/data", INVOICE_SECRET: "s" } as any, { trustStore: s, now: () => NOW });
+    };
+    const a = await mk("D1_ERROR: Your account has exceeded D1's free tier daily row write limit.").fetch(new Request(BASE + "/v1/trust/vendors/asksurf"));
+    expect(a.status).toBe(503);
+    expect(((await a.json()) as any).error).toBe("storage_unavailable");
+    expect(Number(a.headers.get("Retry-After"))).toBeGreaterThanOrEqual(60);
+    const b = await mk("boom").fetch(new Request(BASE + "/v1/trust/vendors/asksurf"));
+    expect(b.status).toBe(500);
   });
 });
