@@ -96,6 +96,10 @@ export interface Quote {
   note?: string;
   /** The data behind this quote counts as stale after this time (ms): a payment is then refused before verify/settle (never charged). */
   staleAfterMs?: number;
+  /** Extra 402 extensions merged next to `bazaar` (e.g. the "sign-in-with-x" free-trial challenge). */
+  extensions?: Record<string, unknown>;
+  /** Optional top-level free-trial status (e.g. why a SIGN-IN-WITH-X trial attempt was not granted). */
+  trial?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------- encoding
@@ -361,10 +365,11 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
     error,
     resource: { url: quote.resourceUrl, description: quote.description, mimeType: "application/json", ...(quote.service ?? {}) },
     accepts: buildAccepts(cfg, quote, invoiceId),
-    extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
+    extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON, ...(quote.extensions ?? {}) },
     // Top level (not in `resource`, which clients echo to the facilitator): a free, zero-cost next step for hesitant buyers.
     ...(quote.samplesUrl ? { samples: quote.samplesUrl } : {}),
     ...(quote.note ? { note: quote.note } : {}),
+    ...(quote.trial ? { trial: quote.trial } : {}),
   } as PaymentRequired;
 }
 

@@ -75,7 +75,7 @@ describe("Base config", () => {
       eip712: { name: "USD Coin", version: "2" }, explorer: "https://basescan.org/tx/",
     });
     expect(main.evm!.prices).toEqual(Object.fromEntries(main.ious[1].prices ? Object.entries(main.ious[1].prices) : []));
-    expect(main.evm!.amounts).toMatchObject({ signal: "10000", brief: "30000", yen: "15000" });
+    expect(main.evm!.amounts).toMatchObject({ signal: "10000", brief: "20000", yen: "10000", sentiment: "5000" });
     expect(loadConfig({ XRPL_NETWORK: "xrpl:1", PAY_TO, EVM_PAY_TO, ACCEPT_BASE_USDC: "false" }).evm).toBeUndefined();
     expect(loadConfig({ XRPL_NETWORK: "xrpl:1", PAY_TO, EVM_PAY_TO, EVM_NETWORK: "eip155:84532" }).evm!.facilitatorUrl).toBe("https://x402.org/facilitator");
     expect(loadConfig({ XRPL_NETWORK: "xrpl:1", PAY_TO, EVM_PAY_TO, PRICE_SLATE_BASE_USDC: "0.05" }).evm!.amounts.slate).toBe("50000");
@@ -98,7 +98,7 @@ describe("Base USDC in the 402", () => {
   it("adds Base after the unchanged XRPL options, sharing one invoice, valid per the x402 v2 schema", async () => {
     const { get } = setup();
     const plain = setup({ env: { EVM_PAY_TO: "" } });
-    for (const [path, atomic] of [["/v1/signal/XRP", "10000"], ["/v1/slate", "20000"], ["/v1/brief", "30000"], ["/v1/macro/yen", "15000"]]) {
+    for (const [path, atomic] of [["/v1/signal/XRP", "10000"], ["/v1/slate", "20000"], ["/v1/brief", "20000"], ["/v1/macro/yen", "10000"]]) {
       const r = await get(path);
       expect(r.status).toBe(402);
       const body = await r.json();
@@ -130,17 +130,17 @@ describe("Base payment with the official @x402/fetch client", () => {
     const sent = evm.calls[0].body;
     expect(sent.x402Version).toBe(2);
     expect(PaymentPayloadV2Schema.safeParse(sent.paymentPayload).success).toBe(true);
-    expect(sent.paymentRequirements).toMatchObject({ network: "eip155:84532", asset: SEPOLIA_USDC, payTo: EVM_PAY_TO, amount: "10000" });
+    expect(sent.paymentRequirements).toMatchObject({ network: "eip155:84532", asset: SEPOLIA_USDC, payTo: EVM_PAY_TO, amount: "5000" });
     expect(sent.paymentPayload.accepted).toEqual(sent.paymentRequirements);
-    expect(sent.paymentPayload.payload.authorization).toMatchObject({ from: account.address, to: EVM_PAY_TO, value: "10000" });
+    expect(sent.paymentPayload.payload.authorization).toMatchObject({ from: account.address, to: EVM_PAY_TO, value: "5000" });
     const body = await r.json();
     expect(body.kind).toBe("sentiment");
     expect(body.payment).toEqual({
-      transaction: TX, network: "eip155:84532", payer: account.address, asset: "USDC", amount: "0.01", amount_atomic: "10000",
+      transaction: TX, network: "eip155:84532", payer: account.address, asset: "USDC", amount: "0.005", amount_atomic: "5000",
       token: SEPOLIA_USDC, explorer: `https://sepolia.basescan.org/tx/${TX}`,
     });
     expect(decodePaymentResponseHeader(r.headers.get("PAYMENT-RESPONSE")!)).toMatchObject({ success: true, transaction: TX, network: "eip155:84532" });
-    expect(logs.find((l) => l.event === "x402_settled")).toMatchObject({ asset: "USDC", amount: "10000", network: "eip155:84532", route: "sentiment" });
+    expect(logs.find((l) => l.event === "x402_settled")).toMatchObject({ asset: "USDC", amount: "5000", network: "eip155:84532", route: "sentiment" });
   });
 
   it("reports the payer as signed (checksummed) even when the facilitator echoes it lowercased, as PayAI does", async () => {
@@ -267,7 +267,7 @@ describe("discovery lists both networks", () => {
   it("index, health, /.well-known/x402, openapi, skill.md, llms.txt", async () => {
     const { get } = setup();
     const index = await (await get("/")).json();
-    expect(index.version).toBe("0.12.0");
+    expect(index.version).toBe("1.0.0");
     expect(index.payment.networks.map((n: any) => n.network)).toEqual(["eip155:84532", "xrpl:1"]);
     expect(index.payment.assets[0]).toMatchObject({ symbol: "USDC", network: "eip155:84532", asset: SEPOLIA_USDC, accepts_index: 0 });
     expect(index.payment.assets[1]).toMatchObject({ symbol: "XRP", accepts_index: 1 });
@@ -279,8 +279,8 @@ describe("discovery lists both networks", () => {
     expect(wk.facilitators).toEqual([FACILITATOR, EVM_FAC]);
     expect(wk.agent_card).toBe(`${BASE}/.well-known/agent-card.json`);
     const oa = await (await get("/openapi.json")).json();
-    expect(oa.info.version).toBe("0.12.0");
-    expect(oa.paths["/v1/brief"].get["x-payment-info"].alternatives[0]).toMatchObject({ network: "eip155:84532", amount: "30000" });
+    expect(oa.info.version).toBe("1.0.0");
+    expect(oa.paths["/v1/brief"].get["x-payment-info"].alternatives[0]).toMatchObject({ network: "eip155:84532", amount: "20000" });
     for (const p of ["/skill.md", "/llms.txt"]) {
       const md = await (await get(p)).text();
       expect(md).toContain("eip155:84532");
@@ -289,5 +289,27 @@ describe("discovery lists both networks", () => {
       expect(md).toContain("@x402/fetch");
       expect(md).toContain("0.01 USDC on Base Sepolia");
     }
+  });
+});
+
+describe("v1.0 docs: free trial documented everywhere", () => {
+  it("index, well-known, openapi, skill.md, home page", async () => {
+    const { get } = setup();
+    const index = await (await get("/")).json();
+    expect(index.free_trial).toMatchObject({ free_calls_per_wallet: 3, header: "SIGN-IN-WITH-X", extension_key: "sign-in-with-x" });
+    expect(index.free_trial.not_eligible).toEqual(["institutional"]);
+    expect(index.free_trial.eligible_routes).toContain("sentiment");
+    const wk = await (await get("/.well-known/x402")).json();
+    expect(wk.free_trial.free_calls_per_wallet).toBe(3);
+    const oa = await (await get("/openapi.json")).json();
+    expect(oa["x-free-trial"].header).toBe("SIGN-IN-WITH-X");
+    expect(oa.paths["/v1/sentiment"].get["x-free-trial"].eligible).toBe(true);
+    expect(oa.paths["/v1/institutional"].get["x-free-trial"].eligible).toBe(false);
+    const skill = await (await get("/skill.md")).text();
+    expect(skill).toContain("## Free trial: 3 calls per new wallet");
+    expect(skill).toContain("wrapFetchWithSIWx");
+    const html = await (await get("/", { accept: "text/html" })).text();
+    expect(html).toContain('id="trial"');
+    expect(html).not.toMatch(/premium/i);
   });
 });

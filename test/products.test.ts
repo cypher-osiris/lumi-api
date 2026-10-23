@@ -26,10 +26,10 @@ async function paid(path: string, headers: Record<string, string> = {}) {
 
 describe("new endpoints: 402 terms", () => {
   it.each([
-    ["/v1/brief", "20000", "0.03"],
-    ["/v1/macro/yen", "10000", "0.015"],
-    ["/v1/sentiment", "5000", "0.01"],
-    ["/v1/events", "5000", "0.01"],
+    ["/v1/brief", "15000", "0.02"],
+    ["/v1/macro/yen", "7500", "0.01"],
+    ["/v1/sentiment", "3800", "0.005"],
+    ["/v1/events", "3800", "0.005"],
     ["/v1/trades", "10000", "0.02"],
   ])("%s quotes %s drops / %s stable", async (path, drops, stable) => {
     const { get } = setup();

@@ -37,14 +37,21 @@ export function institutionalSample(body: Record<string, any>) {
   const sources = [...new Set(items.flatMap((i) => [i.source_url, ...(Array.isArray(i.additional_sources) ? i.additional_sources : [])]).filter((u) => typeof u === "string"))];
   return {
     sample: {
+      kind: body.kind ?? "institutional",
+      timestamp: body.timestamp ?? null,
+      source: body.source ?? null,
+      as_of: body.as_of ?? null,
+      data_age_seconds: body.data_age_seconds ?? null,
+      next_update: body.next_update ?? null,
+      stale_after: body.stale_after ?? null,
       title: body.title,
       date: body.date ?? null,
-      as_of: body.as_of ?? null,
       coverage_window: body.coverage_window ?? null,
       headline: items[0]?.headline ?? (Array.isArray(body.big_picture) ? body.big_picture[0] : null) ?? null,
       big_picture: body.big_picture ?? [],
       items: items.slice(0, MAX_ITEMS),
       sources,
+      disclaimer: body.disclaimer ?? null,
     },
     truncated: {
       items: items.length,

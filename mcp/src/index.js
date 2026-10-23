@@ -15,7 +15,7 @@ import { createClient, loadSettings, assetLabel } from "./lumi.js";
 const VENDOR_LOOKUP_DESCRIPTION =
   "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
 
-export const VERSION = "0.7.0";
+export const VERSION = "0.8.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
 export const PAID_TOOLS = [
@@ -24,7 +24,7 @@ export const PAID_TOOLS = [
     path: (a) => `/v1/brief${a.format === "md" ? "?format=md" : ""}`,
     input: { format: z.enum(["json", "md"]).optional().describe("json (default) or md for ready-to-post markdown") },
     description:
-      "Today's crypto market brief from Lumi: BTC price/levels/signal, CoinMarketCap Fear & Greed, funding, top/bottom movers, key levels for 13 coins, yen watch, events in the next 48h, Lumi's active paper trades, sourced news. Paid: $0.03 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger).",
+      "Today's crypto market brief from Lumi: BTC price/levels/signal, CoinMarketCap Fear & Greed, funding, top/bottom movers, key levels for 13 coins, yen watch, events in the next 48h, Lumi's active paper trades, sourced news. Paid: $0.02 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger).",
   },
   {
     name: "lumi_signal",
@@ -47,9 +47,9 @@ export const PAID_TOOLS = [
   },
   { name: "lumi_slate", path: () => "/v1/slate", input: {}, description: "Lumi's current paper-trade ideas (entry, stop, targets, leverage, conviction) and 'no setup' notes. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_market", path: () => "/v1/market", input: {}, description: "BTC backdrop (levels, projection, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
-  { name: "lumi_macro_yen", path: () => "/v1/macro/yen", input: {}, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid: $0.015 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
-  { name: "lumi_sentiment", path: () => "/v1/sentiment", input: {}, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
-  { name: "lumi_events", path: () => "/v1/events", input: {}, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_macro_yen", path: () => "/v1/macro/yen", input: {}, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_sentiment", path: () => "/v1/sentiment", input: {}, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid: $0.005 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_events", path: () => "/v1/events", input: {}, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid: $0.005 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_funding", path: () => "/v1/funding", input: {}, description: "Perpetual funding rates for the top-50 coins listed on OKX (rate, 8h-normalised, annualised, next funding time, plain-English read), BTC read, median, most positive/negative. Refreshed every 15 minutes. Paid: $0.003 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_fear_greed", path: () => "/v1/fear-greed", input: {}, description: "CoinMarketCap Fear & Greed now, yesterday, last week and last month, change vs each, yearly high/low and a 30-day series. Refreshed every 30 minutes. Paid: $0.003 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_events_48h", path: () => "/v1/events/next48h", input: {}, description: "What is scheduled in the next 48 hours: macro releases and decisions with UTC + US Central times, why each matters and its source, plus dated coin catalysts. Paid: $0.003 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
@@ -59,7 +59,7 @@ export const PAID_TOOLS = [
     path: (a) => `/v1/institutional${a.format === "md" ? "?format=md" : ""}`,
     input: { format: z.enum(["json", "md"]).optional().describe("json (default) or md for ready-to-read markdown") },
     description:
-      "Daily Institutional & Policy Brief (premium): what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 " +
+      "Daily policy brief: what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 " +
       "and other banks, central banks and tokenization firms did in the last days, and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR (plus RLUSD/USDC). " +
       "Every item is dated and sourced, with why it matters, impact and confidence, and a link_type that separates confirmed links from Lumi's " +
       "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +

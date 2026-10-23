@@ -51,8 +51,8 @@ const SKILLS: SkillDef[] = [
   {
     id: "institutional",
     route: "institutional",
-    name: "Daily Institutional & Policy Brief (BIS, IMF, regulators, banks -> XRP, XLM, XDC, QNT, AXL, HBAR)",
-    tags: ["institutional", "policy", "regulation", "cbdc", "tokenization", "stablecoins", "xrp", "xlm", "xdc", "qnt", "axl", "hbar", "premium", "paid"],
+    name: "Daily Institutional & Policy Brief",
+    tags: ["institutional", "policy", "regulation", "cbdc", "tokenization", "stablecoins", "xrp", "xlm", "xdc", "qnt", "axl", "hbar", "paid"],
     examples: ["institutional brief", "what are BIS, IMF and the big banks doing that matters for XRP and QNT?"],
     match: /\b(institution(al|s)?|policy|regulat(ion|ions|ory|ors?)|bis|imf|treasury|occ|sec|cftc|cbdcs?|jpmorgan|jpm|kinexys|sbi|cross river|securitize|corda|r3|banks?|tokeni[sz](ed|ation))\b/i,
   },
@@ -126,7 +126,7 @@ export function agentCard(cfg: Config, base: string) {
     description:
       "Crypto market reads for AI agents from Lumi Trades (lumitrades.io): daily market brief, per-coin signals and support/resistance levels, " +
       "paper-trade ideas, BTC/macro backdrop, yen carry-trade watch, sentiment and an events calendar for 13 coins, " +
-      "plus a premium daily Institutional & Policy Brief mapping BIS, IMF, US regulators, major banks and tokenization firms to XRP, XLM, XDC, QNT, AXL and HBAR. " +
+      "and a daily policy brief (regulators, central banks, banks, tokenization). " +
       `Pay per call over x402 v2 with no API key or account, in ${settledIn(cfg)}. Also available as a remote MCP server. Analytics only, not financial advice.`,
     // A2A 1.0
     supportedInterfaces: A2A_VERSIONS.map((v) => ({ url: a2aUrl, protocolBinding: "JSONRPC", protocolVersion: v })),

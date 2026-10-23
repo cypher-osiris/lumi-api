@@ -50,7 +50,16 @@ export interface TrustDeps {
   buyers: string[];
   /** x402 catalog (CDP Bazaar) with free quote checks; absent = curated list only. */
   catalog?: Catalog;
+  /** Small persistent key/value (D1 meta) for the precomputed /v1/trust/vendors index; absent = in-isolate memo only. */
+  cache?: { get(k: string): Promise<string | null>; set(k: string, v: string): Promise<void> };
+  /** Base URL used when the cron precomputes the vendors index. */
+  publicBase?: string;
 }
+
+/** The precomputed vendors index is served while younger than this (rebuilt by the 30-minute cron and after trust writes). */
+export const VENDORS_INDEX_TTL_MS = 40 * 60_000;
+const VENDORS_MEMO_MS = 60_000;
+const VENDORS_KEY = "vendors_index_v1";
 
 export interface Trust {
   handle(request: Request, path: string, base: string): Promise<Response | null>;
@@ -470,6 +479,38 @@ export function createTrust(deps: TrustDeps): Trust {
     };
   }
 
+  // ---------------- precomputed vendors index (GET /v1/trust/vendors was ~2 s cold: 4 store reads per vendor + catalog)
+  let vendorsMemo: { at: number; base: string; doc: Record<string, unknown> } | undefined;
+
+  async function rebuildVendorsIndex(base: string) {
+    const doc = (await vendorsDoc(base)) as Record<string, unknown>;
+    const entry = { at: now(), base, doc };
+    vendorsMemo = entry;
+    await deps.cache?.set(VENDORS_KEY, JSON.stringify(entry)).catch((e) => deps.log({ event: "vendors_index_store_error", error: String(e) }));
+    return entry;
+  }
+
+  async function cachedVendorsDoc(base: string): Promise<{ doc: Record<string, unknown>; cache: "memo" | "index" | "rebuilt" }> {
+    const t = now();
+    if (vendorsMemo && vendorsMemo.base === base && t - vendorsMemo.at < VENDORS_MEMO_MS) return { doc: vendorsMemo.doc, cache: "memo" };
+    const raw = await deps.cache?.get(VENDORS_KEY).catch(() => null);
+    if (raw) {
+      try {
+        const e = JSON.parse(raw) as { at: number; base: string; doc: Record<string, unknown> };
+        if (e.base === base && t - e.at >= 0 && t - e.at < VENDORS_INDEX_TTL_MS) {
+          vendorsMemo = { ...e, at: Math.max(e.at, t - VENDORS_MEMO_MS + 15_000) };
+          return { doc: e.doc, cache: "index" };
+        }
+      } catch { /* rebuild */ }
+    }
+    return { doc: (await rebuildVendorsIndex(base)).doc, cache: "rebuilt" };
+  }
+
+  async function invalidateVendorsIndex() {
+    vendorsMemo = undefined;
+    await deps.cache?.set(VENDORS_KEY, "").catch(() => {});
+  }
+
   async function vendorDoc(id: string, base: string) {
     const v = vendorById(id);
     if (!v) return null;
@@ -734,6 +775,7 @@ export function createTrust(deps: TrustDeps): Trust {
     await store.prune(now());
     const ok = rows.filter((r) => r.ok).length;
     deps.log({ event: "trust_probe", probes: rows.length, ok });
+    if (deps.publicBase) await rebuildVendorsIndex(deps.publicBase).catch((e) => deps.log({ event: "vendors_index_error", error: String(e) }));
     return { probes: rows.length, ok };
   }
 
@@ -1007,6 +1049,13 @@ export function createTrust(deps: TrustDeps): Trust {
   }
 
   async function handle(request: Request, path: string, base: string): Promise<Response | null> {
+    const r = await handleInner(request, path, base);
+    // A successful trust write (verified report/observation/reply, manual probe) can change scores: drop the index.
+    if (r && request.method === "POST" && r.status < 300 && TRUST_POST_PATHS.includes(path)) await invalidateVendorsIndex();
+    return r;
+  }
+
+  async function handleInner(request: Request, path: string, base: string): Promise<Response | null> {
     const method = request.method;
     if (deps.catalog && path.startsWith("/v1/trust/catalog")) {
       const r = await deps.catalog.handle(request, new URL(request.url), base);
@@ -1023,7 +1072,8 @@ export function createTrust(deps: TrustDeps): Trust {
           if (q.domain) q.domain = q.domain.replace(/^https?:\/\//i, "").split(/[/?#]/)[0].replace(/:\d+$/, "").toLowerCase();
           return json(200, await lookup(q, base), { "Cache-Control": "public, max-age=300" });
         }
-        return json(200, await vendorsDoc(base), { "Cache-Control": "public, max-age=120" });
+        const v = await cachedVendorsDoc(base);
+        return json(200, v.doc, { "Cache-Control": "public, max-age=120", "X-Lumi-Cache": v.cache });
       }
       const m = path.match(/^\/v1\/trust\/vendors\/([a-z0-9-]{1,64})$/);
       if (m) {

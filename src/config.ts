@@ -89,6 +89,8 @@ export interface Env {
   XRPL_RPC_URLS?: string;
   /** Base JSON-RPC endpoint used to verify Base USDC report transactions. */
   BASE_RPC_URL?: string;
+  /** Free trial calls via x402 sign-in-with-x ("0" disables). See src/trial.ts. */
+  TRIALS?: string;
   /** Comma-separated XRPL addresses whose payments count as Lumi test-buys (default: PAY_TO). Addresses only. */
   TRUST_BUYER_ADDRESSES?: string;
   /** Comma-separated Base (EVM) addresses whose payments count as Lumi test-buys (default: Lumi's two Base wallets). */
@@ -154,10 +156,10 @@ export const DEFAULT_PRICES: Record<PaidRoute, { xrp: string; usd: string }> = {
   levels: { xrp: "0.005", usd: "0.01" },
   slate: { xrp: "0.01", usd: "0.02" },
   market: { xrp: "0.01", usd: "0.02" },
-  brief: { xrp: "0.02", usd: "0.03" },
-  yen: { xrp: "0.01", usd: "0.015" },
-  sentiment: { xrp: "0.005", usd: "0.01" },
-  events: { xrp: "0.005", usd: "0.01" },
+  brief: { xrp: "0.015", usd: "0.02" },
+  yen: { xrp: "0.0075", usd: "0.01" },
+  sentiment: { xrp: "0.0038", usd: "0.005" },
+  events: { xrp: "0.0038", usd: "0.005" },
   trades: { xrp: "0.01", usd: "0.02" },
   // Premium daily Institutional & Policy Brief: $0.25. Stablecoins are exactly 0.25; XRP is a fixed amount set from
   // XRP ~= $1.32 on Oct 22 2026 (0.25 / 1.32 = 0.189 -> 0.19 XRP). There is no live XRP/USD repricing: update

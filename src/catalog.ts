@@ -166,7 +166,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
   },
   {
     route: "institutional",
-    name: "Lumi Institutional & Policy Brief (daily, premium)",
+    name: "Lumi Institutional & Policy Brief (daily)",
     method: "GET",
     path: "/v1/institutional",
     template: "/v1/institutional",

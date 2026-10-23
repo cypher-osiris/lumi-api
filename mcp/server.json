@@ -9,12 +9,12 @@
     "subfolder": "mcp"
   },
   "websiteUrl": "https://api.lumitrades.io/skill.md",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "lumi-trades-mcp",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "transport": {
         "type": "stdio"
       },
@@ -41,7 +41,7 @@
         },
         {
           "name": "LUMI_MAX_USD_PER_CALL",
-          "description": "Per-call cap in USD for stablecoins (covers the $0.25 brief)",
+          "description": "Per-call cap in USD for stablecoins (covers every Lumi endpoint)",
           "isRequired": false,
           "default": "0.30",
           "format": "string"

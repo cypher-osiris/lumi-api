@@ -111,7 +111,7 @@ describe("remote MCP: tools", () => {
     expect(cat.access).toMatch(/^public/);
     const q = JSON.parse(textOf((await call("lumi_quote", { path: "/v1/brief" })).body));
     expect(q.status).toBe(402);
-    expect(q.options[0]).toMatchObject({ asset: "XRP", amount: "0.02" });
+    expect(q.options[0]).toMatchObject({ asset: "XRP", amount: "0.015" });
   });
 
   it("paid tool without a key: payment explanation, no charge, no facilitator call", async () => {
@@ -120,7 +120,7 @@ describe("remote MCP: tools", () => {
     expect(r.status).toBe(200);
     expect(r.body.result.isError).toBe(true);
     const t = textOf(r.body);
-    expect(t).toMatch(/0\.02 XRP/);
+    expect(t).toMatch(/0\.015 XRP/);
     expect(t).toMatch(/x402/);
     expect(t).toMatch(/lumi-trades-mcp/);
     expect(t).toContain(`${BASE}/v1/brief`);

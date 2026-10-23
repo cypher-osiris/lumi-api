@@ -20,14 +20,14 @@ use this package when you want paid tools to pay automatically from your own wal
 | `lumi_coins` | free | – | The 13 coins covered (XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI) |
 | `lumi_quote` | free | – | The x402 quote for any paid path, without paying |
 | `lumi_vendor_scores` | free | `url?` `domain?` `payTo?` `vendor_id?` | Look up any x402 seller before paying: tier (catalogued / quote-verified, low confidence / purchase-verified), last free 402-quote check, price and payTo vs its Bazaar listing, on-chain test-buy evidence. No args: Lumi's curated vendor scores |
-| `lumi_brief` | paid | $0.03 | Today's market brief (BTC, CoinMarketCap Fear & Greed, movers, key levels, yen, events, paper trades, news). `format: "md"` for markdown |
+| `lumi_brief` | paid | $0.02 | Today's market brief (BTC, CoinMarketCap Fear & Greed, movers, key levels, yen, events, paper trades, news). `format: "md"` for markdown |
 | `lumi_signal` | paid | $0.01 | Buy/sell read for one coin (1h/4h/1d + indicators) |
 | `lumi_levels` | paid | $0.01 | Support/resistance, 7-day projection, commentary for one coin |
 | `lumi_slate` | paid | $0.02 | Current paper-trade ideas |
 | `lumi_market` | paid | $0.02 | BTC + macro backdrop and breadth |
-| `lumi_macro_yen` | paid | $0.015 | USD/JPY, Nikkei, carry-trade risk around 155, Japan events |
-| `lumi_sentiment` | paid | $0.01 | Fear & Greed, funding read, OI, dominance, breadth |
-| `lumi_events` | paid | $0.01 | Sourced upcoming macro/crypto events and catalysts |
+| `lumi_macro_yen` | paid | $0.01 | USD/JPY, Nikkei, carry-trade risk around 155, Japan events |
+| `lumi_sentiment` | paid | $0.005 | Fear & Greed, funding read, OI, dominance, breadth |
+| `lumi_events` | paid | $0.005 | Sourced upcoming macro/crypto events and catalysts |
 | `lumi_trades` | paid | $0.02 | Paper-trade ideas as a raw list (entry, stop, targets, status, reasoning) |
 | `lumi_vendor_report` | paid | $0.02 | Full observation history for one x402 vendor on Lumi's trust list: every quote check (90 days) and paid test-buy with tx hash and delivered yes/no, latency stats and trend, uptime %, verified agent reports, vendor replies, confidence labels. `vendor_id` required |
 | `lumi_institutional_brief` | paid | $0.25 | Daily Institutional & Policy Brief: BIS, IMF, US Treasury/regulators, JPMorgan, SBI, Cross River, Securitize, R3 and others mapped to XRP, XLM, XDC, QNT, AXL, HBAR (confirmed vs indirect-alignment links, sourced). `format: "md"` for markdown. Allowed by the default caps (0.30 USD / 0.25 XRP) |

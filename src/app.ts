@@ -6,7 +6,8 @@
 import { setPrivateNames } from "./sanitize";
 import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
-import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
+import { D1TrialStore, MemoryTrialStore, SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, decodeSiwx, siwxChallenge, trialEligible, trialIpHash, usdcBalance, verifySiwx, type TrialStore } from "./trial";
+import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, staleRefusal, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
 import { indexDoc, indexHtml, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
@@ -52,6 +53,8 @@ export interface AppOptions {
   /** Live signal store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory (empty: site files are used). */
   liveStore?: LiveStore;
   feedStore?: FeedStore;
+  /** Free-trial ledger override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  trialStore?: TrialStore;
 }
 
 /** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
@@ -156,6 +159,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const sales: SalesStore = opts.salesStore ?? (env.TRUST_DB ? new D1SalesStore(env.TRUST_DB) : new MemorySalesStore());
   const traffic: TrafficStore = opts.trafficStore ?? (env.TRUST_DB ? new D1TrafficStore(env.TRUST_DB) : new MemoryTrafficStore());
   const trafficOn = env.TRAFFIC_LOG !== "0";
+  const trials: TrialStore = opts.trialStore ?? (env.TRUST_DB ? new D1TrialStore(env.TRUST_DB) : new MemoryTrialStore());
+  const trialsOn = env.TRIALS !== "0";
   const live: LiveStore = opts.liveStore ?? (env.TRUST_DB ? new D1LiveStore(env.TRUST_DB) : new MemoryLiveStore());
   const feeds: FeedStore = opts.feedStore ?? (env.TRUST_DB ? new D1FeedStore(env.TRUST_DB) : new MemoryFeedStore());
   const alertCfg: AlertConfig = {
@@ -226,6 +231,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     baseRpc,
     buyers: xrplBuyers,
     catalog,
+    cache: { get: (k) => catalogStore.getMeta(k), set: (k, v) => catalogStore.setMeta(k, v) },
+    publicBase: config.publicBaseUrl || undefined,
   });
 
   /** Free samples of every paid product, rebuilt at most every 10 minutes per isolate. */
@@ -288,7 +295,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       if (!p.ok) return p;
       const b = p.body as Record<string, unknown>;
       const meta = Object.fromEntries(["as_of", "data_age_seconds", "next_update", "stale_after"].filter((k) => k in b).map((k) => [k, b[k]]));
-      return { ok: true, route, coin: p.coin, body: { ...liteView(b), ...meta } };
+      return { ok: true, route, coin: p.coin, body: isoTimestamps(withMeta(liteView(b) as Record<string, unknown>, meta as any)) };
     }
     let coin: CoinRef | undefined;
     if (coinArg !== undefined) {
@@ -412,7 +419,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const r = await trust.vendorReport(id.trim().toLowerCase(), base);
     if (r.ok) {
       return hasContent("vendor_report", r.doc)
-        ? { ok: true, route: "vendor_report", body: isoTimestamps(withMeta(r.doc, vendorMeta(r.doc))) }
+        ? { ok: true, route: "vendor_report", body: isoTimestamps(withMeta({ kind: "vendor_report", timestamp: new Date(now()).toISOString(), source: "api.lumitrades.io trust layer", ...r.doc, disclaimer: DISCLAIMER }, vendorMeta(r.doc))) }
         : { ok: false, status: 503, error: { error: "data_unavailable", detail: "no observations for this vendor yet", retryable: true, note: "Not charged." }, headers: { "Retry-After": "1800" } };
     }
     if (r.reason === "unknown_vendor") {
@@ -472,7 +479,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           : {
               "Access-Control-Allow-Origin": "*",
               "Access-Control-Allow-Methods": "GET, OPTIONS",
-              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, Content-Type",
+              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, SIGN-IN-WITH-X, Content-Type",
               "Access-Control-Max-Age": "86400",
             },
       });
@@ -714,6 +721,34 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       ...(typeof body.stale_after === "string" ? { staleAfterMs: Date.now() + (Date.parse(body.stale_after) - now()) } : {}),
     };
 
+    // Free trial (x402 sign-in-with-x): eligible 402s carry a one-time challenge; a valid SIGN-IN-WITH-X retry (and no payment
+    // header, which always wins) is served free within the caps. See src/trial.ts.
+    const usdPrice = Number(config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route]);
+    if (trialsOn && config.evm && trialEligible(route, usdPrice)) {
+      const trialUri = `${url.origin}${path}${url.search}`;
+      quote.extensions = { [SIWX_KEY]: await siwxChallenge(config.invoiceSecret, trialUri, now(), config.evm.network) };
+      const siwxHeader = request.headers.get(SIWX_HEADER);
+      const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
+      if (siwxHeader && !hasPayment) {
+        const stale = staleRefusal(quote);
+        if (stale) return stale;
+        const r = await runTrial(request, siwxHeader, trialUri, route);
+        if (r.ok) {
+          deps.log?.({ event: "trial_call", route, wallet: r.wallet, used: r.used });
+          const access = { mode: "trial", charged: false, wallet: r.wallet, trial_calls_used: r.used, trial_calls_remaining: Math.max(0, TRIAL_LIMITS.perWallet - r.used) };
+          if (wantsMarkdown) {
+            const md = String((body as { markdown?: string }).markdown ?? "");
+            return new Response(`${md}\n_Free trial call ${r.used} of ${TRIAL_LIMITS.perWallet}, not charged_\n`, {
+              status: 200,
+              headers: { "Content-Type": "text/markdown; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" },
+            });
+          }
+          return json(200, { ...body, access }, { "Cache-Control": "no-store" });
+        }
+        quote.trial = { granted: false, reason: r.reason, detail: "Free trial not granted for this request; pay with any accepts[] option instead. Not charged." };
+      }
+    }
+
     return requirePayment(request, config, paywallDeps(ctx), quote, (s: Settlement, paid: PaymentRequirements) => {
       const evm = isEvmRequirement(paid);
       const payment = evm
@@ -745,6 +780,26 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       }
       return json(200, { ...body, payment });
     });
+  }
+
+  /** Verify a SIGN-IN-WITH-X trial attempt and atomically record it against the caps. */
+  async function runTrial(request: Request, header: string, uri: string, route: PaidRoute): Promise<{ ok: true; wallet: string; used: number } | { ok: false; reason: string }> {
+    const payload = decodeSiwx(header);
+    if (!payload) return { ok: false, reason: "invalid_sign_in_with_x_header" };
+    const v = await verifySiwx(config.invoiceSecret, payload, uri, now(), config.evm!.network);
+    if (!v.ok) return v;
+    if ((await trials.usedByWallet(v.wallet).catch(() => 0)) >= TRIAL_LIMITS.perWallet) return { ok: false, reason: "wallet_trial_used_up" };
+    const bal = await usdcBalance(doFetch, baseRpc, config.evm!.asset, v.wallet);
+    if (bal === null) return { ok: false, reason: "balance_check_unavailable" };
+    if (bal < TRIAL_LIMITS.minUsdcAtomic) return { ok: false, reason: "wallet_needs_0.01_usdc_on_base" };
+    const ts = now();
+    const day = new Date(ts).toISOString().slice(0, 10);
+    const ipHash = await trialIpHash(request, env.TRAFFIC_SALT || config.invoiceSecret, day);
+    const c = await trials.claim({ nonce: v.nonce, wallet: v.wallet, ip_hash: ipHash, day, route, ts }).catch((e) => {
+      deps.log?.({ event: "trial_store_error", error: String(e) });
+      return { ok: false as const, reason: "trial_store_unavailable" };
+    });
+    return c.ok ? { ok: true, wallet: v.wallet, used: c.used } : { ok: false, reason: c.reason };
   }
 
   return {
