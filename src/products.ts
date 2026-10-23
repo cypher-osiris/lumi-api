@@ -230,7 +230,7 @@ export function yenView(context: Json, analysis: Json, events: Json, prices: Jso
 
 interface EventRow { at_utc: string; at_ct?: string; title: string; why?: string; source?: string; url?: string; url2?: string }
 
-function eventRows(events: Json, now: number): EventRow[] {
+export function eventRows(events: Json, now: number): EventRow[] {
   const rows: Json[] = Array.isArray(events?.events) ? events.events : [];
   return rows
     .filter((e) => isoOk(e?.at_utc) && typeof e.title === "string" && (e.source || e.url))
@@ -241,7 +241,7 @@ function eventRows(events: Json, now: number): EventRow[] {
 
 interface CatalystRow { date: string; coin?: string; text: string; source?: string; url?: string }
 
-function catalystRows(analysis: Json, coins: CoinRef[], now: number): CatalystRow[] {
+export function catalystRows(analysis: Json, coins: CoinRef[], now: number): CatalystRow[] {
   const today = new Date(now).toISOString().slice(0, 10);
   const out: CatalystRow[] = [];
   const add = (list: Json, coin?: string) => {

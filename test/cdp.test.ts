@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { seededStores } from "./stage_c_fixtures";
 import { createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import { cdpJwt, decodeExtensionResponses, CDP_FACILITATOR_URL } from "../src/cdp";
@@ -87,7 +88,7 @@ describe("Bazaar metadata", () => {
 
   it("every paid 402 carries its route's bazaar block and a <=500-char description; header stays small", async () => {
     const app = createApp({ XRPL_NETWORK: "xrpl:1", PAY_TO, FACILITATOR_URL: FACILITATOR, DATA_BASE_URL: DATA, INVOICE_SECRET: "s", EVM_PAY_TO } as any, {
-      fetch: makeFetch(happyFacilitator()), log: () => {}, now: () => NOW,
+      fetch: makeFetch(happyFacilitator()), log: () => {}, now: () => NOW, ...seededStores(NOW),
     });
     for (const e of PAID_ENDPOINTS) {
       if (e.route === "vendor_report") continue; // needs trust observations; covered in trust tests

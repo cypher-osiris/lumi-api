@@ -141,7 +141,8 @@ export interface KVLike {
   put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
 }
 
-export type PaidRoute = "signal" | "levels" | "slate" | "market" | "brief" | "yen" | "sentiment" | "events" | "trades" | "institutional" | "vendor_report";
+export type PaidRoute = "signal" | "levels" | "slate" | "market" | "brief" | "yen" | "sentiment" | "events" | "trades" | "institutional" | "vendor_report"
+  | "scan" | "lite" | "trust_check" | "funding" | "fear_greed" | "events_48h";
 
 /**
  * Default prices per route: XRP and USD-stablecoin (RLUSD/USDC). Override with PRICE_<ROUTE>_XRP / _RLUSD / _USDC
@@ -165,6 +166,13 @@ export const DEFAULT_PRICES: Record<PaidRoute, { xrp: string; usd: string }> = {
   // Paid detailed x402 vendor report (trust layer): $0.02. Stablecoins exactly 0.02; XRP fixed from XRP ~= $1.32 on
   // Oct 22 2026 (0.02 / 1.32 = 0.0152 -> 0.015 XRP), same no-live-repricing rule as PRICE_INSTITUTIONAL_XRP.
   vendor_report: { xrp: "0.015", usd: "0.02" },
+  // Stage C (0.12.0) focused reads. XRP defaults from XRP ~= $1.32; live XRP pricing (XRP_PRICING=live) overrides them.
+  scan: { xrp: "0.015", usd: "0.02" },
+  lite: { xrp: "0.003", usd: "0.004" },
+  trust_check: { xrp: "0.003", usd: "0.004" },
+  funding: { xrp: "0.0023", usd: "0.003" },
+  fear_greed: { xrp: "0.0023", usd: "0.003" },
+  events_48h: { xrp: "0.0023", usd: "0.003" },
 };
 export const PAID_ROUTES = Object.keys(DEFAULT_PRICES) as PaidRoute[];
 

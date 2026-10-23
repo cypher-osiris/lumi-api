@@ -40,6 +40,26 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     example: "/v1/levels/BTC",
   },
   {
+    route: "scan",
+    name: "Lumi all-coins scan (50 signals in one call)",
+    method: "GET",
+    path: "/v1/scan",
+    template: "/v1/scan",
+    summary:
+      "Use this when you need to screen the whole market in one call instead of 50: label, score, 1h/4h/1d labels, 1h RSI, price and 24h change for every top-50 coin (GET /v1/coins), strongest first, plus label counts and breadth. Computed live; 1h refreshed about every 13 minutes; freshness fields reflect the oldest coin included. Not sold when fewer than 40 coins are fresh. " + NOT_CHARGED,
+    example: "/v1/scan",
+  },
+  {
+    route: "lite",
+    name: "Lumi lite coin signal (label, score, price)",
+    method: "GET",
+    path: "/v1/lite/{coin}",
+    template: "/v1/lite/{coin}",
+    summary:
+      "Use this when you only need the headline read on one coin, cheaply: overall label and score, 1h/4h/1d labels and price with 24h change. Same live computation as /v1/signal/{coin}, which adds the full indicator breakdown. " + NOT_CHARGED,
+    example: "/v1/lite/BTC",
+  },
+  {
     route: "slate",
     name: "Lumi paper-trade slate (current ideas)",
     method: "GET",
@@ -105,6 +125,36 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     example: "/v1/events",
   },
   {
+    route: "funding",
+    name: "Lumi perpetual funding rates (50 coins)",
+    method: "GET",
+    path: "/v1/funding",
+    template: "/v1/funding",
+    summary:
+      "Use this when you need derivatives positioning: the current perpetual funding rate for every top-50 coin listed on OKX (rate, 8h-normalised, annualised, next funding time, plain-English read), BTC read, median and the most positive/negative. Refreshed every 15 minutes; positive = longs pay shorts. " + NOT_CHARGED,
+    example: "/v1/funding",
+  },
+  {
+    route: "fear_greed",
+    name: "Lumi Fear & Greed (CoinMarketCap, with history)",
+    method: "GET",
+    path: "/v1/fear-greed",
+    template: "/v1/fear-greed",
+    summary:
+      "Use this when you need crypto sentiment: the CoinMarketCap Fear & Greed index now, yesterday, last week and last month, the change vs each, yearly high/low and a 30-day daily series. Refreshed every 30 minutes. " + NOT_CHARGED,
+    example: "/v1/fear-greed",
+  },
+  {
+    route: "events_48h",
+    name: "Lumi events in the next 48 hours",
+    method: "GET",
+    path: "/v1/events/next48h",
+    template: "/v1/events/next48h",
+    summary:
+      "Use this when you need to know what could move crypto in the next 48 hours: scheduled macro releases and decisions with exact UTC and US Central times, why each matters and its source, plus dated per-coin catalysts. An empty window is a valid answer. " + NOT_CHARGED,
+    example: "/v1/events/next48h",
+  },
+  {
     route: "trades",
     name: "Lumi paper-trade history",
     method: "GET",
@@ -127,6 +177,16 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
       "connections, no-news notes and dated what-to-watch. JSON with a `markdown` field; ?format=md returns text/markdown. Neutral and apolitical; " +
       "not financial advice. " + NOT_CHARGED,
     example: "/v1/institutional",
+  },
+  {
+    route: "trust_check",
+    name: "Lumi x402 pay check (allow / warn / block)",
+    method: "GET",
+    path: "/v1/trust/check",
+    template: "/v1/trust/check",
+    summary:
+      "Use this before your agent pays an unfamiliar x402 URL: allow / warn / block with coded reasons, from Lumi's daily CDP Bazaar index, free 402-quote checks and paid test-buys. Query: url (required), payTo and amount (optional: the payTo address and USD price you were quoted, to catch address or price mismatches). block = a concrete mismatch or a paid call that returned nothing; warn = not enough evidence; allow = listing and recent checks agree. Links the free lookup and, for curated vendors, the $0.02 full report. Observations, not a guarantee. Not charged on bad input.",
+    example: "/v1/trust/check?url=https://api.example.com/v1/data",
   },
   {
     route: "vendor_report",

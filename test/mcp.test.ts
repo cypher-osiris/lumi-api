@@ -88,7 +88,7 @@ describe("remote MCP: protocol", () => {
     expect(r.headers.get("Content-Type")).toBe("text/event-stream");
     const t = await r.text();
     expect(t).toMatch(/^event: message\ndata: /);
-    expect(JSON.parse(t.split("data: ")[1]).result.tools.length).toBe(16);
+    expect(JSON.parse(t.split("data: ")[1]).result.tools.length).toBe(22);
   });
 });
 
@@ -97,9 +97,9 @@ describe("remote MCP: tools", () => {
     const { rpc } = setup();
     const names = (await rpc("tools/list")).body.result.tools.map((t: any) => t.name);
     const src = readFileSync(join(__dirname, "..", "mcp", "src", "index.js"), "utf8");
-    const wrapper = [...src.matchAll(/name: "(lumi_[a-z_]+)"/g), ...src.matchAll(/registerTool\(\s*"(lumi_[a-z_]+)"/g)].map((m) => m[1]);
+    const wrapper = [...src.matchAll(/name: "(lumi_[a-z0-9_]+)"/g), ...src.matchAll(/registerTool\(\s*"(lumi_[a-z0-9_]+)"/g)].map((m) => m[1]);
     expect(new Set(names)).toEqual(new Set(wrapper));
-    expect(names).toHaveLength(16);
+    expect(names).toHaveLength(22);
   });
 
   it("free tools work without a key", async () => {
@@ -107,7 +107,7 @@ describe("remote MCP: tools", () => {
     const coins = JSON.parse(textOf((await call("lumi_coins")).body));
     expect(coins).toHaveLength(50);
     const cat = JSON.parse(textOf((await call("lumi_catalog")).body));
-    expect(cat.endpoints).toHaveLength(11);
+    expect(cat.endpoints).toHaveLength(17);
     expect(cat.access).toMatch(/^public/);
     const q = JSON.parse(textOf((await call("lumi_quote", { path: "/v1/brief" })).body));
     expect(q.status).toBe(402);

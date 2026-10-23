@@ -65,6 +65,11 @@ export const VENDOR_REPORT_TOOL_DESCRIPTION =
   "latency stats and 7-day trend, uptime % (24h/7d/30d/90d) and daily series, quoted-price history, verified agent reports, vendor replies, sample sizes and confidence labels. " +
   "Automated observations, not a rating. Paid ($0.02: ~0.015 XRP / 0.02 RLUSD / 0.02 USDC). The free summary is lumi_vendor_scores.";
 
+export const TRUST_CHECK_TOOL_DESCRIPTION =
+  "Should I pay this x402 URL? allow / warn / block with coded reasons, from Lumi's daily CDP Bazaar index, free 402-quote checks and paid test-buys. " +
+  "Pass url, and optionally the payTo and USD amount you were quoted, to catch address or price mismatches. Links the free lookup and, for curated vendors, the $0.02 full report. " +
+  "Observations, not a guarantee. Paid: $0.004 per call (USDC/RLUSD, or the XRP equivalent).";
+
 export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "Daily Institutional & Policy Brief (premium): what BIS, IMF, US Treasury/OCC, Fed, SEC, CFTC, JPMorgan (Kinexys), SBI, Cross River, Securitize, R3 " +
   "and other banks, central banks and tokenization firms did in the last days, and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR (plus RLUSD/USDC). " +
@@ -102,11 +107,29 @@ export const PAID_TOOLS: PaidTool[] = [
     inputSchema: COIN_ARG("Ticker or CoinGecko id of a watchlist/major coin, e.g. XRP BTC ETH"),
     description: "Lumi's support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and sources for one coin. Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent).",
   },
+  {
+    name: "lumi_scan",
+    route: "scan",
+    path: () => "/v1/scan",
+    inputSchema: NO_ARGS,
+    description: "Whole-market screen in one call: buy/sell label, score, 1h/4h/1d labels, 1h RSI, price and 24h change for all 50 top coins, strongest first, plus label counts and breadth. Computed live. Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent).",
+  },
+  {
+    name: "lumi_lite",
+    route: "lite",
+    coin: (a) => str(a.coin),
+    path: (a) => `/v1/lite/${encodeURIComponent(str(a.coin) ?? "")}`,
+    inputSchema: COIN_ARG("Ticker or CoinGecko id, any of the 50 in lumi_coins, e.g. BTC ETH XRP"),
+    description: "Cheap headline read for one coin: overall buy/sell label and score, 1h/4h/1d labels, price and 24h change (lumi_signal adds the indicator breakdown). Paid: $0.004 per call (USDC/RLUSD, or the XRP equivalent).",
+  },
   { name: "lumi_slate", route: "slate", path: () => "/v1/slate", inputSchema: NO_ARGS, description: "Lumi's current paper-trade ideas (entry, stop, targets, leverage, conviction) and 'no setup' notes. Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent)." },
   { name: "lumi_market", route: "market", path: () => "/v1/market", inputSchema: NO_ARGS, description: "BTC backdrop (levels, projection, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent)." },
   { name: "lumi_macro_yen", route: "yen", path: () => "/v1/macro/yen", inputSchema: NO_ARGS, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid: $0.015 per call (USDC/RLUSD, or the XRP equivalent)." },
   { name: "lumi_sentiment", route: "sentiment", path: () => "/v1/sentiment", inputSchema: NO_ARGS, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent)." },
   { name: "lumi_events", route: "events", path: () => "/v1/events", inputSchema: NO_ARGS, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid: $0.01 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_funding", route: "funding", path: () => "/v1/funding", inputSchema: NO_ARGS, description: "Perpetual funding rates for the top-50 coins listed on OKX (rate, 8h-normalised, annualised, next funding time, plain-English read), BTC read, median, most positive/negative. Refreshed every 15 minutes. Paid: $0.003 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_fear_greed", route: "fear_greed", path: () => "/v1/fear-greed", inputSchema: NO_ARGS, description: "CoinMarketCap Fear & Greed now, yesterday, last week and last month, change vs each, yearly high/low and a 30-day series. Refreshed every 30 minutes. Paid: $0.003 per call (USDC/RLUSD, or the XRP equivalent)." },
+  { name: "lumi_events_48h", route: "events_48h", path: () => "/v1/events/next48h", inputSchema: NO_ARGS, description: "What is scheduled in the next 48 hours: macro releases and decisions with UTC + US Central times, why each matters and its source, plus dated coin catalysts. Paid: $0.003 per call (USDC/RLUSD, or the XRP equivalent)." },
   { name: "lumi_trades", route: "trades", path: () => "/v1/trades", inputSchema: NO_ARGS, description: "Lumi's paper-trade history as a raw list (entry, stop, targets, leverage, status, reasoning). Paid: $0.02 per call (USDC/RLUSD, or the XRP equivalent)." },
   {
     name: "lumi_institutional_brief",
@@ -114,6 +137,23 @@ export const PAID_TOOLS: PaidTool[] = [
     path: (a) => `/v1/institutional${a.format === "md" ? "?format=md" : ""}`,
     inputSchema: { type: "object", properties: { format: { type: "string", enum: ["json", "md"], description: "json (default) or md for ready-to-read markdown" } } },
     description: INSTITUTIONAL_TOOL_DESCRIPTION,
+  },
+  {
+    name: "lumi_trust_check",
+    route: "trust_check",
+    argName: "url",
+    coin: (a) => (str(a.url)?.trim() ? new URLSearchParams(Object.entries({ url: str(a.url)!.trim(), payTo: str(a.payTo), amount: a.amount === undefined ? undefined : String(a.amount) }).filter(([, v]) => v) as [string, string][]).toString() : undefined),
+    path: (a) => `/v1/trust/check?${String(a.coin ?? "")}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The x402 resource URL you are about to pay" },
+        payTo: { type: "string", description: "Optional: the payTo address in its 402 quote" },
+        amount: { type: "string", description: "Optional: the quoted price in USD, e.g. 0.01" },
+      },
+      required: ["url"],
+    },
+    description: TRUST_CHECK_TOOL_DESCRIPTION,
   },
   {
     name: "lumi_vendor_report",
@@ -148,7 +188,7 @@ function toolList() {
       name: "lumi_samples",
       title: "Lumi: free samples of every paid product",
       description:
-        "Free. A truncated, clearly labelled SAMPLE of each paid product (signal, levels, slate, market, brief, yen, sentiment, events, trades, institutional brief, vendor report) with its USD price and full URL, so you can see the shape and quality before paying. Lists are cut to 2 entries; up to 10 minutes old. Pass route to get one product.",
+        "Free. A truncated, clearly labelled SAMPLE of each paid product (signal, lite, scan, levels, slate, market, brief, yen, sentiment, funding, fear_greed, events, events_48h, trades, institutional brief, trust_check, vendor report) with its USD price and full URL, so you can see the shape and quality before paying. Lists are cut to 2 entries; up to 10 minutes old. Pass route to get one product.",
       inputSchema: { type: "object", properties: { route: { type: "string", pattern: "^[a-z_]{1,32}$", description: "Optional product route, e.g. institutional or signal" } } },
       annotations: ro,
     },
@@ -187,10 +227,10 @@ function toolList() {
 }
 
 const INSTRUCTIONS =
-  "Lumi Trades (lumitrades.io) crypto market reads: daily brief, per-coin signals and support/resistance levels, paper-trade slate, " +
-  "BTC/macro backdrop, yen carry-trade watch, sentiment and events for 13 coins, plus a premium daily Institutional & Policy Brief " +
+  "Lumi Trades (lumitrades.io) crypto market reads: daily brief, live signals for 50 coins (lumi_signal, cheap lumi_lite, or all at once with lumi_scan), support/resistance levels, paper-trade slate, " +
+  "BTC/macro backdrop, yen carry-trade watch, sentiment, funding rates, Fear & Greed, events and the next 48h, lumi_trust_check (should I pay this x402 URL? allow/warn/block), plus a premium daily Institutional & Policy Brief " +
   "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_samples (truncated previews of every paid product), lumi_quote and lumi_vendor_scores (Lumi's observations of other x402 vendors) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
-  "Paid tools cost a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
+  "Paid tools cost $0.003 to a few cents per call (the institutional brief $0.25) via x402 (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
   "Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
 // ---------------------------------------------------------------- auth
@@ -512,7 +552,7 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
     if (tool.coin) {
       coinArg = tool.coin(args)?.trim();
       if (!coinArg) {
-        return text({ error: tool.argName === "vendor_id" ? "missing required argument: vendor_id (e.g. printmoneylab; list with lumi_vendor_scores)" : "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
+        return text({ error: tool.argName === "vendor_id" ? "missing required argument: vendor_id (e.g. printmoneylab; list with lumi_vendor_scores)" : tool.argName === "url" ? "missing required argument: url (the x402 resource URL you are about to pay)" : "missing required argument: coin (ticker or CoinGecko id, e.g. XRP)" }, true);
       }
     }
     if ((tool.name === "lumi_brief" || tool.name === "lumi_institutional_brief") && args.format !== undefined && args.format !== "json" && args.format !== "md") {

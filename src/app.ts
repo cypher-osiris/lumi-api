@@ -27,6 +27,10 @@ import { createCatalog, type Catalog, type CatalogJob, type QueueLike } from "./
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { applyRate, createXrpPricer, type XrpPricer } from "./pricing";
 import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
+import { D1FeedStore, MemoryFeedStore, FEEDS, dueFeed, refreshFeed, feedFresh, type FeedStore } from "./feeds";
+import { liteView, scanView, fundingView, fearGreedView, fearGreedFromContext, events48View, trustVerdict } from "./quick";
+import { lookupError } from "./trust/index";
+import type { LookupQuery } from "./trust/catalog";
 import { D1LiveStore, MemoryLiveStore, refreshLive, isFresh, LIVE_UNIVERSE, LIVE_MAX_AGE_MS, LIVE_CYCLE_MS, type LiveStore } from "./live";
 import { D1SalesStore, MemorySalesStore, salesSummary, sendSaleAlert, toRow, alertEnabled, type SalesStore, type AlertConfig } from "./sales";
 
@@ -47,6 +51,7 @@ export interface AppOptions {
   trafficStore?: TrafficStore;
   /** Live signal store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory (empty: site files are used). */
   liveStore?: LiveStore;
+  feedStore?: FeedStore;
 }
 
 /** Lumi's own Base wallets (receiving + test-buyer). Addresses only. */
@@ -74,6 +79,7 @@ export interface App {
   /** One-minute cron: recompute live signals for the stalest slice of the top-50 universe. */
   liveRefresh(): Promise<unknown>;
   live: LiveStore;
+  feeds: FeedStore;
   /** Queue consumer: one catalog ingest page or quote-check batch. */
   queue(job: CatalogJob): Promise<unknown>;
   config: Config;
@@ -86,6 +92,8 @@ export interface App {
   logTraffic(request: Request, response: Response, ctx?: WaitUntil): void;
 }
 
+/** The scan is sold only when at least this many live signals are fresh. */
+const SCAN_MIN = 40;
 const NEEDS: Record<PaidRoute, DataFile[]> = {
   signal: ["signals", "prices"],
   levels: ["analysis", "prices"],
@@ -98,12 +106,19 @@ const NEEDS: Record<PaidRoute, DataFile[]> = {
   trades: ["trades"],
   institutional: ["institutional_brief"],
   vendor_report: [], // trust-layer data (D1), checked in prepare()
+  scan: [], // live_signals (D1), checked in prepare()
+  lite: ["signals", "prices"], // via the signal route (live row first)
+  trust_check: [], // trust catalog (D1)
+  funding: [], // live_feeds (D1)
+  fear_greed: [], // live_feeds (D1), context.json fallback in prepare()
+  events_48h: ["events"],
 };
 /** Inputs that enrich a product but whose absence does not block it (the field is simply omitted). */
 const OPTIONAL: Partial<Record<PaidRoute, DataFile[]>> = {
   brief: ["events", "brief"],
   yen: ["events"],
   events: ["events"],
+  events_48h: ["analysis"],
 };
 /** Paid paths without a {coin} parameter. */
 const FIXED: Record<string, PaidRoute> = {
@@ -115,6 +130,11 @@ const FIXED: Record<string, PaidRoute> = {
   "/v1/events": "events",
   "/v1/trades": "trades",
   "/v1/institutional": "institutional",
+  "/v1/scan": "scan",
+  "/v1/funding": "funding",
+  "/v1/fear-greed": "fear_greed",
+  "/v1/events/next48h": "events_48h",
+  "/v1/trust/check": "trust_check",
 };
 
 /** Unfilled path placeholders in any common style: {coin}, {{coin}}, :coin, <coin>, [coin], ${coin}, $coin. */
@@ -137,6 +157,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const traffic: TrafficStore = opts.trafficStore ?? (env.TRUST_DB ? new D1TrafficStore(env.TRUST_DB) : new MemoryTrafficStore());
   const trafficOn = env.TRAFFIC_LOG !== "0";
   const live: LiveStore = opts.liveStore ?? (env.TRUST_DB ? new D1LiveStore(env.TRUST_DB) : new MemoryLiveStore());
+  const feeds: FeedStore = opts.feedStore ?? (env.TRUST_DB ? new D1FeedStore(env.TRUST_DB) : new MemoryFeedStore());
   const alertCfg: AlertConfig = {
     webhookUrl: env.SALES_WEBHOOK_URL || undefined,
     email: env.SALES_ALERT_EMAIL || undefined,
@@ -259,6 +280,16 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
    */
   async function prepare(route: PaidRoute, coinArg?: string, base = config.publicBaseUrl ?? "https://api.lumitrades.io"): Promise<Prepared> {
     if (route === "vendor_report") return prepareVendorReport(coinArg ?? "", base);
+    if (route === "trust_check") return prepareTrustCheck(coinArg ?? "", base);
+    if (route === "scan") return prepareScan();
+    if (route === "funding" || route === "fear_greed") return prepareFeed(route);
+    if (route === "lite") {
+      const p = await prepare("signal", coinArg, base);
+      if (!p.ok) return p;
+      const b = p.body as Record<string, unknown>;
+      const meta = Object.fromEntries(["as_of", "data_age_seconds", "next_update", "stale_after"].filter((k) => k in b).map((k) => [k, b[k]]));
+      return { ok: true, route, coin: p.coin, body: { ...liteView(b), ...meta } };
+    }
     let coin: CoinRef | undefined;
     if (coinArg !== undefined) {
       coin = resolveCoin(await coins(), coinArg);
@@ -312,6 +343,68 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
     const meta = fileMeta(loaded, NEEDS[route], t, config.dataMaxAgeHours);
     return { ok: true, route, coin, body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)) };
+  }
+
+  /** All-coins scan: every fresh live row; sold only when at least SCAN_MIN coins are fresh. Freshness = the oldest row. */
+  async function prepareScan(): Promise<Prepared> {
+    const t = now();
+    const rows = (await live.all().catch(() => [])).filter((r) => isFresh(r, t) && r.label);
+    if (rows.length < SCAN_MIN) {
+      return { ok: false, status: 503, error: { error: "data_stale", detail: `only ${rows.length} of ${LIVE_UNIVERSE.length} live signals are fresh right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "120" } };
+    }
+    const oldest = Math.min(...rows.map((r) => r.computed_at));
+    const meta = metaFrom(oldest, oldest + LIVE_MAX_AGE_MS, Math.max(t + 60_000, oldest + LIVE_CYCLE_MS), t);
+    return { ok: true, route: "scan", body: isoTimestamps(withMeta(scanView(rows, await coins()) as Record<string, unknown>, meta)) };
+  }
+
+  /** Funding / Fear & Greed from the cron-cached feeds (Fear & Greed falls back to the site's CMC snapshot). */
+  async function prepareFeed(route: "funding" | "fear_greed"): Promise<Prepared> {
+    const t = now();
+    const row = await feeds.get(route).catch(() => null);
+    if (feedFresh(row, t)) {
+      const body = route === "funding" ? fundingView(row.doc) : fearGreedView(row.doc);
+      if (body) {
+        const meta = metaFrom(row.fetched_at, row.fetched_at + FEEDS[route].stale_ms, Math.max(t + 60_000, row.fetched_at + FEEDS[route].every_ms), t);
+        return { ok: true, route, body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)) };
+      }
+    }
+    if (route === "fear_greed") {
+      try {
+        const loaded = await data.getMany(["context"]);
+        if (!staleInputs(loaded, ["context"], t, config.dataMaxAgeHours).length) {
+          const body = fearGreedFromContext(loaded.context);
+          if (body) return { ok: true, route, body: isoTimestamps(withMeta(body as Record<string, unknown>, fileMeta(loaded, ["context"], t, config.dataMaxAgeHours))) };
+        }
+      } catch { /* fall through */ }
+    }
+    return { ok: false, status: 503, error: { error: "data_stale", detail: `the ${route === "funding" ? "funding-rate" : "Fear & Greed"} feed is not fresh right now`, retryable: true, note: "Not charged." }, headers: { "Retry-After": "300" } };
+  }
+
+  /** "Should I pay this x402 URL?" Validated before any quote; the verdict reads the trust catalog (same data as the free lookup). */
+  async function prepareTrustCheck(qs: string, base: string): Promise<Prepared> {
+    const sp = new URLSearchParams(qs);
+    const url = sp.get("url")?.trim() ?? "";
+    const payTo = sp.get("payTo")?.trim() || sp.get("pay_to")?.trim() || undefined;
+    const amountRaw = sp.get("amount")?.trim();
+    const amountUsd = amountRaw ? Number(amountRaw.replace(/^\$/, "")) : undefined;
+    const bad = (detail: string) => ({ ok: false as const, status: 400, error: { error: "invalid_query", detail, example: `${base}/v1/trust/check?url=https://api.example.com/v1/data&payTo=0x...&amount=0.01`, note: "Not charged." } });
+    if (!url) return bad("url is required: the x402 resource URL you are about to pay.");
+    const err = lookupError({ url, ...(payTo ? { payTo } : {}) }, { url: true, payTo: payTo !== undefined });
+    if (err) return { ok: false, status: 400, error: { ...err, note: "Not charged." } };
+    if (amountRaw && !(amountUsd !== undefined && Number.isFinite(amountUsd) && amountUsd >= 0 && amountUsd < 1e6)) return bad("amount must be a USD number, e.g. 0.01.");
+    let host = "";
+    try { host = new URL(url).hostname.toLowerCase(); } catch { return bad("url must be an absolute http(s) URL."); }
+    try {
+      const exact = (await trust.lookup({ url } as LookupQuery, base)) as any;
+      const hasExact = !!exact?.self || (exact?.catalog?.entries?.length ?? 0) > 0;
+      const dom = hasExact ? null : ((await trust.lookup({ domain: host } as LookupQuery, base)) as any);
+      const body = trustVerdict({ url, payTo, amountUsd, network: sp.get("network") ?? undefined }, exact, dom, base);
+      const t = now();
+      const meta = metaFrom(t, t + 86_400_000, t + 30 * 60_000, t);
+      return { ok: true, route: "trust_check", body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)) };
+    } catch (e) {
+      return { ok: false, status: 503, error: { error: "data_unavailable", detail: "the trust catalog is unavailable right now", retryable: true, note: "Not charged." }, headers: { "Retry-After": "60" } };
+    }
   }
 
   /** Paid vendor report: unknown vendor -> 404, no observation in 48 h -> 503; both before any 402 and never charged. */
@@ -538,7 +631,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
 
     // ---------------- paid
     const vr = path.match(/^\/v1\/trust\/vendors\/([^/]{1,64})\/report$/);
-    const m = vr ? [path, "vendor_report", vr[1]] : path.match(/^\/v1\/(signal|levels)\/([^/]+)$/) ?? (FIXED[path] ? [path, FIXED[path]] : null);
+    const m = vr ? [path, "vendor_report", vr[1]] : path.match(/^\/v1\/(signal|levels|lite)\/([^/]+)$/) ?? (FIXED[path] ? [path, FIXED[path]] : null);
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
@@ -577,7 +670,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       });
     }
 
-    const prep = await prepare(route, m[2], base);
+    const prep = await prepare(route, route === "trust_check" ? url.search : m[2], base);
     if (!prep.ok) return json(prep.status, prep.error, prep.headers);
     const { coin, body } = prep;
     // Owner key (Authorization: Bearer <OWNER_MCP_KEY>) reads the vendor report at no charge.
@@ -613,7 +706,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       bazaar: bazaarExtension(
         route,
         coin?.symbol ?? vendorId,
-        wantsMarkdown && url.searchParams.has("format") ? { format: "md" } : undefined,
+        route === "trust_check" ? Object.fromEntries(url.searchParams) : wantsMarkdown && url.searchParams.has("format") ? { format: "md" } : undefined,
         config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route],
       ),
       service: serviceMeta(route),
@@ -669,8 +762,19 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       if (ctx) ctx.waitUntil(p);
     },
     live,
+    feeds,
     async liveRefresh() {
-      const r = await refreshLive(live, doFetch, now());
+      // A run that refreshes a due feed does only that (CPU budget); otherwise the stalest coin slice.
+      const t = now();
+      const due = dueFeed(await feeds.ages().catch(() => ({})), t);
+      if (due) {
+        const r = await refreshFeed(feeds, doFetch, due, t).catch((e) => ({ feed: due, ok: false, error: String((e as Error).message).slice(0, 200) }));
+        // On failure keep the old data and its fetched_at; attempt_at backs the feed off for 5 minutes.
+        if (!r.ok) await feeds.get(due).then((old) => feeds.put({ id: due, fetched_at: old?.fetched_at ?? 0, doc: { ...(old?.doc ?? {}), attempt_at: t - FEEDS[due].every_ms + 5 * 60_000 } })).catch(() => {});
+        deps.log?.({ event: "feed_refresh", ...r });
+        return r;
+      }
+      const r = await refreshLive(live, doFetch, t);
       deps.log?.({ event: "live_refresh", ...r });
       return r;
     },
@@ -721,8 +825,10 @@ function buildBody(route: PaidRoute, coin: CoinRef | undefined, d: Record<string
       return tradesView(d.trades, coins);
     case "institutional":
       return institutionalView(d.institutional_brief);
-    case "vendor_report":
-      return null; // built by prepareVendorReport()
+    case "events_48h":
+      return events48View(d.events, d.analysis, coins, now);
+    default:
+      return null; // vendor_report, scan, lite, trust_check, funding, fear_greed: built in prepare()
   }
 }
 

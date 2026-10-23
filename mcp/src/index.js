@@ -15,7 +15,7 @@ import { createClient, loadSettings, assetLabel } from "./lumi.js";
 const VENDOR_LOOKUP_DESCRIPTION =
   "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
 
-export const VERSION = "0.6.1";
+export const VERSION = "0.7.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
 export const PAID_TOOLS = [
@@ -29,8 +29,8 @@ export const PAID_TOOLS = [
   {
     name: "lumi_signal",
     path: (a) => `/v1/signal/${encodeURIComponent(a.coin)}`,
-    input: { coin: z.string().describe("Ticker or CoinGecko id: XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI") },
-    description: "Mechanical buy/sell read for one coin: overall label + score, 1h/4h/1d labels and indicators (RSI, MACD, EMA, Bollinger, StochRSI, volume). Paid: $0.01 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger).",
+    input: { coin: z.string().describe("Ticker or CoinGecko id, any of the 50 in lumi_coins, e.g. BTC ETH XRP SOL AVAX TRX") },
+    description: "Mechanical buy/sell read for one of 50 top coins, computed live (1h refreshed about every 13 minutes): overall label + score, 1h/4h/1d labels and indicators (RSI, MACD, EMA, Bollinger, StochRSI, volume). Paid: $0.01 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger).",
   },
   {
     name: "lumi_levels",
@@ -38,11 +38,21 @@ export const PAID_TOOLS = [
     input: { coin: z.string().describe("Ticker or CoinGecko id, e.g. XRP") },
     description: "Lumi's support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and sources for one coin. Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger).",
   },
+  { name: "lumi_scan", path: () => "/v1/scan", input: {}, description: "Whole-market screen in one call: buy/sell label, score, 1h/4h/1d labels, 1h RSI, price and 24h change for all 50 top coins, strongest first, plus label counts and breadth. Computed live. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  {
+    name: "lumi_lite",
+    path: (a) => `/v1/lite/${encodeURIComponent(a.coin)}`,
+    input: { coin: z.string().describe("Ticker or CoinGecko id, any of the 50 in lumi_coins, e.g. BTC ETH XRP") },
+    description: "Cheap headline read for one coin: overall buy/sell label and score, 1h/4h/1d labels, price and 24h change (lumi_signal adds the indicator breakdown). Paid: $0.004 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger).",
+  },
   { name: "lumi_slate", path: () => "/v1/slate", input: {}, description: "Lumi's current paper-trade ideas (entry, stop, targets, leverage, conviction) and 'no setup' notes. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_market", path: () => "/v1/market", input: {}, description: "BTC backdrop (levels, projection, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_macro_yen", path: () => "/v1/macro/yen", input: {}, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid: $0.015 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_sentiment", path: () => "/v1/sentiment", input: {}, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_events", path: () => "/v1/events", input: {}, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_funding", path: () => "/v1/funding", input: {}, description: "Perpetual funding rates for the top-50 coins listed on OKX (rate, 8h-normalised, annualised, next funding time, plain-English read), BTC read, median, most positive/negative. Refreshed every 15 minutes. Paid: $0.003 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_fear_greed", path: () => "/v1/fear-greed", input: {}, description: "CoinMarketCap Fear & Greed now, yesterday, last week and last month, change vs each, yearly high/low and a 30-day series. Refreshed every 30 minutes. Paid: $0.003 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_events_48h", path: () => "/v1/events/next48h", input: {}, description: "What is scheduled in the next 48 hours: macro releases and decisions with UTC + US Central times, why each matters and its source, plus dated coin catalysts. Paid: $0.003 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_trades", path: () => "/v1/trades", input: {}, description: "Lumi's paper-trade ideas as a raw list: each idea with entry, stop, targets, leverage, status and reasoning. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   {
     name: "lumi_institutional_brief",
@@ -55,6 +65,24 @@ export const PAID_TOOLS = [
       "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
       "what to watch next. Refreshed daily; never sold stale. Paid: $0.25 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger); " +
       "allowed by the default caps (LUMI_MAX_USD_PER_CALL 0.30, LUMI_MAX_XRP_PER_CALL 0.25). Not financial advice.",
+  },
+  {
+    name: "lumi_trust_check",
+    path: (a) => {
+      const q = new URLSearchParams({ url: String(a.url ?? "") });
+      if (a.payTo) q.set("payTo", String(a.payTo));
+      if (a.amount !== undefined) q.set("amount", String(a.amount));
+      return `/v1/trust/check?${q}`;
+    },
+    input: {
+      url: z.string().describe("The x402 resource URL you are about to pay"),
+      payTo: z.string().optional().describe("Optional: the payTo address in its 402 quote"),
+      amount: z.string().optional().describe("Optional: the quoted price in USD, e.g. 0.01"),
+    },
+    description:
+      "Should I pay this x402 URL? allow / warn / block with coded reasons, from Lumi's daily CDP Bazaar index, free 402-quote checks and paid test-buys. " +
+      "Pass url, and optionally the payTo and USD amount you were quoted, to catch address or price mismatches. Links the free lookup and, for curated vendors, the $0.02 full report. " +
+      "Observations, not a guarantee. Paid: $0.004 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger).",
   },
   {
     name: "lumi_vendor_report",
@@ -110,7 +138,7 @@ export function buildServer(client) {
     {
       title: "Lumi: free samples of every paid product",
       description:
-        "Free. A truncated, clearly labelled SAMPLE of each paid product (signal, levels, slate, market, brief, yen, sentiment, events, trades, institutional brief, vendor report) with its USD price and full URL, so you can judge it before paying. Lists are cut to 2 entries; up to 10 minutes old. Pass route to get one product.",
+        "Free. A truncated, clearly labelled SAMPLE of each paid product (signal, lite, scan, levels, slate, market, brief, yen, sentiment, funding, fear_greed, events, events_48h, trades, institutional brief, trust_check, vendor report) with its USD price and full URL, so you can judge it before paying. Lists are cut to 2 entries; up to 10 minutes old. Pass route to get one product.",
       inputSchema: { route: z.string().regex(/^[a-z_]{1,32}$/).optional().describe("Optional product route, e.g. institutional or signal") },
     },
     async ({ route }) => {

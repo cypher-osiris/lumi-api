@@ -232,7 +232,28 @@ export function resample(c: Candle[], secs: number): Candle[] {
 // ------------------------------------------------------------------ candles
 const UA = { Accept: "application/json", "User-Agent": "lumi-api-live/1.0 (+https://lumitrades.io)" };
 
+/** Primary venue (Coinbase or Kraken), then OKX spot (SYM-USDT) when the primary errors or rate-limits. */
 export async function fetchCandles(f: typeof fetch, coin: LiveCoin, tf: "1h" | "1d"): Promise<Candle[]> {
+  try {
+    return await fetchPrimary(f, coin, tf);
+  } catch (e) {
+    try {
+      return await fetchOkx(f, coin, tf);
+    } catch {
+      throw e;
+    }
+  }
+}
+
+async function fetchOkx(f: typeof fetch, coin: LiveCoin, tf: "1h" | "1d"): Promise<Candle[]> {
+  const r = await f(`https://www.okx.com/api/v5/market/candles?instId=${coin.symbol}-USDT&bar=${tf === "1h" ? "1H" : "1Dutc"}&limit=300`, { headers: UA });
+  if (!r.ok) throw new Error(`okx ${coin.symbol} ${tf}: HTTP ${r.status}`);
+  const d = (await r.json()) as { code?: string; data?: string[][] };
+  if (d.code !== "0" || !d.data?.length) throw new Error(`okx ${coin.symbol} ${tf}: code ${d.code}`);
+  return d.data.map((x) => [Math.floor(Number(x[0]) / 1000), +x[1], +x[2], +x[3], +x[4], +x[5]] as Candle).sort((a, b) => a[0] - b[0]);
+}
+
+async function fetchPrimary(f: typeof fetch, coin: LiveCoin, tf: "1h" | "1d"): Promise<Candle[]> {
   if (coin.source === "coinbase") {
     const r = await f(`https://api.exchange.coinbase.com/products/${coin.product}/candles?granularity=${tf === "1h" ? 3600 : 86400}`, { headers: UA });
     if (!r.ok) throw new Error(`coinbase ${coin.product} ${tf}: HTTP ${r.status}`);

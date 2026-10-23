@@ -89,6 +89,18 @@ export function hasContent(route: string, body: Json): boolean {
       return (body.items?.length ?? 0) + (body.no_notable_news?.length ?? 0) > 0 && (body.big_picture?.length ?? 0) > 0 && !!body.markdown;
     case "vendor_report":
       return body.kind === "trust_vendor_report" && ((body.quote_checks?.rows?.length ?? 0) + (body.paid_test_buys?.count ?? 0)) > 0;
+    case "scan":
+      return Array.isArray(body.coins) && body.coins.length > 0;
+    case "lite":
+      return typeof body.label === "string";
+    case "trust_check":
+      return typeof body.verdict === "string";
+    case "funding":
+      return Array.isArray(body.coins) && body.coins.length > 0;
+    case "fear_greed":
+      return typeof body.value === "number";
+    case "events_48h":
+      return body.kind === "events_48h" && typeof body.count === "number"; // an empty window is an answer too
     default:
       return false;
   }

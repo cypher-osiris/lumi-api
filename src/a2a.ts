@@ -39,6 +39,7 @@ interface SkillDef {
   match: RegExp;
   needsCoin?: boolean;
   needsVendor?: boolean;
+  needsUrl?: boolean;
 }
 
 const SKILLS: SkillDef[] = [
@@ -56,11 +57,16 @@ const SKILLS: SkillDef[] = [
     match: /\b(institution(al|s)?|policy|regulat(ion|ions|ory|ors?)|bis|imf|treasury|occ|sec|cftc|cbdcs?|jpmorgan|jpm|kinexys|sbi|cross river|securitize|corda|r3|banks?|tokeni[sz](ed|ation))\b/i,
   },
   { id: "brief", route: "brief", name: "Daily crypto market brief", tags: ["crypto", "market", "brief", "newsletter", "paid"], examples: ["today's crypto market brief"], match: /\b(brief|summary|today|newsletter)\b/i },
+  { id: "scan", route: "scan", name: "All-coins scan: 50 live signals in one call", tags: ["crypto", "screener", "signals", "scan", "paid"], examples: ["scan all coins", "which coins look strongest?"], match: /\b(scan|screen|screener|all coins|strongest|weakest)\b/i },
+  { id: "lite", route: "lite", name: "Lite coin signal (label, score, price)", tags: ["crypto", "signal", "lite", "paid"], examples: ["lite BTC"], match: /\blite\b/i, needsCoin: true },
   { id: "signal", route: "signal", name: "Coin signal (buy/sell read)", tags: ["crypto", "signal", "technical-analysis", "paid"], examples: ["signal XRP", "is BTC a buy?"], match: /\b(signal|buy|sell|rsi|macd)\b/i, needsCoin: true },
   { id: "levels", route: "levels", name: "Support/resistance levels + 7-day projection", tags: ["crypto", "levels", "support", "resistance", "paid"], examples: ["levels ETH"], match: /\b(levels?|support|resistance|projection)\b/i, needsCoin: true },
   { id: "slate", route: "slate", name: "Paper-trade slate (current ideas)", tags: ["crypto", "trade-ideas", "paper-trading", "paid"], examples: ["current trade ideas"], match: /\b(slate|ideas?|setups?)\b/i },
   { id: "market", route: "market", name: "BTC + macro market backdrop", tags: ["crypto", "bitcoin", "macro", "paid"], examples: ["BTC macro backdrop"], match: /\b(market|backdrop|macro|dominance)\b/i },
   { id: "macro_yen", route: "yen", name: "Yen carry-trade watch (USD/JPY, Nikkei)", tags: ["macro", "yen", "carry-trade", "japan", "paid"], examples: ["yen carry trade risk"], match: /\b(yen|jpy|usd\/?jpy|nikkei|carry|japan|boj)\b/i },
+  { id: "funding", route: "funding", name: "Perpetual funding rates (50 coins)", tags: ["crypto", "funding", "perpetuals", "derivatives", "paid"], examples: ["funding rates"], match: /\bfunding\b/i },
+  { id: "fear_greed", route: "fear_greed", name: "Fear & Greed (CoinMarketCap, with history)", tags: ["crypto", "sentiment", "fear-greed", "paid"], examples: ["fear and greed index"], match: /\bfear\b.*\bgreed\b|\bfear[-_ ]?greed\b/i },
+  { id: "events_48h", route: "events_48h", name: "Events in the next 48 hours", tags: ["macro", "events", "calendar", "48h", "paid"], examples: ["what's scheduled in the next 48 hours?"], match: /\b(48 ?h(ours)?|next two days|tomorrow)\b/i },
   { id: "sentiment", route: "sentiment", name: "Crypto sentiment (Fear & Greed, funding)", tags: ["crypto", "sentiment", "fear-greed", "funding", "paid"], examples: ["fear and greed"], match: /\b(sentiment|fear|greed|funding|mood)\b/i },
   { id: "events", route: "events", name: "Macro + crypto events calendar", tags: ["macro", "events", "calendar", "paid"], examples: ["upcoming events"], match: /\b(events?|calendar|fomc|cpi|schedule)\b/i },
   {
@@ -71,6 +77,15 @@ const SKILLS: SkillDef[] = [
     examples: ["vendor report printmoneylab", "{\"skill\":\"vendor_report\",\"vendor_id\":\"printmoneylab\"}"],
     match: /\b(vendor|trust)\s+report\b|\breport\b.*\bvendor\b/i,
     needsVendor: true,
+  },
+  {
+    id: "trust_check",
+    route: "trust_check",
+    name: "Should I pay this x402 URL? allow / warn / block (paid)",
+    tags: ["trust", "x402", "payment-safety", "check", "paid"],
+    examples: ["should I pay https://api.example.com/v1/data", "{\"skill\":\"trust_check\",\"url\":\"https://api.example.com/v1/data\",\"payTo\":\"0x...\",\"amount\":\"0.01\"}"],
+    match: /\b(should i pay|pay[- ]check|trust[- ]check|safe to pay)\b/i,
+    needsUrl: true,
   },
   { id: "trades", route: "trades", name: "Paper-trade history", tags: ["crypto", "paper-trading", "paid"], examples: ["your paper-trade history"], match: /\b(trades|trade history|paper[- ]?trades?)\b/i },
 ];
@@ -294,6 +309,7 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
   let skill: SkillDef | undefined = typeof data.skill === "string" ? SKILLS.find((s) => s.id === data.skill || s.route === data.skill) : undefined;
   const pathArg = typeof data.path === "string" ? data.path : text.match(/\/v1\/[A-Za-z0-9/_.?=&%-]+/)?.[0];
   if (!skill && /\bquote\b/i.test(text)) skill = SKILLS.find((s) => s.id === "quote");
+  if (!skill && /\b(should i pay|pay[- ]check|trust[- ]check|safe to pay)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "trust_check");
   if (!skill && /\b(vendor|trust)\s+report\b|\breport\b.*\bvendors?\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_report");
   if (!skill && /\b(vendors?|trust)\b/i.test(text)) skill = SKILLS.find((s) => s.id === "vendor_trust");
   if (!skill && (["url", "domain", "payTo", "pay_to"].some((k) => typeof data[k] === "string") || (/\b(check|verify|seller|safe|legit|payto)\b/i.test(text) && /https?:\/\/|\b0x[0-9a-fA-F]{40}\b/.test(text))))
@@ -377,6 +393,13 @@ async function answer(m: any, base: string, deps: A2aDeps): Promise<Answer> {
       const vendorArg = (typeof data.vendor_id === "string" && data.vendor_id) || VENDOR_IDS.find((v) => new RegExp(`(^|[^a-z0-9-])${v}([^a-z0-9-]|$)`, "i").test(text));
       if (!vendorArg) return { skill: target.id, text: `Which vendor? ${target.id} needs a vendor_id: ${VENDOR_IDS.join(", ")}.`, data: { error: "missing_vendor_id", vendors: VENDOR_IDS } };
       path = ep.template.replace("{id}", encodeURIComponent(String(vendorArg).toLowerCase()));
+    } else if (target.needsUrl) {
+      const u = (typeof data.url === "string" && data.url.trim()) || text.match(/https?:\/\/[^\s"'<>]+/)?.[0];
+      if (!u) return { skill: target.id, text: `Which URL? ${target.id} needs url (the x402 resource you are about to pay), optionally payTo and amount.`, data: { error: "missing_url" } };
+      const qs = new URLSearchParams({ url: u.slice(0, 500) });
+      if (typeof data.payTo === "string" && data.payTo.trim()) qs.set("payTo", data.payTo.trim());
+      if (data.amount !== undefined) qs.set("amount", String(data.amount));
+      path = `${ep.template}?${qs}`;
     } else if (target.needsCoin && !coinArg) {
       return { skill: target.id, text: `Which coin? ${target.id} needs one of: ${coins.map((c) => c.symbol).join(", ")}.`, data: { error: "missing_coin", supported: coins.map((c) => c.symbol) } };
     }

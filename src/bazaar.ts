@@ -31,6 +31,12 @@ export const ROUTE_TAGS: Record<PaidRoute, string[]> = {
   trades: ["paper-trading", "trade-history", "trade-ideas", "trading", "crypto"],
   institutional: ["regulation", "stablecoins", "tokenization", "policy", "crypto"],
   vendor_report: ["x402", "trust-score", "api-monitoring", "security", "due-diligence"],
+  scan: ["crypto-screener", "trading-signals", "market-scan", "technical-analysis", "crypto"],
+  lite: ["crypto-signals", "trading-signals", "bitcoin", "cheap", "crypto"],
+  trust_check: ["x402", "payment-safety", "trust-score", "fraud-check", "agent-payments"],
+  funding: ["funding-rates", "perpetuals", "derivatives", "positioning", "crypto"],
+  fear_greed: ["fear-and-greed", "sentiment", "coinmarketcap", "bitcoin", "crypto"],
+  events_48h: ["economic-calendar", "events", "macro", "fomc", "crypto"],
 };
 
 export function serviceMeta(route: PaidRoute): { serviceName: string; tags: string[]; iconUrl: string } {
@@ -264,6 +270,104 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
       payment: pay("vendor_report"),
     },
   },
+  scan: {
+    description:
+      "Use this when you need to screen the whole crypto market in one paid call instead of 50: the mechanical buy/sell label and " +
+      "score, 1h/4h/1d labels, 1h RSI, price and 24h change for every top-50 coin, strongest first, plus label counts and " +
+      "breadth. Computed live from exchange candles (1h refreshed about every 13 minutes). " + FAIR_USE + " JSON.",
+    example: {
+      kind: "scan",
+      count: 50,
+      label_counts: { "Strong Buy": 3, Buy: 11, Neutral: 21, Sell: 12, "Strong Sell": 3 },
+      breadth: { bullish: 14, neutral: 21, bearish: 15, read: "mixed" },
+      coins: [{ symbol: "SOL", label: "Buy", score: 0.41, tf: { "1h": "Buy", "4h": "Buy", "1d": "Neutral" }, rsi_1h: 61.2, price_usd: 187.4, change_24h_pct: 2.1 }],
+      ...FRESH("2026-10-23T11:02:00Z", "2026-10-23T12:17:00Z"),
+      payment: pay("scan"),
+    },
+  },
+  lite: {
+    description:
+      "Use this when you only need the headline buy/sell read on one crypto coin, cheaply: overall label and score, 1h/4h/1d " +
+      "labels and price with 24h change. Top-50 coins (GET /v1/coins), computed live. GET /v1/signal/{coin} adds the full " +
+      "indicator breakdown. " + FAIR_USE + " JSON.",
+    routeTemplate: "/v1/lite/:coin",
+    pathParam: COIN_PARAM,
+    example: {
+      kind: "signal_lite",
+      coin: { symbol: "BTC", name: "Bitcoin" },
+      label: "Neutral",
+      score: 0.05,
+      price: { usd: 82140, change_24h_pct: 0.4 },
+      timeframes: { "1h": { label: "Buy", score: 0.3 }, "4h": { label: "Neutral", score: 0 }, "1d": { label: "Sell", score: -0.3 } },
+      ...FRESH("2026-10-23T11:02:00Z", "2026-10-23T12:17:00Z"),
+      payment: pay("lite"),
+    },
+  },
+  trust_check: {
+    description:
+      "Use this before your agent pays an unfamiliar x402 URL: allow / warn / block with reasons, from Lumi's daily CDP Bazaar " +
+      "index, free quote checks and paid test-buys. Pass url, and optionally the payTo and amount you were quoted to catch " +
+      "address or price mismatches. Observations, not a guarantee. Not charged on bad input. JSON.",
+    query: {
+      url: { type: "string", description: "The x402 resource URL you are about to pay (required)" },
+      payTo: { type: "string", description: "The payTo address from its 402 quote (optional)" },
+      amount: { type: "string", description: "The quoted price in USD, e.g. 0.01 (optional)" },
+    },
+    example: {
+      kind: "trust_check",
+      query: { url: "https://api.example.com/v1/data", payTo: "0x12ab...89cd" },
+      verdict: "warn",
+      confidence: "low",
+      reasons: [{ code: "last_quote_invalid", severity: "warn", detail: "Lumi's last free quote check did not get a valid x402 quote." }],
+      next_steps: { free_lookup: "https://api.lumitrades.io/v1/trust/vendors?url=..." },
+      ...FRESH("2026-10-23T11:00:00Z", "2026-10-24T11:00:00Z"),
+      payment: pay("trust_check"),
+    },
+  },
+  funding: {
+    description:
+      "Use this when you need crypto derivatives positioning: current perpetual funding rate for each top-50 coin listed on OKX " +
+      "(rate, 8h-normalised, annualised, next funding time), BTC read, median, most positive and negative, refreshed every " +
+      "15 minutes. Positive = longs pay shorts. " + FAIR_USE + " JSON.",
+    example: {
+      kind: "funding",
+      venue: "OKX USDT perpetual swaps",
+      btc: { symbol: "BTC", rate_pct: 0.0061, interval_hours: 8, rate_8h_pct: 0.0061, annualized_pct: 6.68, read: "near neutral" },
+      median_rate_8h_pct: 0.005,
+      most_positive: [{ symbol: "PUMP", rate_8h_pct: 0.042 }],
+      ...FRESH("2026-10-23T11:00:00Z", "2026-10-23T12:00:00Z"),
+      payment: pay("funding"),
+    },
+  },
+  fear_greed: {
+    description:
+      "Use this when you need crypto market sentiment: the CoinMarketCap Fear & Greed index now, yesterday, last week and last " +
+      "month, change vs each, yearly high/low and a 30-day daily series, refreshed every 30 minutes. " + FAIR_USE + " JSON.",
+    example: {
+      kind: "fear_greed",
+      source: "CoinMarketCap",
+      value: 38,
+      classification: "Fear",
+      change: { vs_yesterday: -4, vs_last_week: 6, vs_last_month: -15 },
+      series_30d: [{ date: "2026-10-22", value: 42 }],
+      ...FRESH("2026-10-23T11:00:00Z", "2026-10-23T17:00:00Z"),
+      payment: pay("fear_greed"),
+    },
+  },
+  events_48h: {
+    description:
+      "Use this when you need to know what could move crypto in the next 48 hours: scheduled macro releases and decisions (Fed, " +
+      "CPI, jobs, BOJ...) with exact UTC and US Central times, why each matters and its source, plus dated coin catalysts. " +
+      FAIR_USE + " JSON.",
+    example: {
+      kind: "events_48h",
+      count: 2,
+      next: { at_utc: "2026-10-23T12:30:00Z", title: "US jobless claims", why: "Labor-market read ahead of the FOMC", source: "DOL" },
+      timed: [{ at_utc: "2026-10-23T12:30:00Z", title: "US jobless claims" }],
+      ...FRESH("2026-10-23T06:00:00Z", "2026-10-24T06:00:00Z"),
+      payment: pay("events_48h"),
+    },
+  },
 };
 
 /** Minimal JSON Schema for an example value: type at every level, object properties to depth 2, all present keys required at the top. */
@@ -340,6 +444,12 @@ const HEADLINES: Record<PaidRoute, (subject?: string) => string> = {
   trades: () => "Crypto paper-trade history (entries, stops, targets, status)",
   institutional: () => "Daily institutional & policy brief for digital assets (regulators, banks, tokenization)",
   vendor_report: (v) => `x402 vendor trust report${v ? ` for ${v}` : ""} (uptime, latency, test-buys)`,
+  scan: () => "Crypto market scan: buy/sell signals for 50 coins in one call",
+  lite: (c) => `${c ?? "Crypto"} lite trading signal (label, score, price)`,
+  trust_check: () => "Should I pay this x402 URL? allow/warn/block check",
+  funding: () => "Crypto perpetual funding rates (50 coins, OKX)",
+  fear_greed: () => "Crypto Fear & Greed index (CoinMarketCap, 30-day history)",
+  events_48h: () => "Crypto and macro events in the next 48 hours",
 };
 
 /**
