@@ -370,7 +370,7 @@ function trustPaths(): Record<string, unknown> {
       { name: "popular", in: "query", required: false, description: "1 = most-used Bazaar listings first", schema: { type: "string", enum: ["1"] } },
       { name: "max_usd", in: "query", required: false, schema: { type: "number" } },
     ], responses: r({ "200": "OK" }) } },
-    "/v1/trust/vendors/{id}": { get: { tags: tag, summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: VENDOR_ID_PATTERN }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
+    "/v1/trust/vendors/{id}": { get: { tags: tag, security: [], summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: VENDOR_ID_PATTERN }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
     "/v1/trust/methodology": { get: { tags: tag, security: [], summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
     "/v1/reports": {
       post: {
