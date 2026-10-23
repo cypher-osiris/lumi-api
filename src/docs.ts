@@ -6,7 +6,8 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable, EXAMPLE_COIN } from "./catalog";
 import { BAZAAR_ROUTES, TRUST_ROUTES, VENDOR_ID_PATTERN, serviceNameFor } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
-import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SUMMARY, trialEligible } from "./trial";
+import { RECEIPT_OUTCOMES } from "./trust/receipts";
+import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SHORT, TRIAL_SUMMARY, trialEligible } from "./trial";
 
 /** Free-trial terms (x402 sign-in-with-x), shown in the index, /.well-known/x402, OpenAPI, skill.md and the home page. */
 export function freeTrialInfo(cfg: Config) {
@@ -24,6 +25,7 @@ export function freeTrialInfo(cfg: Config) {
     chain: cfg.evm.network,
     signature: "EIP-191 personal_sign by an EOA (smart-contract wallets not supported for trials)",
     requires: "the signing wallet holds at least 0.01 USDC on Base (checked on-chain, nothing is moved)",
+    xrpl_only: "no free trial for XRPL-only wallets: the trial needs a Base EOA holding at least 0.01 USDC; XRPL wallets pay per call",
     limits: { per_wallet_lifetime: TRIAL_LIMITS.perWallet, per_ip_per_day: TRIAL_LIMITS.perIpDay, challenge_ttl_seconds: TRIAL_LIMITS.challengeTtlSec, one_time_challenge: true },
     response: "normal paid body plus access: { mode: \"trial\", charged: false, wallet, trial_calls_used, trial_calls_remaining }; no PAYMENT-RESPONSE, nothing settled",
     refused: "normal 402 (pay as usual) with a top-level trial: { granted: false, reason }",
@@ -32,6 +34,22 @@ export function freeTrialInfo(cfg: Config) {
     rest_only: "REST endpoints only (not MCP or A2A)",
   };
 }
+
+/** OpenAPI schema of a receipt's delivery block. data_returned is null when delivery is inconclusive (Lumi recorded no HTTP response). */
+export const RECEIPT_DELIVERY_SCHEMA = {
+  type: "object",
+  properties: {
+    observed_at: { type: "string", format: "date-time" },
+    http_status: { type: "integer", description: "0 = Lumi recorded no HTTP response" },
+    data_returned: { type: ["boolean", "null"], description: "true/false when a response was recorded; null when delivery is inconclusive (Lumi-side: no HTTP response recorded), which never counts against the seller" },
+    outcome: { type: "string", enum: [...RECEIPT_OUTCOMES] },
+    inconclusive_reason: { type: "string", description: "Only when outcome is inconclusive, e.g. lumi_client_timeout, lumi_run_interrupted" },
+    latency_ms: { type: "integer" },
+    source: { type: "string" },
+    note: { type: "string" },
+  },
+  required: ["observed_at", "http_status", "data_returned", "outcome"],
+} as const;
 
 export const VERSION = "1.1.2";
 
@@ -67,7 +85,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       "ideas, the BTC/macro backdrop, a daily market brief, a yen carry-trade watch, a sentiment snapshot (Fear & Greed + funding), an events calendar " +
       "and the raw paper-trade history, an all-coins signal scan, lite per-coin reads, funding rates, CoinMarketCap Fear & Greed with history, the next 48h of events, " +
       "plus an x402 'should I pay this URL?' check, paid x402 vendor reports and a daily policy brief. " +
-      (cfg.evm ? `New wallets get ${TRIAL_LIMITS.perWallet} free trial calls (x402 sign-in-with-x, see free_trial). ` : "") +
+      (cfg.evm ? `Trial: ${TRIAL_SHORT} (see free_trial). ` : "") +
       `Agents call an endpoint, receive HTTP 402 with the price in ${acceptsOrder(cfg)}, sign ${cfg.evm ? "an EIP-3009 USDC authorization or " : ""}a small XRPL Payment, retry, and get JSON back. ` +
       FRESHNESS_FIELDS,
     source: SOURCE,
@@ -314,7 +332,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
       description:
         `Pay-per-call crypto market reads from lumitrades.io for AI agents: per-coin buy/sell signal scores, support/resistance levels, ` +
         `paper-trade ideas, macro backdrop, sentiment, events, a daily market brief and a daily policy brief, ` +
-        `plus free x402 vendor lookups. No API key: pay a few cents per call in ${settledIn(cfg)} via x402. ` +
+        `plus x402 seller checks (free lookup; paid pre-payment check and vendor reports). No API key: pay a few cents per call in ${settledIn(cfg)} via x402. ` +
         (cfg.evm ? `${TRIAL_SUMMARY} ` : "") +
         `Not charged on bad input or stale data; every response carries as_of, data_age_seconds, next_update and stale_after.`,
       "x-guidance":
@@ -392,7 +410,7 @@ function trustPaths(): Record<string, unknown> {
         summary: "Verify a signed test-buy receipt (free)",
         description: "Body: a counterparty_delivery_receipt v0.1 (as served in paid trust/check and vendor reports). Checks the canonical SHA-256 receipt_hash, that the paying wallet signed `lumi-receipt:<network>:<tx_hash>:<receipt_hash>` (XRPL ripple-keypairs / Base EIP-191), and, with ?ledger=1, the payment on-chain. 10/min and 100/day per IP.",
         parameters: [{ name: "ledger", in: "query", required: false, schema: { type: "string", enum: ["1"] } }],
-        requestBody: json({ type: { type: "string" }, version: { type: "string" }, receipt_hash: { type: "string" }, signer: { type: "object" }, payment: { type: "object" }, seller: { type: "object" }, delivery: { type: "object" } }, ["type", "version", "receipt_hash", "signer", "payment"]),
+        requestBody: json({ type: { type: "string" }, version: { type: "string" }, receipt_hash: { type: "string" }, signer: { type: "object" }, payment: { type: "object" }, seller: { type: "object" }, delivery: RECEIPT_DELIVERY_SCHEMA, supersedes: { type: "object", description: "Present when this receipt replaces an earlier one for the same tx (correction); the old receipt then verifies with status superseded.", properties: { receipt_hash: { type: "string" }, reason: { type: "string" }, corrections_url: { type: "string" } } } }, ["type", "version", "receipt_hash", "signer", "payment"]),
         responses: r({ "200": "Verification result (ok true/false with errors)", "400": "Invalid JSON", "413": "Body too large", "429": "Rate limited" }),
       },
     },
@@ -767,7 +785,8 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 ## x402 vendor observations (free)
 
 Lumi publishes its automated observations of other x402 sellers on the XRP Ledger: an unpaid 402-quote check of each listed endpoint every 30 minutes,
-and one small paid test-buy per vendor per day from Lumi's own wallet, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
+and small paid test-buys from Lumi's own wallets, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
+Test-buys are capped and disclosed: curated XRPL vendors share a hard cap of 0.15 RLUSD + 0.05 XRP per day in total (not every vendor is bought every day), Base catalog re-buys are capped at $0.10 per day, and no listing priced above $0.05 is bought. The real cadence per vendor is in the coverage figures of /v1/trust/vendors.
 Scores are observations with sample sizes, not ratings; few samples are marked low confidence; vendors are listed in allowlist order, not ranked.
 
 - Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free quote checks on a rotating schedule = "quote-verified, low confidence"; not every listing is checked yet, the response's \`coverage\` line says "N resources across M domains indexed, X quote-verified, Y purchase-verified on Base (USDC); separately, Z XRPL endpoints from curated vendors purchase-verified"; on-chain test-buys = "purchase-verified", counted per chain: Base USDC buys of Bazaar listings vs XRPL buys of a small curated list (\`purchase_verified_by_chain\`); no match = \`{observed:false}\`, not a negative signal). Free lookups are answer-only (tier, last quote check, test-buy count; no tx hashes) and rate-limited per client; evidence is in the paid \`/v1/trust/check\` ($0.004) and \`/v1/trust/vendors/{id}/report\` ($0.02). Browse a teaser (top 100 most-used, 25 per page, 40 requests/day): \`GET ${base}/v1/trust/catalog?page=1\`.
@@ -800,7 +819,7 @@ export function indexHtml(cfg: Config, base: string, coins: CoinRef[]): string {
   const title = "Lumi API: pay-per-call crypto signals and x402 seller checks (pay on XRPL or Base)";
   const desc =
     "Crypto trading signals for 50 coins (single, lite or all-in-one scan), support/resistance levels, funding, Fear & Greed, a daily market brief, sentiment, events and free x402 vendor trust " +
-    "observations for AI agents. No API key: most calls cost $0.003-$0.02 with x402 in USDC on Base or XRP/RLUSD/USDC on the XRP Ledger, and new wallets get 3 free trial calls.";
+    "observations for AI agents. No API key: most calls cost $0.003-$0.02 with x402 in USDC on Base or XRP/RLUSD/USDC on the XRP Ledger, and new Base wallets holding at least 0.01 USDC get 3 free trial calls (XRPL-only wallets: no trial).";
   const rows = priceTable(cfg)
     .map((p) => {
       const usd = p.price_base_usdc ?? p.price_rlusd ?? p.price_usdc;
@@ -940,7 +959,7 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
 <strong>Daily market brief:</strong> <a href="${esc(base)}/v1/brief">GET /v1/brief</a> ($${usdPrice(cfg, "brief")}, returns HTTP 402 with the price until paid).<br>
-${cfg.evm ? `<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with a Base wallet (no payment, nothing moves). <a href="#trial">How</a>.<br>` : ""}
+${cfg.evm ? `<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with a Base wallet holding at least 0.01 USDC (no payment, nothing moves). XRPL-only wallets get no trial. <a href="#trial">How</a>.<br>` : ""}
 <strong>New:</strong> <a href="${esc(base)}/v1/scan">/v1/scan</a> (all ${coins.length} coins in one call, $${usdPrice(cfg, "scan")}) &middot;
 <a href="${esc(base)}/v1/trust/check?url=https%3A%2F%2Fapi.example.com%2Fv1%2Fdata">/v1/trust/check</a> (should I pay this x402 URL? allow / warn / block, $${usdPrice(cfg, "trust_check")}) &middot;
 <a href="${esc(base)}/v1/lite/${EXAMPLE_COIN}">/v1/lite/{coin}</a> &middot; <a href="${esc(base)}/v1/funding">/v1/funding</a> &middot; <a href="${esc(base)}/v1/fear-greed">/v1/fear-greed</a> &middot; <a href="${esc(base)}/v1/events/next48h">/v1/events/next48h</a></p></div>

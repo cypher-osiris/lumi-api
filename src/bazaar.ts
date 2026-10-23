@@ -99,7 +99,7 @@ export const FAIR_USE =
 export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   signal: {
     description:
-      "Rule-based technical read for one of 50 large-cap crypto assets: overall label (Strong Buy to Strong Sell) and score, 1h/4h/1d labels, an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) and price with 24h change. Computed from public exchange candles; 1h data refreshes about every 13 minutes. Use when an agent needs an indicator-based read on a single coin. Analytics only, not financial advice. Not charged on unknown coins or stale data.",
+      "Rule-based technical read for one of 50 large-cap crypto assets (XRP, BTC, ETH, SOL and more): overall label (Strong Buy to Strong Sell) and score, 1h/4h/1d labels, an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume) and price with 24h change. Computed from public exchange candles; 1h data refreshes about every 13 minutes. Use when an agent needs an indicator-based read on a single coin. Analytics only, not financial advice. Not charged on unknown coins or stale data.",
     routeTemplate: "/v1/signal/:coin",
     pathParam: COIN_PARAM,
     example: {
@@ -115,7 +115,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   levels: {
     description:
-      "Support and resistance levels for one of 13 tracked coins, with a directional bias label, rule-based 7-day bull/base/bear scenario levels, short commentary, dated catalysts and cited sources. Use when an agent needs price reference levels and context for a single coin. Scenarios are analysis, not forecasts or advice. Other coins return 404 without charge; see /v1/coins. Not charged on stale data.",
+      "Support and resistance levels for one of 13 tracked coins (XRP, BTC, ETH, HBAR, XLM and more), with a directional bias label, rule-based 7-day bull/base/bear scenario levels, short commentary, dated catalysts and cited sources. Use when an agent needs price reference levels and context for a single coin. Scenarios are analysis, not forecasts or advice. Other coins return 404 without charge; see /v1/coins. Not charged on stale data.",
     routeTemplate: "/v1/levels/:coin",
     pathParam: COIN_PARAM,
     example: {
@@ -187,7 +187,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   sentiment: {
     description:
-      "Crypto positioning snapshot: Fear & Greed value, band and day-over-day change; BTC perpetual funding rate with a plain-English read and open interest; total market cap and BTC dominance; and 24h breadth across tracked coins. Use when an agent needs a compact read of market sentiment and derivatives positioning. Analytics only, not financial advice. Not charged on stale data.",
+      "Crypto sentiment and positioning snapshot: Fear and Greed index value, band and day-over-day change; BTC perpetual funding rate with a plain-English read and open interest; total market cap and BTC dominance; and 24h breadth across tracked coins. Use when an agent needs a compact read of market sentiment and derivatives positioning. Analytics only, not financial advice. Not charged on stale data.",
     example: {
       kind: "sentiment",
       fear_greed: { value: 49, classification: "Neutral", previous: 54, change: -5 },
@@ -282,7 +282,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   lite: {
     description:
-      "Low-cost headline read for one of 50 large-cap crypto assets: overall label and score, 1h/4h/1d labels, and price with 24h change. Same live computation as /v1/signal/{coin}, without the indicator breakdown. Use when an agent only needs the label and price for a single coin. Analytics only, not financial advice. Not charged on unknown coins or stale data.",
+      "Low-cost headline read for one of 50 large-cap crypto assets (XRP, BTC, ETH, SOL and more): overall label and score, 1h/4h/1d labels, and price with 24h change. Same live computation as /v1/signal/{coin}, without the indicator breakdown. Use when an agent only needs the label and price for a single coin. Payable in USDC on Base or XRP, RLUSD or USDC on the XRP Ledger. Analytics only, not financial advice. Not charged on unknown coins or stale data.",
     routeTemplate: "/v1/lite/:coin",
     pathParam: COIN_PARAM,
     example: {
@@ -318,7 +318,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   funding: {
     description:
-      "Perpetual funding rates for the top-50 coins listed on OKX USDT swaps: rate, 8h-normalised rate, annualised rate, next funding time and a plain-English read, plus the BTC read, the median and the most positive and negative coins. Positive means longs pay shorts. Refreshed every 15 minutes. Use when an agent needs derivatives positioning data across many coins. Analytics only, not financial advice. Not charged on stale data.",
+      "Perpetual funding rates for the top-50 coins listed on OKX USDT swaps: rate, 8h-normalised rate, annualised rate, next funding time and a plain-English read, plus the BTC read, the median and the most positive and negative coins (XRP, BTC, ETH and the rest). Positive means longs pay shorts. Refreshed every 15 minutes. Use when an agent needs derivatives positioning data across many coins. Analytics only, not financial advice. Not charged on stale data.",
     example: {
       kind: "funding",
       venue: "OKX USDT perpetual swaps",
@@ -331,7 +331,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   },
   fear_greed: {
     description:
-      "CoinMarketCap Crypto Fear & Greed index: current value and classification, change versus yesterday, last week and last month, yearly high and low, and a 30-day daily series. Refreshed every 30 minutes. Use when an agent needs a sentiment gauge with recent history rather than a single reading. Not charged on stale data.",
+      "CoinMarketCap Crypto Fear and Greed index (market sentiment): current value and classification, change versus yesterday, last week and last month, yearly high and low, and a 30-day daily series. Refreshed every 30 minutes. Use when an agent needs a sentiment gauge with recent history rather than a single reading. Payable in USDC on Base or XRP, RLUSD or USDC on the XRP Ledger. Not charged on stale data.",
     example: {
       kind: "fear_greed",
       source: "CoinMarketCap",

@@ -116,13 +116,13 @@ export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
   return {
     base_usdc: { network: "eip155:8453", asset: "USDC", source: "CDP Bazaar catalog listings Lumi bought once each", purchase_verified_resources: base.purchase_verified, test_buys: base.test_buys },
     xrpl: {
-      network: "xrpl:0", assets: x?.assets ?? [], source: "Lumi's curated XRPL vendor list (daily test-buys)", window_days: CURATED_WINDOW_MS / 86_400_000,
+      network: "xrpl:0", assets: x?.assets ?? [], source: "Lumi's curated XRPL vendor list (test-buys within shared daily caps)", window_days: CURATED_WINDOW_MS / 86_400_000,
       purchase_verified_endpoints: x?.endpoints ?? 0, vendors: x?.vendors ?? 0, test_buys: x?.buys ?? 0, delivered: x?.delivered ?? 0,
       bazaar_catalog: { purchase_verified_resources: s?.by_network?.["xrpl:0"]?.purchase_verified ?? 0, test_buys: s?.by_network?.["xrpl:0"]?.test_buys ?? 0, source: "CDP Bazaar catalog listings Lumi bought on XRPL" },
       bazaar_sweep: XRPL_BAZAAR_SWEEP,
     },
     ...(otherBazaar.length ? { other_bazaar_networks: Object.fromEntries(otherBazaar) } : {}),
-    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is bought daily, and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
+    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is test-bought by a daily routine within shared caps (0.15 RLUSD + 0.05 XRP per day in total, so not every vendor every day), and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
   };
 }
 

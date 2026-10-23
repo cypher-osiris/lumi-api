@@ -1,20 +1,20 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cypher-osiris/lumi-trades-mcp",
-  "title": "Lumi Trades",
-  "description": "x402 trust score lookups, crypto signals and daily briefs for agents. Pay per call: XRPL or Base",
+  "title": "Lumi Trades: x402 seller checks and crypto signals",
+  "description": "Lumi: x402 seller checks, crypto signals for 50 coins and daily briefs. Pay per call on XRPL or Base",
   "repository": {
     "url": "https://github.com/cypher-osiris/lumi-api",
     "source": "github",
     "subfolder": "mcp"
   },
   "websiteUrl": "https://api.lumitrades.io/skill.md",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "lumi-trades-mcp",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "transport": {
         "type": "stdio"
       },

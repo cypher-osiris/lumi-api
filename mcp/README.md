@@ -1,7 +1,7 @@
 # lumi-trades-mcp
 
 MCP server (stdio) for **[Lumi Trades](https://lumitrades.io)**: **free x402 vendor trust score lookups**, a **daily crypto market brief**
-and **Institutional & Policy Brief**, and **crypto signals** (XRP and 12 more coins) for Claude Desktop, Cursor, Claude Code, Cline, Windsurf
+and **Institutional & Policy Brief**, and **crypto signals** for the top 50 coins (support/resistance scenario levels for 13 tracked coins) for Claude Desktop, Cursor, Claude Code, Cline, Windsurf
 and any other MCP client. Paid tools **pay per call via x402 with your own wallet: USDC on Base (gasless) or XRP / RLUSD / USDC on the XRP Ledger**.
 No API key, no account: each paid tool call is one small payment, signed locally on your machine.
 
@@ -17,12 +17,14 @@ use this package when you want paid tools to pay automatically from your own wal
 |---|---|---|---|
 | `lumi_catalog` | free | – | Endpoints, live prices, this server's wallet + spend caps |
 | `lumi_samples` | free | `route?` | Truncated, labelled samples of every paid product with USD price and full URL |
-| `lumi_coins` | free | – | The 13 coins covered (XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI) |
+| `lumi_coins` | free | – | The 50 coins covered: signals for all, levels for the 13 watchlist/major coins (XRP XLM HBAR XDC AXL ZBCN BTC ETH SOL DOGE ADA LINK SUI) |
 | `lumi_quote` | free | – | The x402 quote for any paid path, without paying |
 | `lumi_vendor_scores` | free | `url?` `domain?` `payTo?` `vendor_id?` | Look up any x402 seller before paying: tier (catalogued / quote-verified, low confidence / purchase-verified), last free 402-quote check, price and payTo vs its Bazaar listing, on-chain test-buy evidence. No args: Lumi's curated vendor scores |
+| `lumi_seller_monitoring` | free | `enrollment_id?` | Seller monitoring plans (Monitor $9/30d, Monitor Plus $29/30d, Audit $99 one-off), enrolment steps; with an id, that seller's public entry and badge. Paying never changes a score |
+| `lumi_trust_feed` | free | – | Trust data feed plans (free key 1,000 lookups/month, Feed $99/30d, Feed Pro $199/30d) and licence terms |
 | `lumi_brief` | paid | $0.02 | Today's market brief (BTC, CoinMarketCap Fear & Greed, movers, key levels, yen, events, paper trades, news). `format: "md"` for markdown |
 | `lumi_signal` | paid | $0.01 | Buy/sell read for one coin (1h/4h/1d + indicators) |
-| `lumi_levels` | paid | $0.01 | Support/resistance, 7-day projection, commentary for one coin |
+| `lumi_levels` | paid | $0.01 | Support/resistance, rule-based 7-day scenario levels (not forecasts), commentary for one coin |
 | `lumi_scan` | paid | $0.02 | Whole-market screen: buy/sell label, score, 1h RSI, price and 24h change for the top 50 coins, strongest first |
 | `lumi_lite` | paid | $0.004 | Cheap headline read for one coin: label, score, 1h/4h/1d labels, price, 24h change |
 | `lumi_slate` | paid | $0.02 | Current paper-trade ideas |

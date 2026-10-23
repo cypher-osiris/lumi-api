@@ -3,7 +3,7 @@ import { deriveAddress, deriveKeypair, generateSeed, sign } from "ripple-keypair
 import { privateKeyToAccount } from "viem/accounts";
 import { createApp } from "../src/app";
 import { FACILITATOR, DATA, NOW, happyFacilitator, makeFetch, paymentHeaderFor, decodeB64Json } from "./helpers";
-import { planEconomics, badgeStatus } from "../src/commerce/monitor";
+import { planEconomics, badgeStatus, TEST_BADGE_LABEL } from "../src/commerce/monitor";
 import { isTestWallet, planPriceUsd, PLANS } from "../src/commerce/plans";
 
 const BASE = "https://lumi.test";
@@ -118,9 +118,9 @@ describe("seller monitoring", () => {
     expect(r1.status).toBe(200);
     expect((await r1.json()).recorded[0].findings).not.toContain("price_changed");
     const b1 = await (await test.req(`/v1/monitor/badge/${e2.body.enrollment_id}.json`)).json();
-    expect(b1).toMatchObject({ status: "monitored", label: "Monitored by Lumi", result: expect.any(String) });
+    expect(b1).toMatchObject({ status: "monitored", label: TEST_BADGE_LABEL, result: expect.any(String) });
     const svg = await (await test.req(`/v1/monitor/badge/${e2.body.enrollment_id}.svg`)).text();
-    expect(svg).toContain("Monitored by Lumi");
+    expect(svg).toContain(TEST_BADGE_LABEL);
     test.advance(2 * 3_600_000);
     await test.post("/v1/owner/monitor/results", { results: [{ ...base, outcome: "no_data", http_status: 200, data_returned: false, tx_hash: "C".repeat(64), cost_usd: 0.003 }] }, auth);
     const b2 = await (await test.req(`/v1/monitor/badge/${e2.body.enrollment_id}.json`)).json();

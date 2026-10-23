@@ -12,6 +12,7 @@
  * package with an XRPL wallet). The freshness rule applies either way: stale or missing data is an error, never data.
  */
 
+import { TRIAL_SHORT } from "./trial";
 import type { Config, PaidRoute } from "./config";
 import { atomicToUsdc, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS } from "./catalog";
@@ -248,7 +249,7 @@ const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, live signals for 50 coins (lumi_signal, cheap lumi_lite, or all at once with lumi_scan), support/resistance levels, paper-trade slate, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment, funding rates, Fear & Greed, events and the next 48h, lumi_trust_check (should I pay this x402 URL? allow/warn/block), and a daily policy brief " +
   "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_samples (truncated previews of every paid product), lumi_quote, lumi_vendor_scores (Lumi's observations of other x402 vendors), lumi_seller_monitoring (seller monitoring plans: Monitor $9/30d, Monitor Plus $29/30d, Audit $99) and lumi_trust_feed (licensed data feed: free 1,000 lookups/month, Feed $99/30d, Feed Pro $199/30d) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
-  "Paid tools cost $0.003 to $0.02 per call (the daily policy brief $0.25) via x402; new wallets get 3 free trial calls over REST (x402 sign-in-with-x) (XRP Ledger: XRP, RLUSD, USDC; or USDC on Base); without access they return the price and how to pay. " +
+  "Paid tools cost $0.003 to $0.02 per call (the daily policy brief $0.25) via x402; paid in XRP, RLUSD or USDC on the XRP Ledger or USDC on Base; " + TRIAL_SHORT + "; without access they return the price and how to pay. " +
   PAID_TOOLS_NOTE + " Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
 // ---------------------------------------------------------------- auth

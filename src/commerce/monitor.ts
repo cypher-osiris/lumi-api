@@ -20,6 +20,9 @@ const ENDPOINT_TIMEOUT_MS = 10_000;
 const MAX_SELLER_ENDPOINTS = 20;
 const ENROLL_PER_PAYTO_PER_DAY = 5;
 
+/** Badge label for Lumi's own owner-flagged test enrolment (never shown as a real "Monitored by Lumi" seller). */
+export const TEST_BADGE_LABEL = "Lumi test enrolment";
+export const SELLERS_DISCLOSURE = "Sellers listed here have paid Lumi for a monitoring plan (active or past). Lumi's own test enrolments are excluded from this list. Paying never changes a score.";
 export const MONITOR_POST_PATHS = ["/v1/monitor/enroll", "/v1/monitor/replies", "/v1/owner/monitor/results", "/v1/owner/monitor/report", "/v1/owner/corrections"];
 
 function failed(r: RunRow | undefined) { return !!r && r.outcome !== "skipped" && r.outcome !== "quote_only" && !OK_OUTCOMES.has(r.outcome); }
@@ -225,10 +228,14 @@ export function createMonitor(deps: CommerceDeps) {
     const e = ENROLL_ID_RE.test(id) ? await store.enrollment(id) : null;
     const resourceUrl = `${base}${PLANS[plan].path}`;
     if (!e) {
-      if (paid) return bad("enrollment_required", `Unknown or missing ?enrollment=. Enrol first (POST ${base}/v1/monitor/enroll); the payment was not settled.`, { docs: `${base}/v1/monitor` });
+      if (paid) return id
+        ? bad("enrollment_unknown", `enrollment ${id.slice(0, 40)} is unknown. Enrol first (POST ${base}/v1/monitor/enroll); the payment was not settled.`, { docs: `${base}/v1/monitor` })
+        : bad("enrollment_required", `Missing ?enrollment=. Enrol first (POST ${base}/v1/monitor/enroll); the payment was not settled.`, { docs: `${base}/v1/monitor` });
       const q = planQuote(deps.cfg, plan, "none", PLANS[plan].usd, resourceUrl, false);
-      q.note = `List price. Add ?enrollment=<enrollment_id> from POST ${base}/v1/monitor/enroll (free, requires a payTo signature). A payment without a valid enrollment is refused before settlement.`;
-      return paymentRequiredResponse(deps.cfg, q, "PAYMENT-SIGNATURE header is required");
+      q.note = id
+        ? `List price. enrollment_unknown: enrollment ${id.slice(0, 40)} is unknown. Pass an enrollment_id from POST ${base}/v1/monitor/enroll (free, requires a payTo signature). A payment without a valid enrollment is refused before settlement.`
+        : `List price. Add ?enrollment=<enrollment_id> from POST ${base}/v1/monitor/enroll (free, requires a payTo signature). A payment without a valid enrollment is refused before settlement.`;
+      return paymentRequiredResponse(deps.cfg, q, id ? "enrollment_unknown" : "PAYMENT-SIGNATURE header is required");
     }
     const econ = planEconomics(e)[plan] as { eligible: boolean; reason?: string };
     if (!econ.eligible) return json(409, { error: "plan_not_eligible", plan, reason: econ.reason, enrollment_id: e.id, note: "Not charged." }, NO_STORE);
@@ -247,8 +254,8 @@ export function createMonitor(deps: CommerceDeps) {
       deps.log({ event: "monitor_plan_paid", plan, enrollment: e.id, test: e.is_test, inserted: ins });
       return json(201, {
         paid: true, plan: PLANS[plan].name, plan_id: row.id, enrollment_id: e.id, ...(e.is_test ? { test: true, price_usd: usd } : { price_usd: usd }),
-        starts_at: iso(row.starts_at), ends_at: iso(row.ends_at), auto_renew: false,
-        renew: `${resourceUrl}?enrollment=${e.id}`, endpoints: planEndpoints(e, plan).map(epView),
+        starts_at: iso(row.starts_at), ...(plan === "audit" ? { one_off: true, report_due_by: iso(row.starts_at + 2 * DAY_MS) } : { ends_at: iso(row.ends_at) }), auto_renew: false,
+        ...(plan === "audit" ? {} : { renew: `${resourceUrl}?enrollment=${e.id}` }), endpoints: planEndpoints(e, plan).map(epView),
         seller_page: `${base}/v1/monitor/sellers/${e.id}`, badge: `${base}/v1/monitor/badge/${e.id}.svg`,
         note: plan === "audit" ? "The audit runs within 48 h; the signed report appears on your seller page (full report with your management token)." : "First test-buy within 24 h. Alerts go to the webhook/email given at enrolment.",
       }, NO_STORE);
@@ -256,6 +263,12 @@ export function createMonitor(deps: CommerceDeps) {
   }
 
   // ---------------- public entries
+
+  /** Public plan row. One-off Audit plans have no term, so they show no `until`. */
+  function planView(p: PlanRow) {
+    const oneOff = PLANS[p.plan as PlanId]?.days == null;
+    return { plan: p.plan, from: iso(p.starts_at), ...(oneOff ? { one_off: true } : { until: iso(p.ends_at) }), ...(p.is_test ? { test: true } : {}) };
+  }
 
   async function sellerBundle(id: string) {
     if (!ENROLL_ID_RE.test(id)) return null;
@@ -273,7 +286,7 @@ export function createMonitor(deps: CommerceDeps) {
     return {
       type: "seller_monitoring",
       status: cur.length ? "active" : "past",
-      plans: plans.slice(0, 10).map((p) => ({ plan: p.plan, from: iso(p.starts_at), until: iso(p.ends_at), ...(p.is_test ? { test: true } : {}) })),
+      plans: plans.slice(0, 10).map(planView),
       disclosure: "This seller pays Lumi for monitoring (seller-funded test-buys). Paying never changes Lumi's score, tier or labels.",
       seller_page: `${base}/v1/monitor/sellers/${e.id}`,
       ...(e.is_test ? { test: "Lumi's own wallet, enrolled as a test" } : {}),
@@ -307,7 +320,7 @@ export function createMonitor(deps: CommerceDeps) {
   }
 
   function badgeJson(e: Enrollment, b: ReturnType<typeof badgeStatus>) {
-    if (b.ok) return { status: "monitored", label: "Monitored by Lumi", last_test: iso(b.last_test), result: b.result, plan: b.plan.plan, ...(e.is_test ? { test: true } : {}) };
+    if (b.ok) return { status: "monitored", label: e.is_test ? TEST_BADGE_LABEL : "Monitored by Lumi", last_test: iso(b.last_test), result: b.result, plan: b.plan.plan, ...(e.is_test ? { test: true } : {}) };
     return { status: "removed", label: "Lumi monitoring", reason: b.reason, reason_text: REASON_TEXT[b.reason], ...("last_test" in b && b.last_test ? { last_test: iso(b.last_test) } : {}) };
   }
 
@@ -322,19 +335,22 @@ export function createMonitor(deps: CommerceDeps) {
     const j = { ...badgeJson(x.e, b), enrollment_id: id, seller_page: `${base}/v1/monitor/sellers/${id}`, live: true, note: "Computed on every request: removed automatically when a test fails, no recent test exists, or the plan lapses." };
     if (fmt === "json") return json(200, j, hdr);
     const right = b.ok ? `last test ${iso(b.last_test)!.slice(0, 10)} · ${b.result}${x.e.is_test ? " · test" : ""}` : `badge removed: ${REASON_TEXT[b.reason]}`;
-    return new Response(badgeSvg(b.ok ? "Monitored by Lumi" : "Lumi monitoring", right, b.ok), { headers: { ...hdr, "Content-Type": "image/svg+xml" } });
+    return new Response(badgeSvg(b.ok ? (x.e.is_test ? TEST_BADGE_LABEL : "Monitored by Lumi") : "Lumi monitoring", right, b.ok), { headers: { ...hdr, "Content-Type": "image/svg+xml" } });
   }
 
   async function sellers(base: string) {
     const all = await store.enrollments(200);
     const t = now();
     const out = [];
+    let tests = 0;
     for (const e of all.slice(0, 40)) {
       const plans = await store.plansFor(e.id);
       if (!plans.length) continue;
+      if (e.is_test) { tests++; continue; } // Lumi's own test enrolments are not paying sellers
       out.push({ enrollment_id: e.id, pay_to: e.pay_to, network: e.network, domain: e.domain, status: plans.some((p) => p.starts_at <= t && t < p.ends_at) ? "active" : "past", ...(e.is_test ? { test: true } : {}), page: `${base}/v1/monitor/sellers/${e.id}` });
     }
-    return json(200, { kind: "lumi_monitored_sellers", sellers: out, disclosure: "Every seller listed pays Lumi for monitoring. Paying never changes a score.", docs: `${base}/v1/monitor` }, { "Cache-Control": "public, max-age=120" });
+    return json(200, { kind: "lumi_monitored_sellers", sellers: out, count: out.length, excluded_test_enrollments: tests,
+      disclosure: SELLERS_DISCLOSURE, ...(out.length ? {} : { note: "No paying seller yet." }), docs: `${base}/v1/monitor` }, { "Cache-Control": "public, max-age=120" });
   }
 
   async function tokenOk(request: Request, e: Enrollment) {
@@ -616,7 +632,7 @@ export function createMonitor(deps: CommerceDeps) {
     if (path === "/v1/monitor/challenge" && get) {
       const a = (url.searchParams.get("pay_to") ?? url.searchParams.get("payTo") ?? "").trim();
       const c = await makeChallenge(deps.cfg.invoiceSecret, "monitor-enroll", a, now());
-      if (!c) return bad("pay_to_required", "?pay_to=<XRPL r-address or Base 0x address>");
+      if (!c) return a ? bad("invalid_pay_to", "pay_to is not a valid XRPL r-address or Base 0x address.", { example: "?pay_to=<XRPL r-address or Base 0x address>" }) : bad("pay_to_required", "?pay_to=<XRPL r-address or Base 0x address>");
       return json(200, { ...c, sign: c.network === "xrpl:0" ? "ripple-keypairs sign(utf8 hex of message, privateKey) with the payTo's master or regular key; send public_key too" : "EIP-191 personal_sign(message) from the payTo", next: `POST ${base}/v1/monitor/enroll` }, NO_STORE);
     }
     if (path === "/v1/monitor/enroll") return m === "POST" ? enroll(request, base) : json(405, { error: "method_not_allowed", detail: `POST JSON. Docs: ${base}/v1/monitor` }, { Allow: "POST, OPTIONS" });

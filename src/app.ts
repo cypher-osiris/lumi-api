@@ -723,7 +723,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
     if (rawArg !== undefined && PATH_TEMPLATE_RE.test(rawArg)) {
       const isReport = route === "vendor_report";
-      const example = isReport ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/btc`;
+      const example = isReport ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/xrp`;
       const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
       if (!hasPayment && rawArg === (isReport ? "{id}" : "{coin}")) {
         const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
@@ -737,9 +737,9 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           amountEvm: config.evm?.amounts[route],
           description: resourceDescription(route, `Lumi API ${endpoint.template}: ${endpoint.summary}`, { usd: config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route] }),
           resourceUrl: `${base}${path}`,
-          bazaar: bazaarExtension(route, isReport ? "printmoneylab" : "btc", undefined, config.evm?.prices[route]),
+          bazaar: bazaarExtension(route, isReport ? "printmoneylab" : "xrp", undefined, config.evm?.prices[route]),
           service: serviceMeta(route),
-          note: `Replace ${rawArg} with ${isReport ? "a vendor id, e.g. printmoneylab (GET /v1/trust/vendors, free)" : "a coin, e.g. btc (GET /v1/coins, free)"} and request that URL for a fresh quote before paying: ${example}. A payment sent to this placeholder URL is refused and not charged.`,
+          note: `Replace ${rawArg} with ${isReport ? "a vendor id, e.g. printmoneylab (GET /v1/trust/vendors, free)" : "a coin, e.g. xrp (GET /v1/coins, free)"} and request that URL for a fresh quote before paying: ${example}. A payment sent to this placeholder URL is refused and not charged.`,
         }, "PAYMENT-SIGNATURE header is required");
       }
       return json(400, {

@@ -15,7 +15,7 @@ import { createClient, loadSettings, assetLabel } from "./lumi.js";
 const VENDOR_LOOKUP_DESCRIPTION =
   "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus Lumi's own test-buys confirmed on-chain, labelled 'purchase-verified' and counted per chain (Base USDC buys of Bazaar listings; XRPL buys of a small curated list, separately). Answer-only: tx evidence is in the paid trust check. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's summary (tx evidence is in the paid vendor report).";
 
-export const VERSION = "0.8.1";
+export const VERSION = "0.9.0";
 
 /** Paid tools: name -> API path builder + description (prices are read live from the API's 402 quote). */
 export const PAID_TOOLS = [
@@ -35,8 +35,8 @@ export const PAID_TOOLS = [
   {
     name: "lumi_levels",
     path: (a) => `/v1/levels/${encodeURIComponent(a.coin)}`,
-    input: { coin: z.string().describe("Ticker or CoinGecko id, e.g. XRP") },
-    description: "Lumi's support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and sources for one coin. Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger).",
+    input: { coin: z.string().describe("Ticker or CoinGecko id of a watchlist/major coin, e.g. XRP BTC ETH") },
+    description: "Lumi's support/resistance levels, bias, rule-based 7-day bull/base/bear scenario levels (not forecasts), commentary, catalysts and sources for one coin. Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger).",
   },
   { name: "lumi_scan", path: () => "/v1/scan", input: {}, description: "Whole-market screen in one call: buy/sell label, score, 1h/4h/1d labels, 1h RSI, price and 24h change for all 50 top coins, strongest first, plus label counts and breadth. Computed live. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   {
@@ -46,7 +46,7 @@ export const PAID_TOOLS = [
     description: "Cheap headline read for one coin: overall buy/sell label and score, 1h/4h/1d labels, price and 24h change (lumi_signal adds the indicator breakdown). Paid: $0.004 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger).",
   },
   { name: "lumi_slate", path: () => "/v1/slate", input: {}, description: "Lumi's current paper-trade ideas (entry, stop, targets, leverage, conviction) and 'no setup' notes. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
-  { name: "lumi_market", path: () => "/v1/market", input: {}, description: "BTC backdrop (levels, projection, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
+  { name: "lumi_market", path: () => "/v1/market", input: {}, description: "BTC backdrop (levels, scenario levels, signal), macro (yen note, total cap, dominance, Fear & Greed, funding) and breadth. Paid: $0.02 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_macro_yen", path: () => "/v1/macro/yen", input: {}, description: "Yen carry-trade watch: USD/JPY, Nikkei 225, rule-based carry-trade risk (low/watch/elevated) around 155, Japan events (BOJ, CPI). Paid: $0.01 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_sentiment", path: () => "/v1/sentiment", input: {}, description: "CoinMarketCap Fear & Greed, BTC perp funding with a plain-English read, open interest, total cap/dominance, breadth across 13 coins. Paid: $0.005 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
   { name: "lumi_events", path: () => "/v1/events", input: {}, description: "Sourced upcoming macro/crypto events (timed releases in UTC + US Central, and dated per-coin catalysts). Paid: $0.005 per call (USDC on Base, or XRP/RLUSD/USDC on the XRP Ledger)." },
@@ -126,7 +126,7 @@ export function buildServer(client) {
 
   server.registerTool(
     "lumi_coins",
-    { title: "Lumi: supported coins (free)", description: "Free. The 13 coins Lumi covers (tickers and CoinGecko ids).", inputSchema: {} },
+    { title: "Lumi: supported coins (free)", description: "Free. The 50 coins Lumi covers (tickers and CoinGecko ids): signals for all, levels for the watchlist and majors.", inputSchema: {} },
     async () => {
       const r = await client.free("/v1/coins");
       return text(r.body?.coins?.map((c) => ({ symbol: c.symbol, id: c.id, name: c.name, group: c.group })) ?? r.body);
@@ -190,7 +190,8 @@ export function buildServer(client) {
     {
       title: "Lumi: seller monitoring plans and monitored sellers (free)",
       description:
-        "Free. For x402 sellers: Monitor $9/30 days (1 endpoint, seller-funded test-buy per term + alerts), Monitor Plus $29/30 days (weekly test-buys, up to 20 endpoints), Audit $99 one-off (every listed endpoint, signed report). No auto-renew; payTo proven by signature; paying never changes a score. No args: plans and enrolment steps. enrollment_id: that seller's public entry and badge status.",
+        "Free. For x402 sellers: Monitor $9/30 days (1 endpoint, seller-funded test-buy per term + alerts), Monitor Plus $29/30 days (weekly test-buys, up to 20 endpoints), Audit $99 one-off (every listed endpoint, signed report). No auto-renew; payTo proven by signature; paying never changes a score. " +
+        "No args: plans, enrolment steps and safeguards. enrollment_id: that seller's public entry (disclosure, findings, replies) and live badge status. Plans are paid over x402 at the REST URL.",
       inputSchema: { enrollment_id: z.string().regex(/^men_[a-f0-9]{24}$/).optional().describe("Optional enrollment id (men_...)") },
     },
     async ({ enrollment_id }) => {
@@ -205,7 +206,7 @@ export function buildServer(client) {
     {
       title: "Lumi: trust data feed plans and licence (free)",
       description:
-        "Free. Licensed trust data feed for facilitators, wallets and frameworks: free key with 1,000 lookups/month (wallet signature), $1.50 per 1,000 extra lookups, Feed $99/30 days, Feed Pro $199/30 days. Returns plans, endpoints and licence terms.",
+        "Free. Licensed trust data feed for facilitators, wallets and frameworks: free key with 1,000 lookups/month (wallet signature), $1.50 per 1,000 extra lookups, Feed $99/30 days, Feed Pro $199/30 days (snapshot export, webhooks). Returns plans, endpoints and licence terms (no resale, attribution).",
       inputSchema: {},
     },
     async () => text((await client.free("/v1/feed")).body),

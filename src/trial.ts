@@ -33,7 +33,11 @@ export const TRIAL_SUMMARY =
   `Send the request with header X-Lumi-Trial: 1 and the 402 also carries extensions["sign-in-with-x"] (x402 SIWX, EIP-4361): sign it with a ` +
   `Base wallet holding at least 0.01 USDC and retry with the SIGN-IN-WITH-X header (@x402/extensions wrapFetchWithSIWx does this). ` +
   `Nothing is charged; caps: ${TRIAL_LIMITS.perWallet} per wallet, ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges. ` +
-  `Without that header every 402 is a plain x402 payment quote.`;
+  `XRPL-only wallets get no free trial (the trial needs that Base wallet); they pay per call. Without that header every 402 is a plain x402 payment quote.`;
+
+/** One-line trial terms for listings, MCP instructions and the index (keep in sync with TRIAL_SUMMARY). */
+export const TRIAL_SHORT =
+  `new Base wallets holding at least 0.01 USDC get ${TRIAL_LIMITS.perWallet} free trial calls over REST (x402 sign-in-with-x; nothing is charged or moved); XRPL-only wallets get no trial`;
 
 /** True when the client asked for the SIWX trial challenge (X-Lumi-Trial: 1 / true / yes). */
 export function wantsTrial(request: Request): boolean {
