@@ -428,7 +428,11 @@ export function createMonitor(deps: CommerceDeps) {
 
   function priceChanged(prev: { amount: string | null; asset: string | null; usd: number | null }, cur: { amount: string | null; asset: string | null; usd: number | null }) {
     if (!cur.asset || !prev.asset) return false;
-    if (prev.asset !== cur.asset) return true;
+    if (prev.asset !== cur.asset) {
+      // A different payment option of the same quote (e.g. enrolled RLUSD, bought XRP): compare in USD, never by asset alone.
+      if (prev.usd == null || cur.usd == null || prev.usd === 0) return false;
+      return Math.abs(cur.usd - prev.usd) / prev.usd > 0.1;
+    }
     if (prev.amount === cur.amount) return false;
     if (prev.usd == null || cur.usd == null || prev.usd === 0) return prev.amount !== cur.amount;
     return Math.abs(cur.usd - prev.usd) / prev.usd > 0.1;

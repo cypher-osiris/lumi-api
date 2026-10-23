@@ -112,7 +112,11 @@ describe("seller monitoring", () => {
     expect(due.tasks).toHaveLength(1);
     expect(due.tasks[0]).toMatchObject({ mode: "buy", test: true });
     const base = { enrollment_id: e2.body.enrollment_id, plan_id: body.plan_id, endpoint: `${BASE}/v1/lite/XRP`, network: "xrpl:1", asset: "XRP", quote_pay_to: SELLER };
-    expect((await test.post("/v1/owner/monitor/results", { results: [{ ...base, outcome: "delivered", http_status: 200, data_returned: true, tx_hash: "B".repeat(64), cost_usd: 0.003 }] }, auth)).status).toBe(200);
+    // Paying with another option of the same quote (enrolled RLUSD/XRP vs bought XRP) at the same USD price is not a price change.
+    const listed = e2.body.endpoints[0].listed_price_usd;
+    const r1 = await test.post("/v1/owner/monitor/results", { results: [{ ...base, asset: e2.body.endpoints[0].asset === "XRP" ? "RLUSD" : "XRP", amount: "1", quote_price_usd: listed, outcome: "delivered", http_status: 200, data_returned: true, tx_hash: "B".repeat(64), cost_usd: 0.003 }] }, auth);
+    expect(r1.status).toBe(200);
+    expect((await r1.json()).recorded[0].findings).not.toContain("price_changed");
     const b1 = await (await test.req(`/v1/monitor/badge/${e2.body.enrollment_id}.json`)).json();
     expect(b1).toMatchObject({ status: "monitored", label: "Monitored by Lumi", result: expect.any(String) });
     const svg = await (await test.req(`/v1/monitor/badge/${e2.body.enrollment_id}.svg`)).text();
