@@ -189,6 +189,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   });
   const xrplRpc = split(env.XRPL_RPC_URLS).length ? split(env.XRPL_RPC_URLS) : DEFAULT_XRPL_RPC[config.network] ?? DEFAULT_XRPL_RPC["xrpl:0"];
   const baseRpc = env.BASE_RPC_URL ?? "https://mainnet.base.org";
+  const trialRpcs = [
+    ...(env.BASE_RPC_URL ? [env.BASE_RPC_URL] : []),
+    ...(config.evm?.network === "eip155:84532" ? ["https://sepolia.base.org", "https://base-sepolia-rpc.publicnode.com"] : ["https://base-rpc.publicnode.com", "https://mainnet.base.org", "https://base.drpc.org"]),
+  ];
   const xrplBuyers = split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo];
   const catalogStore = opts.catalogStore ?? (env.TRUST_DB ? new D1CatalogStore(env.TRUST_DB) : new MemoryCatalogStore());
   /** Live XRP/USD rate (only used when XRP_PRICING=live); last known rate persisted in catalog meta. */
@@ -789,7 +793,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const v = await verifySiwx(config.invoiceSecret, payload, uri, now(), config.evm!.network);
     if (!v.ok) return v;
     if ((await trials.usedByWallet(v.wallet).catch(() => 0)) >= TRIAL_LIMITS.perWallet) return { ok: false, reason: "wallet_trial_used_up" };
-    const bal = await usdcBalance(doFetch, baseRpc, config.evm!.asset, v.wallet);
+    const bal = await usdcBalance(doFetch, trialRpcs, config.evm!.asset, v.wallet);
     if (bal === null) return { ok: false, reason: "balance_check_unavailable" };
     if (bal < TRIAL_LIMITS.minUsdcAtomic) return { ok: false, reason: "wallet_needs_0.01_usdc_on_base" };
     const ts = now();

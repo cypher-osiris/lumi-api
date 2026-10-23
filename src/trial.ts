@@ -191,17 +191,22 @@ export async function trialIpHash(request: Request, secret: string, day: string)
 }
 
 /** USDC (atomic) balance of `wallet` on Base via eth_call balanceOf; null when the RPC fails. */
-export async function usdcBalance(f: typeof fetch, rpc: string, token: string, wallet: string): Promise<bigint | null> {
-  try {
-    const data = "0x70a08231" + wallet.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const r = await f(rpc, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: token, data }, "latest"] }),
-    });
-    const j = (await r.json()) as { result?: string };
-    return typeof j.result === "string" && /^0x[0-9a-f]*$/i.test(j.result) ? BigInt(j.result === "0x" ? 0 : j.result) : null;
-  } catch {
-    return null;
+export async function usdcBalance(f: typeof fetch, rpc: string | string[], token: string, wallet: string): Promise<bigint | null> {
+  const data = "0x70a08231" + wallet.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  // Public RPCs throttle Workers egress now and then: try each endpoint in turn (4 s each) before giving up.
+  for (const url of Array.isArray(rpc) ? rpc : [rpc]) {
+    try {
+      const r = await f(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: token, data }, "latest"] }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const j = (await r.json()) as { result?: string };
+      if (typeof j.result === "string" && /^0x[0-9a-f]*$/i.test(j.result)) return BigInt(j.result === "0x" ? 0 : j.result);
+    } catch {
+      /* next endpoint */
+    }
   }
+  return null;
 }

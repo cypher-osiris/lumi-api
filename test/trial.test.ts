@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp } from "../src/app";
-import { MemoryTrialStore, TRIAL_STATEMENT, siweMessage, siwxChallenge, verifySiwx } from "../src/trial";
+import { MemoryTrialStore, usdcBalance, TRIAL_STATEMENT, siweMessage, siwxChallenge, verifySiwx } from "../src/trial";
 import { wrapFetchWithSIWx, createSIWxPayload, encodeSIWxHeader } from "@x402/extensions/sign-in-with-x";
 import { SiweMessage } from "@signinwithethereum/siwe";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -123,5 +123,19 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(await verifySiwx("other", p as any, BASE + "/v1/brief", NOW + 1000)).toMatchObject({ ok: false, reason: "challenge_not_issued_by_lumi" });
     const off = setup({ env: { TRIALS: "0" } });
     expect((await (await off.appFetch(BASE + "/v1/sentiment")).json()).extensions["sign-in-with-x"]).toBeUndefined();
+  });
+});
+
+describe("usdcBalance falls back across RPCs", () => {
+  it("skips a throttled/erroring RPC and returns null only when all fail", async () => {
+    const seen: string[] = [];
+    const f = (async (url: string) => {
+      seen.push(url);
+      if (url.includes("bad")) return new Response("rate limited", { status: 429 });
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x" + (25000).toString(16).padStart(64, "0") }));
+    }) as unknown as typeof fetch;
+    expect(await usdcBalance(f, ["https://bad.rpc", "https://good.rpc"], "0xtoken", "0x" + "1".repeat(40))).toBe(25000n);
+    expect(seen).toEqual(["https://bad.rpc", "https://good.rpc"]);
+    expect(await usdcBalance(f, ["https://bad.rpc", "https://bad2.rpc"], "0xtoken", "0x" + "1".repeat(40))).toBeNull();
   });
 });
