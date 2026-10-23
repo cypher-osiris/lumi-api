@@ -193,6 +193,28 @@ export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: J
   const age = ref?.domain_age?.age_days;
   if (typeof age === "number" && age < 30) add("young_domain", "warn", `The domain was registered ${age} days ago.`);
 
+  // Free evidence (dated facts, attributed): Coinbase Bazaar usage, payTo census, vet402 (third party).
+  const day = (x: unknown) => (typeof x === "string" ? x.slice(0, 10) : "unknown date");
+  const bq = e?.bazaar_quality;
+  if (bq) {
+    if (bq.calls_30d > 0) add("bazaar_usage", "info", `Coinbase Bazaar reports ${bq.calls_30d} calls from ${bq.unique_payers_30d ?? "?"} unique payers in the 30 days before ${day(bq.as_of)}${bq.last_called_at ? ` (last called ${day(bq.last_called_at)})` : ""}.`);
+    else add("no_bazaar_usage", "info", `Coinbase Bazaar reports no calls in the 30 days before ${day(bq.as_of)}.`);
+  }
+  for (const c of (exact?.payto_census ?? []) as Json[]) {
+    if (c.status !== "ok") { if (c.status === "queued") add("payto_census_queued", "info", `A ledger read of payTo ${c.pay_to} is queued; check again in a few minutes.`); continue; }
+    const chain = c.network === "xrpl:0" ? "XRPL" : "Base";
+    const win = c.window?.from ? ` between ${day(c.window.from)} and ${day(c.window.to)}` : "";
+    if (c.organic_payers > 0) add("organic_payers", "info", `${chain} payTo ${c.pay_to}: ${c.organic_payers} organic payer cluster(s), ${c.organic_payments} payment(s)${win}, last ${day(c.last_organic_at)} (Lumi, known test wallets and self-funded payers excluded).`);
+    else if (c.payers_seen > 0) add("no_organic_payers", "warn", `${chain} payTo ${c.pay_to}: ${c.payers_seen} payer(s) seen${win}, but all were Lumi, known test wallets, or funded by the seller.`);
+    else add("no_organic_payers", "info", `${chain} payTo ${c.pay_to}: no incoming x402-style payments seen${win}.`);
+  }
+  const v = e?.third_party?.vet402;
+  if (v) {
+    if (v.l0?.verdict === "fail") add("vet402_l0_fail", "warn", `vet402 (third party, CC BY 4.0) recorded a failed free probe on ${day(v.l0.probed_at)}; source ${v.link}.`);
+    else if (v.l0?.verdict) add("vet402_l0", "info", `vet402 (third party, CC BY 4.0) free probe verdict "${v.l0.verdict}" on ${day(v.l0.probed_at)}.`);
+    if (v.l1) add("vet402_l1", "info", `vet402 (third party) recorded ${v.l1.purchase_attempts} purchase attempt(s), ${v.l1.settled} settled, ${v.l1.settled_with_2xx} with a 2xx response (last ${day(v.l1.last_at)}). Not counted in Lumi's own test-buys.`);
+  }
+
   const verdict = self ? "allow" : reasons.some((r) => r.severity === "block") ? "block" : reasons.some((r) => r.severity === "warn") ? "warn" : "allow";
   if (verdict === "allow" && e && !reasons.some((r) => r.code === "purchase_verified")) add("quote_verified", "info", "Listed in the Bazaar and its recent free quote checks are valid.");
   const confidence = self ? "n/a" : e?.purchases?.length || (!e && curated.length) ? "medium" : e?.quote_checks ? "low" : "very low";

@@ -89,6 +89,8 @@ export interface Env {
   XRPL_RPC_URLS?: string;
   /** Base JSON-RPC endpoint used to verify Base USDC report transactions. */
   BASE_RPC_URL?: string;
+  /** Comma-separated public Base RPCs for the forward USDC index (rotated). */
+  BASE_INDEX_RPCS?: string;
   /** Free trial calls via x402 sign-in-with-x ("0" disables). See src/trial.ts. */
   TRIALS?: string;
   /** Comma-separated XRPL addresses whose payments count as Lumi test-buys (default: PAY_TO). Addresses only. */

@@ -2,7 +2,7 @@
 
 import type { Config, PaidRoute } from "./config";
 import { EXPLORERS, dropsToXrp } from "./config";
-import { PAID_ENDPOINTS, priceTable } from "./catalog";
+import { PAID_ENDPOINTS, priceTable, EXAMPLE_COIN } from "./catalog";
 import { BAZAAR_ROUTES } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SUMMARY, trialEligible } from "./trial";
@@ -196,8 +196,8 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
     required: true,
     description: "Ticker or CoinGecko id (case-insensitive). Signals: any coin in GET /v1/coins.",
     schema: { type: "string", enum: coins.map((c) => c.symbol) },
-    example: "btc",
-    examples: { btc: { value: "btc" }, eth: { value: "eth" } },
+    example: EXAMPLE_COIN.toLowerCase(),
+    examples: { xrp: { value: "xrp" }, btc: { value: "btc" }, eth: { value: "eth" } },
   };
   const levelsCoinParam = { ...coinParam, description: "Ticker or CoinGecko id (case-insensitive). Levels cover Lumi's watchlist and majors.", schema: { type: "string", enum: siteOnly(coins).map((c) => c.symbol) } };
   const paths: Record<string, unknown> = {
@@ -226,7 +226,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
             ? [{ name: "format", in: "query", required: false, description: "json (default) or md for text/markdown", schema: { type: "string", enum: ["json", "md"] } }]
             : [],
         ...(e.template.includes("{coin}")
-          ? { "x-example-url": `${base}${e.template.replace("{coin}", "btc")}` }
+          ? { "x-example-url": `${base}${e.template.replace("{coin}", EXAMPLE_COIN)}` }
           : e.template.includes("{id}")
           ? { "x-example-url": `${base}${e.template.replace("{id}", "printmoneylab")}` }
           : e.route === "trust_check"
@@ -579,7 +579,7 @@ const r = await tryFree("${base}/v1/sentiment", { headers: { "${TRIAL_OPT_IN_HEA
 \`accepts[]\` order: ${acceptsOrder(cfg)}. Choose by \`network\` + \`asset\`, not by position; all options share one invoice that can be paid once.
 ${cfg.evm ? `Most x402 clients (\`@x402/fetch\` + \`@x402/evm\`) simply take \`accepts[0]\`, USDC on ${cfg.evm.networkName}: see "Paying with USDC" below. The XRPL flow:
 ` : ""}
-1. \`GET ${base}/v1/signal/BTC\` with no payment -> **HTTP 402**. The body (and the base64 \`PAYMENT-REQUIRED\` header) is an x402 v2 \`PaymentRequired\`:
+1. \`GET ${base}/v1/signal/${EXAMPLE_COIN}\` with no payment -> **HTTP 402**. The body (and the base64 \`PAYMENT-REQUIRED\` header) is an x402 v2 \`PaymentRequired\`:
    \`accepts[${acceptsIndex(cfg).xrp}] = { scheme: "exact", network: "${net}", asset: "XRP", amount: "<drops>", payTo: "${cfg.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { invoiceId, sourceTag: ${cfg.sourceTag} } }\`
 ${iouNote(cfg)}2. Sign (do not submit) an XRPL \`Payment\` for exactly \`amount\` drops to \`payTo\`, with \`SourceTag\`, a \`LastLedgerSequence\`,
    and the invoice bound via a Memo (\`MemoData = hex(utf8(invoiceId))\`) and/or \`InvoiceID = SHA-256(invoiceId)\`.
@@ -904,7 +904,7 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 ${cfg.evm ? `<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with a Base wallet (no payment, nothing moves). <a href="#trial">How</a>.<br>` : ""}
 <strong>New:</strong> <a href="${esc(base)}/v1/scan">/v1/scan</a> (all ${coins.length} coins in one call, $${usdPrice(cfg, "scan")}) &middot;
 <a href="${esc(base)}/v1/trust/check?url=https%3A%2F%2Fapi.example.com%2Fv1%2Fdata">/v1/trust/check</a> (should I pay this x402 URL? allow / warn / block, $${usdPrice(cfg, "trust_check")}) &middot;
-<a href="${esc(base)}/v1/lite/BTC">/v1/lite/{coin}</a> &middot; <a href="${esc(base)}/v1/funding">/v1/funding</a> &middot; <a href="${esc(base)}/v1/fear-greed">/v1/fear-greed</a> &middot; <a href="${esc(base)}/v1/events/next48h">/v1/events/next48h</a></p></div>
+<a href="${esc(base)}/v1/lite/${EXAMPLE_COIN}">/v1/lite/{coin}</a> &middot; <a href="${esc(base)}/v1/funding">/v1/funding</a> &middot; <a href="${esc(base)}/v1/fear-greed">/v1/fear-greed</a> &middot; <a href="${esc(base)}/v1/events/next48h">/v1/events/next48h</a></p></div>
 <h2>For agents</h2>
 <div class="qls">
 ${quickHtml}

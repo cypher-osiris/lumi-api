@@ -6,9 +6,18 @@ import {
   toListing, probeRow, rdapRegistered, catalogView, catalogFreeView, normalizeDomain, normalizeUrl, isPlatformHost, explorerFor,
   type CatalogStore, type CatalogStats, type LookupQuery, type BuyRow,
 } from "./catalog";
-import { lookupBaseUsdc, lookupXrplPayment, EVM_TX_RE, XRPL_TX_RE } from "./verify";
+import { lookupBaseUsdc, lookupXrplPayment, EVM_TX_RE, XRPL_TX_RE, XRPL_ADDR_RE, EVM_ADDR_RE } from "./verify";
+import {
+  type EvidenceStore, type PayerAgg, type XrplCensusDoc, BASE_NET, XRPL_NET, LUMI_WALLETS, KNOWN_TESTERS, HUB_MIN, CENSUS_FRESH_MS, BASE_WINDOW_MAX, BASE_GROUP,
+  classifyPayers, xrplCensus, baseHead, baseLogs, baseFunder, vet402View, parseVet402, VET402,
+} from "./evidence";
 
-export type CatalogJob = { kind: "ingest"; offset: number } | { kind: "probe"; after: number };
+export type CatalogJob =
+  | { kind: "ingest"; offset: number }
+  | { kind: "probe"; after: number }
+  | { kind: "xrpl_census"; payTo: string }
+  | { kind: "base_logs"; from: number; to: number; offset: number; head: number; headTs: number }
+  | { kind: "base_funders" };
 export interface QueueLike {
   sendBatch(messages: { body: CatalogJob; delaySeconds?: number }[]): Promise<unknown>;
 }
@@ -33,6 +42,10 @@ export interface CatalogDeps {
   isOwner(request: Request): Promise<boolean>;
   /** Lumi's own test-buys of the curated XRPL vendor list since `since` (trust store observations). */
   curatedBuys?: (since: number) => Promise<CuratedBuy[]>;
+  /** Free evidence (payTo census, Base forward index, vet402 import, buy queue). Optional: off when unset. */
+  evidence?: EvidenceStore;
+  /** Public Base RPCs, rotated (getLogs for the forward index). */
+  baseRpcs?: string[];
 }
 
 export interface CuratedBuy {
@@ -53,12 +66,13 @@ export const CURATED_WINDOW_MS = 30 * 86_400_000;
 /** Purchase-verified, split by chain: Base USDC buys of Bazaar listings vs XRPL buys of the curated list. Never merged into one number. */
 export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
   const base = s?.by_network?.["eip155:8453"] ?? (s && !s.by_network ? { purchase_verified: s.purchase_verified, test_buys: s.test_buys } : { purchase_verified: 0, test_buys: 0 });
-  const otherBazaar = s?.by_network ? Object.entries(s.by_network).filter(([n]) => n !== "eip155:8453") : [];
+  const otherBazaar = s?.by_network ? Object.entries(s.by_network).filter(([n]) => n !== "eip155:8453" && n !== "xrpl:0") : [];
   return {
     base_usdc: { network: "eip155:8453", asset: "USDC", source: "CDP Bazaar catalog listings Lumi bought once each", purchase_verified_resources: base.purchase_verified, test_buys: base.test_buys },
     xrpl: {
       network: "xrpl:0", assets: x?.assets ?? [], source: "Lumi's curated XRPL vendor list (daily test-buys)", window_days: CURATED_WINDOW_MS / 86_400_000,
       purchase_verified_endpoints: x?.endpoints ?? 0, vendors: x?.vendors ?? 0, test_buys: x?.buys ?? 0, delivered: x?.delivered ?? 0,
+      bazaar_catalog: { purchase_verified_resources: s?.by_network?.["xrpl:0"]?.purchase_verified ?? 0, test_buys: s?.by_network?.["xrpl:0"]?.test_buys ?? 0, source: "CDP Bazaar catalog listings Lumi bought on XRPL" },
     },
     ...(otherBazaar.length ? { other_bazaar_networks: Object.fromEntries(otherBazaar) } : {}),
     note: "Counted separately per chain. The Bazaar catalog test-buys are Base USDC; XRPL test-buys cover only the small curated list, so XRPL coverage is much smaller.",
@@ -75,7 +89,21 @@ export const FREE_BROWSE_MAX = 100;
 export const FREE_BROWSE_PAGE = 25;
 export const FREE_LOOKUP_ENTRIES = 5;
 /** D1 Free allows 100k rows written per day (index entries count). Catalog work stays well under it. */
-export const WRITE_BUDGET = { ingest: 55_000, probe: 85_000 };
+export const WRITE_BUDGET = { ingest: 55_000, probe: 85_000, evidence: 95_000 };
+/** A paid trust/check result worth a test-buy: exact listing, no Lumi purchase in 30 days, and a suspicious signal. */
+export function buyCandidate(body: any, exact: any, t = Date.now()) {
+  const e = exact?.catalog?.entries?.[0];
+  if (!e || exact?.self || !body?.matched?.exact) return null;
+  const last = (e.purchases ?? [])[0];
+  if (last && Date.parse(last.at) > t - 30 * 86_400_000) return null;
+  const reasons: string[] = (body.reasons ?? []).map((r: any) => String(r.code)).filter((c: string) => BUY_SIGNALS.includes(c));
+  if (!reasons.length) return null;
+  const nets: string[] = (e.pay_to ?? []).map((p: any) => String(p.network));
+  const price = Number(e.listed_price_usd);
+  return { resource: String(e.resource), network: nets.includes(BASE_NET) ? BASE_NET : nets[0] ?? BASE_NET, price_usd: Number.isFinite(price) ? price : null, reasons };
+}
+/** Paid trust/check signals that queue a resource for the daily test-buy routine (never bought inline). */
+export const BUY_SIGNALS = ["last_quote_invalid", "quote_pays_unlisted_address", "quoted_price_differs", "unreliable_quotes", "pay_to_mismatch", "young_domain", "no_organic_payers", "no_bazaar_usage", "vet402_l0_fail"];
 const PER_HOST = 3;
 /** CDP discovery rate-limits bursts (HTTP 429 seen from Workers): one page per 10 s. */
 const INGEST_SPACING_S = 10;
@@ -177,6 +205,9 @@ export function createCatalog(deps: CatalogDeps) {
       await send(jobs, PROBE_SPACING_S);
       out.probe_jobs = jobs.length;
     }
+    if (deps.evidence) {
+      try { out.evidence = await evidenceCron(t); } catch (e) { out.evidence_error = String(e); }
+    }
     const st = await stats();
     if (!st || t - st.computed_at > STATS_EVERY_MS) await store.setMeta("stats", JSON.stringify(await store.computeStats(t)));
     deps.log({ event: "catalog_cron", ...out });
@@ -202,6 +233,7 @@ export function createCatalog(deps: CatalogDeps) {
   }
 
   async function consume(job: CatalogJob) {
+    if (job.kind === "xrpl_census" || job.kind === "base_logs" || job.kind === "base_funders") return consumeEvidence(job);
     if (job.kind === "ingest") {
       const r = await deps.fetch(`${DISCOVERY_URL}?limit=${INGEST_PAGE}&offset=${job.offset}`, { headers: { Accept: "application/json" } });
       if (!r.ok) throw new Error(`discovery HTTP ${r.status}`);
@@ -229,6 +261,260 @@ export function createCatalog(deps: CatalogDeps) {
       await store.addCounter(dayKey(t), w + due.length * 2 + 1);
     } else await store.addCounter(dayKey(t), w + 1);
     return { probed: results.length, valid: results.filter((r) => r.valid).length };
+  }
+
+  // ------------------------------------------------------------ free evidence
+
+  const metaJson = async <T,>(k: string): Promise<T | null> => { try { const v = await store.getMeta(k); return v ? (JSON.parse(v) as T) : null; } catch { return null; } };
+  let evmMemo: { at: number; set: Set<string>; list: string[] } | undefined;
+  async function evmPayTos(t: number, refresh = false) {
+    if (!refresh && evmMemo && t - evmMemo.at < 600_000) return evmMemo;
+    let m = await metaJson<{ at: number; list: string[] }>("evm_paytos");
+    if (refresh && (!m || t - m.at > 86_400_000)) {
+      m = { at: t, list: await deps.evidence!.evmPayTos() };
+      await store.setMeta("evm_paytos", JSON.stringify(m));
+    }
+    evmMemo = { at: t, list: m?.list ?? [], set: new Set(m?.list ?? []) };
+    return evmMemo;
+  }
+  let hubMemo: { at: number; set: Set<string> } | undefined;
+  async function hubSet(t: number) {
+    if (hubMemo && t - hubMemo.at < 600_000) return hubMemo.set;
+    const h = await metaJson<{ at: number; hubs: string[] }>("funder_hubs");
+    hubMemo = { at: t, set: new Set((h?.hubs ?? []).map((x) => x.toLowerCase())) };
+    return hubMemo.set;
+  }
+  async function testers() {
+    const m = await metaJson<{ xrpl?: string[]; evm?: string[] }>("known_testers");
+    return { xrpl: [...KNOWN_TESTERS.xrpl, ...(m?.xrpl ?? [])], evm: [...KNOWN_TESTERS.evm, ...(m?.evm ?? [])].map((x) => x.toLowerCase()) };
+  }
+  const lumiWallets = (net: "xrpl" | "evm") => [...LUMI_WALLETS[net], ...(net === "xrpl" ? deps.buyers.xrpl : deps.buyers.evm), ...deps.self.pay_to];
+  const baseRpcs = () => deps.baseRpcs?.length ? deps.baseRpcs : [deps.baseRpc];
+
+  async function evidenceCron(t: number) {
+    const ev = deps.evidence!;
+    const out: Record<string, unknown> = {};
+    const jobs: CatalogJob[] = [];
+    // Base forward index: the blocks since the last run (at most BASE_WINDOW_MAX; older backlog is recorded as a gap).
+    try {
+      if (!(await underBudget("evidence"))) out.base = "skipped: daily write budget";
+      else {
+        const { list } = await evmPayTos(t, true);
+        const head = await baseHead(deps.fetch, baseRpcs());
+        const safe = head.block - 10;
+        const idx = (await metaJson<{ started_block: number; started_at: number; cursor: number; last_run: number; gaps: { from: number; to: number; at: number }[]; skipped_blocks: number }>("base_index"))
+          ?? { started_block: safe - 900, started_at: t, cursor: safe - 900, last_run: 0, gaps: [], skipped_blocks: 0 };
+        let from = idx.cursor + 1;
+        if (safe - from + 1 > BASE_WINDOW_MAX) {
+          const gap = { from, to: safe - BASE_WINDOW_MAX, at: t };
+          idx.gaps = [...idx.gaps, gap].slice(-20); idx.skipped_blocks += gap.to - gap.from + 1;
+          from = safe - BASE_WINDOW_MAX + 1;
+        }
+        if (from <= safe && list.length) {
+          for (let o = 0; o < list.length; o += BASE_GROUP) jobs.push({ kind: "base_logs", from, to: safe, offset: o, head: head.block, headTs: head.ts });
+          jobs.push({ kind: "base_funders" });
+          idx.cursor = safe; idx.last_run = t;
+          await store.setMeta("base_index", JSON.stringify(idx));
+          out.base = { from, to: safe, groups: Math.ceil(list.length / BASE_GROUP) };
+        }
+      }
+    } catch (e) { out.base_error = String(e); }
+    // XRPL census pre-warm: catalog + curated XRPL payTos, a few per run, re-checked daily.
+    try {
+      let xl = await metaJson<{ at: number; list: string[] }>("xrpl_paytos");
+      if (!xl || t - xl.at > 86_400_000) {
+        const cur = VENDORS.flatMap((v) => v.pay_to.xrpl);
+        xl = { at: t, list: [...new Set([...(await ev.xrplPayTos()), ...cur])].filter((a) => XRPL_ADDR_RE.test(a) && !lumiWallets("xrpl").includes(a)) };
+        await store.setMeta("xrpl_paytos", JSON.stringify(xl));
+      }
+      let n = 0;
+      for (const a of xl.list) {
+        if (n >= 4) break;
+        const c = await ev.getCensus(XRPL_NET, a);
+        if (c && c.checked_at > t - CENSUS_FRESH_MS) continue;
+        if (await ev.markQueued(XRPL_NET, a, t)) { jobs.push({ kind: "xrpl_census", payTo: a }); n++; }
+      }
+      out.xrpl_census_jobs = n;
+    } catch (e) { out.xrpl_error = String(e); }
+    // Funding hubs (exchanges, bridges): every 6 h.
+    try {
+      const h = await metaJson<{ at: number }>("funder_hubs");
+      if (!h || t - h.at > 6 * 3_600_000) {
+        const hubs = (await ev.hubs(HUB_MIN)).map((x) => x.funder);
+        await store.setMeta("funder_hubs", JSON.stringify({ at: t, min_payers: HUB_MIN, hubs }));
+        hubMemo = undefined;
+      }
+    } catch (e) { out.hubs_error = String(e); }
+    await send(jobs, 5);
+    return out;
+  }
+
+  async function consumeEvidence(job: Extract<CatalogJob, { kind: "xrpl_census" | "base_logs" | "base_funders" }>) {
+    const ev = deps.evidence;
+    if (!ev) return { skipped: "evidence off" };
+    const t = now();
+    if (!(await underBudget("evidence"))) return { skipped: "daily write budget" };
+    if (job.kind === "xrpl_census") {
+      const d = await xrplCensus(deps.fetch, deps.xrplRpc, job.payTo, ev, t);
+      await store.addCounter(dayKey(t), 2 + d.payers.filter((p) => p.fk).length);
+      return { census: job.payTo, x402_payments: d.x402_payments };
+    }
+    if (job.kind === "base_logs") {
+      const { list } = await evmPayTos(t);
+      const group = list.slice(job.offset, job.offset + BASE_GROUP);
+      if (!group.length) return { skipped: "empty group" };
+      const rows = await baseLogs(deps.fetch, baseRpcs(), group, job.from, job.to, { block: job.head, ts: job.headTs });
+      const w = await ev.addInflow(rows);
+      await store.addCounter(dayKey(t), w + 1);
+      return { pairs: rows.length };
+    }
+    const due = await ev.unresolvedPayers(15);
+    const out = [];
+    for (const p of due) {
+      try { out.push(await baseFunder(deps.fetch, baseRpcs(), p.payer, p.first_block, t)); } catch { /* next run */ }
+    }
+    const w = await ev.putFunders(out);
+    await store.addCounter(dayKey(t), w + 1);
+    return { funders: out.length, of: due.length };
+  }
+
+  /** Census view (free: counts only; paid: plus cluster samples with tx hashes). */
+  function censusView(network: string, payTo: string, payers: PayerAgg[], ctx: { seller: string[]; lumi: string[]; testers: string[]; hubs: Set<string> }, meta: Record<string, unknown>, free: boolean) {
+    const c = classifyPayers(payers, { payTo, sellerPayTos: ctx.seller, lumi: ctx.lumi, testers: ctx.testers, hubs: ctx.hubs });
+    const exp = (tx: string | null) => (tx ? explorerFor(network, tx) : null);
+    return {
+      network, pay_to: payTo, status: "ok", ...meta,
+      organic_payers: c.organic_payers, organic_wallets: c.organic_wallets, organic_payments: c.organic_payments, last_organic_at: c.last_organic_at,
+      payers_seen: c.payers_seen, excluded_payers: c.excluded, funder_unresolved: c.funder_unresolved,
+      method: "organic_payers = distinct funding clusters: payers funded by the same account count once; Lumi's own wallets, known test wallets, the seller's payTos and wallets they funded are excluded. Funders that funded " + HUB_MIN + "+ indexed payers (exchanges, bridges) are not used for clustering.",
+      ...(free ? {} : {
+        ...(network === BASE_NET ? { organic_usd: c.organic_usd } : {}),
+        top_clusters: c.clusters.slice(0, 5).map((k) => ({ wallets: k.payers.length, sample_payer: k.payers[0], funder: k.funder, payments: k.n, last_at: new Date(k.last_ts).toISOString(), last_tx: k.last_tx, explorer: exp(k.last_tx) })),
+      }),
+    };
+  }
+
+  /** Free evidence for a lookup: payTo census (XRPL ledger read / Base forward index). Queues an XRPL census when none is fresh. */
+  async function censusFor(payTos: { network: string; pay_to: string }[], seller: string[], free: boolean, allowQueue: boolean) {
+    const ev = deps.evidence;
+    if (!ev || !payTos.length) return [];
+    const t = now();
+    const ts = await testers();
+    const hubs = await hubSet(t);
+    const out: Record<string, unknown>[] = [];
+    for (const p of payTos.slice(0, 3)) {
+      if (XRPL_ADDR_RE.test(p.pay_to)) {
+        let c = await ev.getCensus(XRPL_NET, p.pay_to);
+        let queued = false;
+        if ((!c?.doc || c.checked_at < t - CENSUS_FRESH_MS) && allowQueue && (await ev.markQueued(XRPL_NET, p.pay_to, t))) {
+          await send([{ kind: "xrpl_census", payTo: p.pay_to }]);
+          queued = true;
+          if (!deps.queue) c = await ev.getCensus(XRPL_NET, p.pay_to); // inline (tests / Node)
+        }
+        if (!c?.doc) { out.push({ network: XRPL_NET, pay_to: p.pay_to, status: queued || c?.queued_at ? "queued" : "not_checked", note: "An XRPL ledger read of this payTo is queued; look again in a few minutes." }); continue; }
+        const d = JSON.parse(c.doc) as XrplCensusDoc;
+        const payers: PayerAgg[] = d.payers.map((x) => ({ payer: x.a, funder: x.f, funder_known: x.fk, n: x.n, last_ts: x.last_ts, last_tx: x.last_tx, amounts: x.amt }));
+        out.push(censusView(XRPL_NET, p.pay_to, payers, { seller, lumi: lumiWallets("xrpl"), testers: ts.xrpl, hubs }, {
+          source: "XRPL ledger (account_tx, latest 200 transactions), read by Lumi",
+          as_of: iso(d.checked_at), window: { from: d.window_from ? iso(d.window_from) : null, to: d.window_to ? iso(d.window_to) : null, complete_history: d.complete },
+          x402_payments: d.x402_payments, x402_markers: { source_tag_804681468: d.markers.source_tag, invoice_id: d.markers.invoice_id }, incoming_payments: d.incoming_payments,
+          ...(c.checked_at < t - CENSUS_FRESH_MS ? { refresh: "queued" } : {}),
+        }, free));
+      } else if (EVM_ADDR_RE.test(p.pay_to)) {
+        const a = p.pay_to.toLowerCase();
+        const idx = await metaJson<{ started_at: number; started_block: number; cursor: number; last_run: number; skipped_blocks: number }>("base_index");
+        const { set } = await evmPayTos(t);
+        if (!idx) { out.push({ network: BASE_NET, pay_to: a, status: "index_not_started" }); continue; }
+        if (!set.has(a)) { out.push({ network: BASE_NET, pay_to: a, status: "not_indexed", note: "Only payTos listed in the CDP Bazaar catalog are indexed (forward from the index start)." }); continue; }
+        const rows = await ev.inflowFor(a, 500);
+        const fm = new Map((await ev.funders(BASE_NET, rows.map((r) => r.payer))).map((f) => [f.account, f]));
+        const payers: PayerAgg[] = rows.map((r) => ({ payer: r.payer, funder: fm.get(r.payer)?.funder ?? null, funder_known: fm.has(r.payer), n: r.n, last_ts: r.last_ts, last_tx: r.last_tx, usd: r.units / 1e6 }));
+        out.push(censusView(BASE_NET, a, payers, { seller: seller.map((x) => x.toLowerCase()), lumi: lumiWallets("evm").map((x) => x.toLowerCase()), testers: ts.evm, hubs }, {
+          source: "Base USDC Transfer logs into this payTo (Lumi forward index, public RPCs)",
+          as_of: iso(idx.last_run), window: { from: iso(idx.started_at), to: iso(idx.last_run), note: "forward-only from the index start; blocks skipped under load are listed in the catalog summary" },
+        }, free));
+      }
+    }
+    return out;
+  }
+
+  async function vet402For(rows: { resource: string }[], free: boolean) {
+    if (!deps.evidence || !rows.length) return new Map<string, ReturnType<typeof vet402View>>();
+    const v = await deps.evidence.vet402For(rows.map((r) => r.resource));
+    return new Map(v.map((r) => [r.resource_key, vet402View(r, free)]));
+  }
+
+  /** Paid trust/check: queue the resource for the daily test-buy routine when the signals warrant it (never bought inline). */
+  async function queueBuy(c: { resource: string; network: string; price_usd: number | null; reasons: string[] }) {
+    if (!deps.evidence) return false;
+    await deps.evidence.enqueueBuy(c, now());
+    await store.addCounter(dayKey(now()), 2);
+    return true;
+  }
+
+  async function evidenceStatus() {
+    if (!deps.evidence) return null;
+    const idx = await metaJson<{ started_at: number; last_run: number; skipped_blocks: number; gaps: unknown[] }>("base_index");
+    const v = await metaJson<{ at: number; retrieved_at: string; matched: number }>("vet402_import");
+    return {
+      bazaar_quality: "Coinbase CDP Bazaar quality fields (30-day calls, unique payers, last called) are stored per listing at most every 20 h and shown, attributed and dated, in lookups and trust/check.",
+      base_forward_index: idx ? { since: iso(idx.started_at), last_run: iso(idx.last_run), skipped_blocks: idx.skipped_blocks, gaps: idx.gaps?.length ?? 0 } : "not started",
+      xrpl_census: "XRPL ledger reads of catalog and curated payTos (latest 200 transactions), refreshed daily; on demand for looked-up r-addresses.",
+      third_party: v ? { source: VET402.source, license: VET402.license, link: VET402.link, retrieved_at: v.retrieved_at, resources_matched: v.matched } : null,
+    };
+  }
+
+  async function postEvidence(request: Request, url: URL): Promise<Response> {
+    if (!(await deps.isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+    const ev = deps.evidence;
+    if (!ev) return json(503, { error: "evidence_unavailable" });
+    const path = url.pathname;
+    const t = now();
+    if (path === "/v1/trust/catalog/evidence/run") {
+      const kind = url.searchParams.get("kind");
+      if (kind === "cron") return json(200, await evidenceCron(t));
+      if (kind === "funders") return json(200, await consumeEvidence({ kind: "base_funders" }));
+      if (kind === "xrpl") {
+        const a = url.searchParams.get("payTo") ?? "";
+        if (!XRPL_ADDR_RE.test(a)) return json(400, { error: "invalid_field", field: "payTo" });
+        return json(200, await consumeEvidence({ kind: "xrpl_census", payTo: a }));
+      }
+      return json(400, { error: "invalid_field", field: "kind", detail: "cron | funders | xrpl" });
+    }
+    let b: any;
+    try { b = await request.json(); } catch { return json(400, { error: "invalid_json" }); }
+    if (path === "/v1/trust/catalog/evidence/vet402") {
+      const rows = parseVet402(b, t);
+      if (typeof rows === "string") return json(400, { error: "invalid_field", detail: rows });
+      if (!(await underBudget("evidence"))) return json(429, { error: "daily_write_budget", retryable: true });
+      // Map vet402 resource_key (host/path) to catalogued resources; unmatched rows are not stored.
+      const byUrl = new Map<string, (typeof rows)[number]>();
+      for (const r of rows) for (const u of [`https://${r.resource_key}`, `http://${r.resource_key}`]) byUrl.set(u, r);
+      const hit = await ev.existingResources([...byUrl.keys()]);
+      const put = hit.map((u) => ({ ...byUrl.get(u)!, resource_key: u }));
+      const w = await ev.putVet402(put);
+      await store.addCounter(dayKey(t), w + 1);
+      const prev = await metaJson<{ matched: number; retrieved_at: string }>("vet402_import");
+      const matched = (prev && prev.retrieved_at === iso(put[0]?.retrieved_at ?? Date.parse(b.retrieved_at)) ? prev.matched : 0) + w;
+      await store.setMeta("vet402_import", JSON.stringify({ at: t, retrieved_at: iso(Date.parse(b.retrieved_at)), matched }));
+      return json(200, { received: rows.length, matched: w, unmatched_keys: rows.filter((r) => !hit.includes(`https://${r.resource_key}`) && !hit.includes(`http://${r.resource_key}`)).map((r) => r.resource_key) });
+    }
+    if (path === "/v1/trust/catalog/evidence/testers") {
+      const xrpl = Array.isArray(b?.xrpl) ? b.xrpl.filter((a: unknown) => typeof a === "string" && XRPL_ADDR_RE.test(a)) : [];
+      const evm = Array.isArray(b?.evm) ? b.evm.filter((a: unknown) => typeof a === "string" && EVM_ADDR_RE.test(a)).map((a: string) => a.toLowerCase()) : [];
+      const note = typeof b?.note === "string" ? b.note.slice(0, 200) : null;
+      if (xrpl.length + evm.length > 500) return json(400, { error: "too_many" });
+      await store.setMeta("known_testers", JSON.stringify({ at: t, xrpl, evm, note }));
+      return json(200, { xrpl: xrpl.length, evm: evm.length });
+    }
+    if (path === "/v1/trust/catalog/buy-queue") {
+      const resource = typeof b?.resource === "string" ? normalizeUrl(b.resource) : null;
+      const status = String(b?.status ?? "");
+      if (!resource || !["queued", "bought", "skipped"].includes(status)) return json(400, { error: "invalid_field", detail: "resource + status (queued|bought|skipped)" });
+      const note = typeof b?.note === "string" ? b.note.slice(0, 200) : null;
+      return json(200, { updated: await ev.setBuyStatus(resource, status, note, t) });
+    }
+    return json(404, { error: "not_found" });
   }
 
   async function stats(): Promise<CatalogStats | null> {
@@ -300,9 +586,11 @@ export function createCatalog(deps: CatalogDeps) {
     const { total, rows } = await store.lookup(q, limit);
     const buys = await store.buysFor(rows.map((r) => r.resource));
     const doms = free ? new Map<string, any>() : new Map((await store.domainInfo([...new Set(rows.map((r) => r.reg_domain).filter((x): x is string => !!x))])).map((x) => [x.domain, x]));
-    const entries: Array<{ tier: string } & Record<string, unknown>> = free
+    const vet = await vet402For(rows, free).catch(() => new Map());
+    const entries: Array<{ tier: string } & Record<string, unknown>> = (free
       ? rows.map((r) => catalogFreeView(r, buys.filter((b) => b.resource === r.resource), t))
-      : rows.map((r) => catalogView(r, buys.filter((b) => b.resource === r.resource), r.reg_domain ? doms.get(r.reg_domain) : undefined, t));
+      : rows.map((r) => catalogView(r, buys.filter((b) => b.resource === r.resource), r.reg_domain ? doms.get(r.reg_domain) : undefined, t))
+    ).map((e, i) => (vet.has(rows[i].resource) ? { ...e, third_party: { vet402: vet.get(rows[i].resource) } } : e));
     if (!curated.length && !entries.length) {
       return {
         kind: "trust_lookup", query, observed: false, generated_at: iso(t),
@@ -311,6 +599,17 @@ export function createCatalog(deps: CatalogDeps) {
     }
     const tiers: Record<string, number> = {};
     for (const e of entries) tiers[e.tier] = (tiers[e.tier] ?? 0) + 1;
+    // payTo census: the queried payTo, else the payTos of the first listing (url lookups / trust/check).
+    let census: Record<string, unknown>[] = [];
+    try {
+      const firstAcc = (() => { try { return JSON.parse(rows[0]?.accepts ?? "[]") as { n?: string; p?: string }[]; } catch { return []; } })();
+      const seller = [...new Set(rows.flatMap((r) => (r.pay_tos ?? "").split(",").filter(Boolean)))];
+      const targets = q.payTo
+        ? [{ network: XRPL_ADDR_RE.test(q.payTo.trim()) ? XRPL_NET : BASE_NET, pay_to: q.payTo.trim() }]
+        : !q.domain || q.url ? [...new Map(firstAcc.filter((a) => a.p).map((a) => [String(a.p).toLowerCase(), { network: String(a.n), pay_to: String(a.p) }])).values()] : [];
+      const curatedSeller = curated.length ? VENDORS.filter((v) => curated.some((c: any) => c.id === v.id)).flatMap((v) => v.pay_to.xrpl) : [];
+      census = await censusFor(targets, [...seller, ...curatedSeller], free, true);
+    } catch (e) { deps.log({ event: "census_error", error: String(e) }); }
     const st = await stats();
     return {
       kind: "trust_lookup", query, observed: true, generated_at: iso(t),
@@ -318,6 +617,7 @@ export function createCatalog(deps: CatalogDeps) {
       labels: LABEL_NOTES,
       curated,
       catalog: { total_matches: total, shown: entries.length, ordering: "Bazaar 30-day calls, most used first", tiers_shown: tiers, entries },
+      ...(census.length ? { payto_census: census } : {}),
       methodology: `${base}/v1/trust/methodology`,
       ...(free ? { evidence: freeEvidenceNote(base, q) } : {}),
       note: "Observations, not a rating. Quote checks are free unpaid requests; purchases are single test-buys. Few samples = low confidence.",
@@ -342,8 +642,9 @@ export function createCatalog(deps: CatalogDeps) {
       browse: `${base}/v1/trust/catalog (free teaser: the ${FREE_BROWSE_MAX} most-used listings, ${FREE_BROWSE_PAGE} per page)`,
       labels: LABEL_NOTES,
       coverage: s ? coverageLine(s, x) : null,
-      counts: s ? { catalogued: s.catalogued, active: s.active, quote_checked: s.quote_checked, quote_checked_24h: s.quote_checked_24h, quote_verified: s.quote_verified, purchase_verified: s.purchase_verified, test_buys: s.test_buys, purchase_verified_note: "Bazaar catalog resources only (Base USDC). XRPL test-buys of the curated list are in purchase_verified_by_chain.xrpl, counted separately.", domains: s.domains, as_of: iso(s.computed_at) } : null,
+      counts: s ? { catalogued: s.catalogued, active: s.active, quote_checked: s.quote_checked, quote_checked_24h: s.quote_checked_24h, quote_verified: s.quote_verified, purchase_verified: s.by_network?.[BASE_NET]?.purchase_verified ?? s.purchase_verified, test_buys: s.by_network?.[BASE_NET]?.test_buys ?? s.test_buys, purchase_verified_note: "Bazaar catalog resources only (Base USDC). XRPL test-buys of the curated list are in purchase_verified_by_chain.xrpl, counted separately.", domains: s.domains, as_of: iso(s.computed_at) } : null,
       purchase_verified_by_chain: chainSplit(s, x),
+      ...(deps.evidence ? { free_evidence: await evidenceStatus().catch(() => null) } : {}),
       last_ingest: ing ? (() => { const j = JSON.parse(ing); return { at: iso(j.at), listed_total: j.total }; })() : null,
       checks: "free, unpaid 402-quote checks rotate through the catalog in slices every 30 minutes (valid 402, price vs listing, payTo vs listing, latency); counts.quote_checked_24h shows how many resources were actually checked in the last 24 h. Registrable-domain age via RDAP monthly",
     };
@@ -436,6 +737,13 @@ export function createCatalog(deps: CatalogDeps) {
     const path = url.pathname;
     if (request.method === "GET" && path === "/v1/trust/catalog") return json(200, await browseDoc(url, base), { "Cache-Control": "public, max-age=300" });
     if (request.method === "POST" && path === "/v1/trust/catalog/observations") return postObservation(request);
+    if (request.method === "POST" && (path.startsWith("/v1/trust/catalog/evidence/") || path === "/v1/trust/catalog/buy-queue")) return postEvidence(request, url);
+    if (request.method === "GET" && path === "/v1/trust/catalog/buy-queue") {
+      if (!(await deps.isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+      if (!deps.evidence) return json(503, { error: "evidence_unavailable" });
+      const status = url.searchParams.get("status") ?? "queued";
+      return json(200, { status, rows: await deps.evidence.buyQueue(status, Math.min(200, Number(url.searchParams.get("limit") ?? "50") || 50)) }, { "Cache-Control": "no-store" });
+    }
     if (request.method === "POST" && path === "/v1/trust/catalog/ingest") {
       if (!(await deps.isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
       if (url.searchParams.get("now") === "1") return json(200, { started: true, total: await startIngest() });
@@ -450,7 +758,7 @@ export function createCatalog(deps: CatalogDeps) {
     return null;
   }
 
-  return { cron, consume, lookupDoc, summary, handle, startIngest, stats, xrplAgg };
+  return { cron, consume, lookupDoc, summary, handle, startIngest, stats, xrplAgg, queueBuy };
 }
 
 export type Catalog = ReturnType<typeof createCatalog>;

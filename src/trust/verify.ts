@@ -9,8 +9,8 @@ import { keccak_256 } from "@noble/hashes/sha3";
 export const RLUSD = { currency: "524C555344000000000000000000000000000000", issuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" };
 export const USDC_XRPL = { currency: "5553444300000000000000000000000000000000", issuer: "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE" };
 export const BASE_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
-const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-const RIPPLE_EPOCH = 946_684_800;
+export const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+export const RIPPLE_EPOCH = 946_684_800;
 
 export const XRPL_TX_RE = /^[0-9A-F]{64}$/;
 export const EVM_TX_RE = /^0x[0-9a-f]{64}$/;
@@ -48,13 +48,13 @@ export async function sha256Hex(s: string): Promise<string> {
   return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))));
 }
 
-function assetOfIou(a: { currency: string; issuer: string }): string {
+export function assetOfIou(a: { currency: string; issuer: string }): string {
   if (a.currency === RLUSD.currency && a.issuer === RLUSD.issuer) return "RLUSD";
   if (a.currency === USDC_XRPL.currency && a.issuer === USDC_XRPL.issuer) return "USDC";
   return `${a.currency}.${a.issuer}`;
 }
 
-async function rpc(f: Fetch, url: string, body: unknown): Promise<any> {
+export async function rpc(f: Fetch, url: string, body: unknown): Promise<any> {
   const r = await f(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -76,7 +76,7 @@ export const BASE_RPC_FALLBACKS = [
 ];
 
 /** JSON-RPC against each URL in turn; a reply with a JSON-RPC error also moves on to the next URL. */
-async function rpcAny(f: Fetch, urls: string[], body: unknown): Promise<any> {
+export async function rpcAny(f: Fetch, urls: string[], body: unknown): Promise<any> {
   let last: unknown = new Error("no rpc url");
   for (const u of urls) {
     try {

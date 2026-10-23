@@ -155,7 +155,7 @@ describe("catalog pipeline", () => {
     await store.upsert(ITEMS.map(toListing).filter(Boolean) as any, NOW);
     const app = createApp(ENV as any, { fetch: catalogFetch(makeFetch(happyFacilitator())), now: () => NOW, catalogStore: store, queue: { sendBatch: async (m) => { sent.push(...m); } } });
     await app.scheduled();
-    expect(sent.map((m: any) => m.body)).toEqual([{ kind: "ingest", offset: 0 }, { kind: "probe", after: 0 }]);
+    expect(sent.map((m: any) => m.body).filter((b: any) => b.kind === "ingest" || b.kind === "probe")).toEqual([{ kind: "ingest", offset: 0 }, { kind: "probe", after: 0 }]);
     expect(await store.getMeta("ingest_cursor")).toBe(String(INGEST_PAGE));
     expect(store.rows.every((r) => r.probe_ts == null)).toBe(true);
     await app.queue(sent[1].body);

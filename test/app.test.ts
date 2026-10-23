@@ -278,9 +278,9 @@ describe("openapi scanner hints", () => {
     expect(paid.sort()).toEqual(wk.resources.map((r: any) => r.template).sort());
     expect(oa.info.version).toBe((await (await get("/health")).json()).version);
     expect(oa.components.securitySchemes.bearer.scheme).toBe("bearer");
-    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("btc");
+    expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("xrp");
     expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("printmoneylab");
-    expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/btc");
+    expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/XRP");
   });
 
   it("quotes an unpaid literally probed paid template (402, same rails/prices/payTo), refuses a paid one with 400 and no facilitator call", async () => {

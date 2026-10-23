@@ -4,7 +4,7 @@
  */
 import type { Config, PaidRoute } from "./config";
 import { dropsToXrp } from "./config";
-import { PAID_ENDPOINTS } from "./catalog";
+import { PAID_ENDPOINTS, EXAMPLE_COIN } from "./catalog";
 
 export const SAMPLE_LABEL = "SAMPLE: truncated free preview, not the full product. Pay per call (x402) for the full, current response.";
 const MAX_ITEMS = 2;
@@ -72,7 +72,7 @@ export function productSample(route: PaidRoute, body: Record<string, unknown>) {
   return { sample, truncated: { arrays: cut, ...(omitted.length ? { omitted } : {}) } };
 }
 
-export const SAMPLE_ARGS: Partial<Record<PaidRoute, string>> = { signal: "BTC", levels: "BTC", lite: "BTC", vendor_report: "printmoneylab", trust_check: "url=https%3A%2F%2Fapi.lumitrades.io%2Fv1%2Fsignal%2FBTC" };
+export const SAMPLE_ARGS: Partial<Record<PaidRoute, string>> = { signal: EXAMPLE_COIN, levels: EXAMPLE_COIN, lite: EXAMPLE_COIN, vendor_report: "printmoneylab", trust_check: "url=https%3A%2F%2Fapi.lumitrades.io%2Fv1%2Fsignal%2FXRP" };
 
 export function sampleEntry(cfg: Config, base: string, route: PaidRoute) {
   const e = PAID_ENDPOINTS.find((x) => x.route === route)!;

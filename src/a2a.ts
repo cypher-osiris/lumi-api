@@ -58,7 +58,7 @@ const SKILLS: SkillDef[] = [
   },
   { id: "brief", route: "brief", name: "Daily crypto market brief", tags: ["crypto", "market", "brief", "newsletter", "paid"], examples: ["today's crypto market brief"], match: /\b(brief|summary|today|newsletter)\b/i },
   { id: "scan", route: "scan", name: "All-coins scan: 50 live signals in one call", tags: ["crypto", "screener", "signals", "scan", "paid"], examples: ["scan all coins", "which coins look strongest?"], match: /\b(scan|screen|screener|all coins|strongest|weakest)\b/i },
-  { id: "lite", route: "lite", name: "Lite coin signal (label, score, price)", tags: ["crypto", "signal", "lite", "paid"], examples: ["lite BTC"], match: /\blite\b/i, needsCoin: true },
+  { id: "lite", route: "lite", name: "Lite coin signal (label, score, price)", tags: ["crypto", "signal", "lite", "paid"], examples: ["lite XRP"], match: /\blite\b/i, needsCoin: true },
   { id: "signal", route: "signal", name: "Coin signal (buy/sell read)", tags: ["crypto", "signal", "technical-analysis", "paid"], examples: ["signal XRP", "is BTC a buy?"], match: /\b(signal|buy|sell|rsi|macd)\b/i, needsCoin: true },
   { id: "levels", route: "levels", name: "Support/resistance levels + 7-day projection", tags: ["crypto", "levels", "support", "resistance", "paid"], examples: ["levels ETH"], match: /\b(levels?|support|resistance|projection)\b/i, needsCoin: true },
   { id: "slate", route: "slate", name: "Paper-trade slate (current ideas)", tags: ["crypto", "trade-ideas", "paper-trading", "paid"], examples: ["current trade ideas"], match: /\b(slate|ideas?|setups?)\b/i },

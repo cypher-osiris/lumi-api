@@ -18,6 +18,13 @@ export interface PaidEndpoint {
 /** Shared buyer guarantee on every paid endpoint. */
 export const NOT_CHARGED = "Not charged on bad input or stale data (every response carries as_of and stale_after).";
 
+/**
+ * Fixed example coin for discovery (/.well-known/x402 resources, OpenAPI x-example-url, samples, docs).
+ * Keep this XRP permanently: the XRPL AI Hub indexes the concrete example URLs, and switching the example to BTC
+ * made it retire /v1/signal/XRP and /v1/levels/XRP as "Inactive". Guarded by test/example_coin.test.ts.
+ */
+export const EXAMPLE_COIN = "XRP" as const;
+
 export const PAID_ENDPOINTS: PaidEndpoint[] = [
   {
     route: "signal",
@@ -27,7 +34,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     template: "/v1/signal/{coin}",
     summary:
       "Use this when you need a fast, mechanical buy/sell read on one coin before acting: overall label + score, per-timeframe (1h/4h/1d) labels and an indicator summary (RSI, MACD, EMA stack, Bollinger, StochRSI, volume). 50 top coins (GET /v1/coins), computed live from public exchange candles; 1h refreshed about every 13 minutes. " + NOT_CHARGED,
-    example: "/v1/signal/BTC",
+    example: `/v1/signal/${EXAMPLE_COIN}`,
   },
   {
     route: "levels",
@@ -37,7 +44,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     template: "/v1/levels/{coin}",
     summary:
       "Use this when you need to know where price may stall or turn for one coin: support/resistance levels, bias, 7-day bull/base/bear projection, commentary, catalysts and cited sources. " + NOT_CHARGED,
-    example: "/v1/levels/BTC",
+    example: `/v1/levels/${EXAMPLE_COIN}`,
   },
   {
     route: "scan",
@@ -57,7 +64,7 @@ export const PAID_ENDPOINTS: PaidEndpoint[] = [
     template: "/v1/lite/{coin}",
     summary:
       "Use this when you only need the headline read on one coin, cheaply: overall label and score, 1h/4h/1d labels and price with 24h change. Same live computation as /v1/signal/{coin}, which adds the full indicator breakdown. " + NOT_CHARGED,
-    example: "/v1/lite/BTC",
+    example: `/v1/lite/${EXAMPLE_COIN}`,
   },
   {
     route: "slate",

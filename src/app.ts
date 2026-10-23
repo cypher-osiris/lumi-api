@@ -24,7 +24,8 @@ import { VENDORS } from "./vendors";
 import { D1TrustStore, MemoryTrustStore, type TrustStore } from "./trust/store";
 import { SEED_OBSERVATIONS } from "./trust/seed";
 import { D1CatalogStore, MemoryCatalogStore, type CatalogStore } from "./trust/catalog";
-import { createCatalog, type Catalog, type CatalogJob, type QueueLike } from "./trust/catalog_service";
+import { createCatalog, buyCandidate, type Catalog, type CatalogJob, type QueueLike } from "./trust/catalog_service";
+import { D1EvidenceStore, MemoryEvidenceStore, type EvidenceStore } from "./trust/evidence";
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { applyRate, createXrpPricer, type XrpPricer } from "./pricing";
 import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
@@ -46,6 +47,8 @@ export interface AppOptions {
   salesStore?: SalesStore;
   /** x402 catalog store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   catalogStore?: CatalogStore;
+  /** Free-evidence store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
+  evidenceStore?: EvidenceStore;
   /** Queue override (tests). Default: env.TRUST_QUEUE; absent = jobs run inline. */
   queue?: QueueLike;
   /** Private request log override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
@@ -72,7 +75,7 @@ const DEFAULT_XRPL_RPC: Record<string, string[]> = {
 };
 
 export type Prepared =
-  | { ok: true; route: PaidRoute; coin?: CoinRef; body: Record<string, unknown> }
+  | { ok: true; route: PaidRoute; coin?: CoinRef; body: Record<string, unknown>; onPaid?: () => Promise<unknown> }
   | { ok: false; status: number; error: Record<string, unknown>; headers?: Record<string, string> };
 
 export interface App {
@@ -214,6 +217,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     queue: opts.queue ?? (env.TRUST_QUEUE as QueueLike | undefined),
     xrplRpc,
     baseRpc,
+    evidence: opts.evidenceStore ?? (env.TRUST_DB ? new D1EvidenceStore(env.TRUST_DB) : new MemoryEvidenceStore()),
+    baseRpcs: split(env.BASE_INDEX_RPCS).length ? split(env.BASE_INDEX_RPCS) : ["https://base-rpc.publicnode.com", "https://base.drpc.org", "https://gateway.tenderly.co/public/base"],
     buyers: { xrpl: xrplBuyers, evm: split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS },
     self: {
       name: "Lumi Trades API",
@@ -414,7 +419,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       const body = trustVerdict({ url, payTo, amountUsd, network: sp.get("network") ?? undefined }, exact, dom, base);
       const t = now();
       const meta = metaFrom(t, t + 86_400_000, t + 30 * 60_000, t);
-      return { ok: true, route: "trust_check", body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)) };
+      const cand = buyCandidate(body as any, exact);
+      return { ok: true, route: "trust_check", body: isoTimestamps(withMeta(body as Record<string, unknown>, meta)), ...(cand ? { onPaid: () => catalog.queueBuy(cand) } : {}) };
     } catch (e) {
       return { ok: false, status: 503, error: { error: "data_unavailable", detail: "the trust catalog is unavailable right now", retryable: true, note: "Not charged." }, headers: { "Retry-After": "60" } };
     }
@@ -785,6 +791,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     }
 
     return requirePayment(request, config, paywallDeps(ctx), quote, (s: Settlement, paid: PaymentRequirements) => {
+      if (prep.onPaid) {
+        // Demand-driven test-buys: a paid trust/check only queues the resource for the daily routine (caps apply there).
+        const p = prep.onPaid().catch((e) => deps.log?.({ event: "buy_queue_error", error: String(e) }));
+        if (ctx) ctx.waitUntil(p);
+      }
       const evm = isEvmRequirement(paid);
       const payment = evm
         ? {
@@ -875,7 +886,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     },
     queue: async (job: CatalogJob) => {
       const r = await catalog.consume(job);
-      console.log(JSON.stringify({ event: "catalog_job", kind: job.kind, ...(job.kind === "ingest" ? { offset: job.offset } : { after: (job as { after?: number }).after }), ...r }));
+      console.log(JSON.stringify({ event: "catalog_job", kind: job.kind, ...(job.kind === "ingest" ? { offset: job.offset } : job.kind === "probe" ? { after: job.after } : {}), ...r }));
       return r;
     },
     async fetch(request: Request, ctx?: WaitUntil): Promise<Response> {

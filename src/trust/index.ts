@@ -327,6 +327,12 @@ export function methodologyDoc(base: string) {
       },
       no_match: "{observed:false, note}: Lumi has not seen this seller. No observation is not a negative signal.",
       not_scored: "Catalog entries get labels, not scores; scores apply only to the curated XRPL list below.",
+      free_evidence: {
+        bazaar_quality: "Coinbase CDP Bazaar publishes per-listing quality fields (30-day call count, 30-day unique payers, last called). Lumi stores them at most every 20 h and shows them as bazaar_quality, attributed to Coinbase Bazaar and dated (as_of).",
+        payto_census: "For payTo lookups and trust/check, Lumi reads the payTo's incoming payments: on XRPL the latest 200 ledger transactions (x402-style = SourceTag 804681468 or an InvoiceID); on Base the USDC Transfer logs into Bazaar-listed payTos, indexed forward from the index start date (no back history). Lumi's own wallets, known test wallets and the seller's payTos are excluded, payers are grouped by the account that funded them (a funder that funded 20+ indexed payers, e.g. an exchange, is not used for grouping), and payers funded by excluded wallets are dropped. Output: organic payer clusters, payments, last organic date. Free lookups show counts and dates only; tx hashes and samples are in the paid trust/check.",
+        third_party: "vet402 observatory test results (KIZUNA Creation, CC BY 4.0, https://vet402.com/observatory) are imported for catalogued resources and shown separately as third_party.vet402 with a link, licence and retrieval date. They are never added to Lumi's own purchase-verified counts.",
+        demand_driven_buys: "When a paid trust/check hits a listing with no Lumi purchase in 30 days and a warning signal, the listing is queued for Lumi's daily test-buy routine (same caps); nothing is bought during the check.",
+      },
       by_chain: "purchase-verified counts are split by chain. base_usdc: Bazaar catalog resources Lumi bought once each in USDC on Base (nearly all purchase-verified entries). xrpl: endpoints of the small curated vendor list that Lumi test-bought on XRPL in the last 30 days, with how many buys returned data. Lumi does not claim broad XRPL seller coverage; the curated XRPL list is a handful of vendors.",
     },
     score: {
