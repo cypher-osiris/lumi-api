@@ -265,27 +265,65 @@ describe("openapi scanner hints", () => {
     expect(oa.info.contact.email).toBe("hello@lumitrades.io");
     expect(oa.paths["/v1/coins"].get.security).toEqual([]);
     expect(oa.paths["/v1/trust/vendors"].get.security).toEqual([]);
-    expect(oa.paths["/v1/trust/replies"].post.security).toEqual([]);
-    expect(oa.paths["/v1/trust/observations"].post.security).toEqual([{ bearer: [] }]);
+    // Not products: documented without `security: []` so x402scan does not list them as free resources.
+    for (const [p, m] of [["/health", "get"], ["/v1/reports", "post"], ["/v1/tips", "post"], ["/v1/trust/replies", "post"], ["/v1/trust/vendors/{id}", "get"]]) {
+      expect(oa.paths[p][m], p).toBeDefined();
+      expect(oa.paths[p][m].security, p).toBeUndefined();
+    }
+    for (const p of ["/v1/coins", "/v1/samples", "/v1/trust/catalog", "/v1/trust/methodology"]) expect(oa.paths[p].get.security).toEqual([]);
+    expect(oa.paths["/v1/trust/observations"]).toBeUndefined();
+    const wk = await (await get("/.well-known/x402")).json();
+    const paid = Object.entries(oa.paths).flatMap(([p, ops]: any) => Object.values(ops).filter((o: any) => o["x-payment-info"]).map(() => BASE + p));
+    expect(paid.sort()).toEqual(wk.resources.map((r: any) => r.template).sort());
+    expect(oa.info.version).toBe((await (await get("/health")).json()).version);
     expect(oa.components.securitySchemes.bearer.scheme).toBe("bearer");
     expect(oa.paths["/v1/signal/{coin}"].get.parameters[0].example).toBe("xrp");
     expect(oa.paths["/v1/trust/vendors/{id}/report"].get.parameters[0].example).toBe("printmoneylab");
     expect(oa.paths["/v1/levels/{coin}"].get["x-example-url"]).toBe(BASE + "/v1/levels/xrp");
   });
 
-  it("answers a literally probed path template with a helpful 400, never a quote", async () => {
+  it("quotes an unpaid literally probed paid template (402, same rails/prices/payTo), refuses a paid one with 400 and no facilitator call", async () => {
+    const { get, fac } = setup();
+    const strip = (a: any[]) => a.map((x) => ({ network: x.network, asset: x.asset, amount: x.amount, payTo: x.payTo, scheme: x.scheme }));
+    for (const [p, ex, concrete] of [["/v1/signal/{coin}", "/v1/signal/xrp", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp", "/v1/levels/xrp"],
+      ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"],
+      ["/v1/signal/:coin", "/v1/signal/xrp", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/xrp", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/xrp", "/v1/signal/xrp"],
+      ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/xrp", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/xrp", "/v1/signal/xrp"],
+      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report", "/v1/trust/vendors/printmoneylab/report"]]) {
+      const q = await get(p);
+      expect(q.status, p).toBe(402);
+      const body = await q.json();
+      expect(decodeB64Json(q.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
+      expect(body.resource.url).toBe(BASE + new URL(BASE + p).pathname);
+      expect(body.note).toContain(BASE + ex);
+      const c = await get(concrete);
+      const cb = await c.json();
+      if (c.status === 402) expect(strip(body.accepts)).toEqual(strip(cb.accepts));
+      expect(body.accepts.length).toBeGreaterThan(0);
+
+      // Junk header and a well-formed payload built from the template quote: both refused, nothing verified or settled.
+      const forged = Buffer.from(JSON.stringify({ x402Version: 2, accepted: body.accepts[0], payload: { signedTxBlob: "00" } })).toString("base64");
+      for (const h of [{ "PAYMENT-SIGNATURE": "junk" }, { "X-PAYMENT": forged }] as Record<string, string>[]) {
+        const r = await get(p, h);
+        expect(r.status, p).toBe(400);
+        expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
+        const b = await r.json();
+        expect(b).toMatchObject({ error: "path_template_not_filled", note: "Not charged." });
+        expect(b.example).toBe(BASE + ex);
+      }
+    }
+    expect(fac.calls).toHaveLength(0);
+  });
+
+  it("keeps the free /v1/trust/vendors/{id} template a 400 (no quote)", async () => {
     const { get } = setup();
-    for (const [p, ex] of [["/v1/signal/{coin}", "/v1/signal/xrp"], ["/v1/levels/%7Bcoin%7D", "/v1/levels/xrp"], ["/v1/trust/vendors/%7Bid%7D/report", "/v1/trust/vendors/printmoneylab/report"],
-      ["/v1/signal/:coin", "/v1/signal/xrp"], ["/v1/levels/:COIN", "/v1/levels/xrp"], ["/v1/signal/%3Ccoin%3E", "/v1/signal/xrp"],
-      ["/v1/signal/%7B%7Bcoin%7D%7D", "/v1/signal/xrp"], ["/v1/signal/$%7Bcoin%7D", "/v1/signal/xrp"],
-      ["/v1/trust/vendors/:id/report", "/v1/trust/vendors/printmoneylab/report"], ["/v1/trust/vendors/%7BvendorId%7D/report", "/v1/trust/vendors/printmoneylab/report"],
-      ["/v1/trust/vendors/%7Bid%7D", "/v1/trust/vendors/printmoneylab"], ["/v1/trust/vendors/:id", "/v1/trust/vendors/printmoneylab"], ["/v1/trust/vendors/%3Cvendor_id%3E", "/v1/trust/vendors/printmoneylab"]]) {
+    for (const p of ["/v1/trust/vendors/%7Bid%7D", "/v1/trust/vendors/:id", "/v1/trust/vendors/%3Cvendor_id%3E"]) {
       const r = await get(p);
       expect(r.status).toBe(400);
       expect(r.headers.get("PAYMENT-REQUIRED")).toBeNull();
       const b = await r.json();
       expect(b.error).toBe("path_template_not_filled");
-      expect(b.example).toBe(BASE + ex);
+      expect(b.example).toBe(BASE + "/v1/trust/vendors/printmoneylab");
     }
   });
 });

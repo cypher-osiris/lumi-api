@@ -6,7 +6,7 @@
 import { setPrivateNames } from "./sanitize";
 import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
-import { makeReplayGuard, json, requirePayment, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
+import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
 import { indexDoc, indexHtml, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
@@ -501,14 +501,35 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     if (!m) return json(404, { error: "not_found", hint: `See ${base}/ for the endpoint list.` });
     const route = m[1] as PaidRoute;
 
-    // A scanner probing the OpenAPI template literally (/v1/signal/{coin}, /v1/signal/:coin, /v1/trust/vendors/:id/report, ...) gets a
-    // helpful 400 with a concrete example URL instead of a bare 404. Nothing is quoted or charged.
+    // A literally probed OpenAPI template (/v1/signal/{coin}, /v1/signal/:coin, /v1/trust/vendors/%7Bid%7D/report, ...):
+    // - without a payment header: the normal 402 price quote for the route (same accepts/prices/payTo as a concrete value), so
+    //   discovery scanners (x402scan probes the template URL verbatim) see the paywall, plus a note to fill the placeholder;
+    // - with a payment header: the 400 below. Nothing is verified or settled for an unfilled path.
     const rawArg = m[2] !== undefined ? safeDecode(m[2]) : undefined;
     if (rawArg !== undefined && PATH_TEMPLATE_RE.test(rawArg)) {
-      const example = route === "vendor_report" ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/xrp`;
+      const isReport = route === "vendor_report";
+      const example = isReport ? `${base}/v1/trust/vendors/printmoneylab/report` : `${base}/v1/${route}/xrp`;
+      const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
+      if (!hasPayment) {
+        const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
+        return paymentRequiredResponse(config, {
+          routeKey: `${route}:template`,
+          amountDrops: config.pricesDrops[route],
+          ...(config.xrpPricing === "live" ? { liveDrops: true } : {}),
+          xrpUsd: config.xrpRate?.usd ?? config.xrpUsdFallback,
+          samplesUrl: `${base}/v1/samples`,
+          amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
+          amountEvm: config.evm?.amounts[route],
+          description: resourceDescription(route, `Lumi API ${endpoint.template}: ${endpoint.summary}`, { usd: config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route] }),
+          resourceUrl: `${base}${path}`,
+          bazaar: bazaarExtension(route, isReport ? "printmoneylab" : "xrp"),
+          service: serviceMeta(route),
+          note: `Replace ${rawArg} with ${isReport ? "a vendor id, e.g. printmoneylab (GET /v1/trust/vendors, free)" : "a coin, e.g. xrp (GET /v1/coins, free)"} and request that URL for a fresh quote before paying: ${example}. A payment sent to this placeholder URL is refused and not charged.`,
+        }, "PAYMENT-SIGNATURE header is required");
+      }
       return json(400, {
         error: "path_template_not_filled",
-        detail: `Replace ${rawArg} with a real value. ${route === "vendor_report" ? "Vendor ids: GET /v1/trust/vendors (free)." : "Coins: GET /v1/coins (free)."}`,
+        detail: `Replace ${rawArg} with a real value. ${isReport ? "Vendor ids: GET /v1/trust/vendors (free)." : "Coins: GET /v1/coins (free)."}`,
         example,
         openapi: `${base}/openapi.json`,
         note: "Not charged.",

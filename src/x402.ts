@@ -92,6 +92,8 @@ export interface Quote {
   liveDrops?: boolean;
   /** XRP/USD rate used to value XRP sales in the ledger. */
   xrpUsd?: number;
+  /** Optional top-level hint in the 402 body/header (e.g. for a literally probed path template). */
+  note?: string;
 }
 
 // ---------------------------------------------------------------- encoding
@@ -359,6 +361,7 @@ export async function buildPaymentRequired(cfg: Config, quote: Quote, error: str
     extensions: { bazaar: quote.bazaar ?? BAZAAR_GET_JSON },
     // Top level (not in `resource`, which clients echo to the facilitator): a free, zero-cost next step for hesitant buyers.
     ...(quote.samplesUrl ? { samples: quote.samplesUrl } : {}),
+    ...(quote.note ? { note: quote.note } : {}),
   } as PaymentRequired;
 }
 
@@ -394,7 +397,7 @@ export function json(status: number, body: unknown, headers: Record<string, stri
   });
 }
 
-async function paymentRequiredResponse(cfg: Config, quote: Quote, error: string): Promise<Response> {
+export async function paymentRequiredResponse(cfg: Config, quote: Quote, error: string): Promise<Response> {
   // Body uses the same canonical (sorted-key) order as the header, so naive string comparisons of the two match.
   const body = JSON.parse(canonicalJson(await buildPaymentRequired(cfg, quote, error)));
   return json(402, body, {

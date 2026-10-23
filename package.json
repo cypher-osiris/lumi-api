@@ -1,6 +1,6 @@
 {
   "name": "lumi-api",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Pay-per-call crypto market reads from Lumi Trades for AI agents, paid via x402 on the XRP Ledger (XRP, RLUSD, USDC) or with USDC on Base. A2A agent card + remote MCP.",
   "main": "src/index.ts",
   "scripts": {

@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 
-export const VERSION = "0.9.2";
+export const VERSION = "0.9.3";
 
 export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
   return {
@@ -145,7 +145,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
   const paths: Record<string, unknown> = {
     "/v1/coins": { get: { summary: "List supported coins (free)", security: [], responses: { "200": { description: "OK" } } } },
     "/v1/samples": { get: { summary: "Free truncated samples of every paid product (labelled SAMPLE)", security: [], responses: { "200": { description: "OK" } } } },
-    "/health": { get: { summary: "Health (free)", security: [], responses: { "200": { description: "OK" } } } },
+    "/health": { get: { summary: "Health (free)", responses: { "200": { description: "OK" } } } },
     ...trustPaths(),
   };
   for (const e of PAID_ENDPOINTS) {
@@ -272,13 +272,12 @@ function trustPaths(): Record<string, unknown> {
       { name: "popular", in: "query", required: false, description: "1 = most-used Bazaar listings first", schema: { type: "string", enum: ["1"] } },
       { name: "max_usd", in: "query", required: false, schema: { type: "number" } },
     ], responses: r({ "200": "OK" }) } },
-    "/v1/trust/vendors/{id}": { get: { tags: tag, security: [], summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
+    "/v1/trust/vendors/{id}": { get: { tags: tag, summary: "One vendor's observations and evidence (free)", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9-]{1,64}$" }, example: "printmoneylab" }], responses: r({ "200": "OK", "404": "Unknown vendor" }) } },
     "/v1/trust/methodology": { get: { tags: tag, security: [], summary: "Methodology, report format and right to reply (free)", responses: r({ "200": "OK" }) } },
     "/v1/reports": {
       post: {
         tags: tag,
         summary: "Report a paid call to a listed vendor",
-        security: [],
         description: "Counts only when verified: the payment must be validated on-ledger (sent by `reporter` to a listed pay-to address, within 7 days) and `signature` must sign `lumi-report:<network>:<tx_hash>` with the payer's key. Unverified submissions are stored privately and never shown. 5/min and 20/day per IP.",
         requestBody: json({
           vendor_id: { type: "string" }, network: { type: "string", enum: ["xrpl:0", "eip155:8453"], default: "xrpl:0" }, tx_hash: { type: "string" }, reporter: { type: "string" }, signature: { type: "string" },
@@ -291,7 +290,6 @@ function trustPaths(): Record<string, unknown> {
       post: {
         tags: tag,
         summary: "Private tip to Lumi",
-        security: [],
         description: "Stored privately. Never shown, published, or returned by any endpoint. 3/min and 10/day per IP.",
         requestBody: json({ text: { type: "string", minLength: 10, maxLength: 1000 }, coins: { type: "array", items: { type: "string" }, maxItems: 10 }, source_urls: { type: "array", items: { type: "string", format: "uri" }, maxItems: 5 } }, ["text"]),
         responses: r({ "202": "Received", "400": "Invalid input", "429": "Rate limited" }),
@@ -301,13 +299,11 @@ function trustPaths(): Record<string, unknown> {
       post: {
         tags: tag,
         summary: "Vendor right to reply",
-        security: [],
         description: "Sign `lumi-reply:<vendor_id>:<sha256 hex of text>` with the key of a pay-to address listed for the vendor (XRPL: master key or RegularKey, include public_key; Base: EIP-191). Verified replies are shown with the vendor entry. Or email hello@lumitrades.io.",
         requestBody: json({ vendor_id: { type: "string" }, text: { type: "string", maxLength: 1000 }, network: { type: "string", enum: ["xrpl:0", "eip155:8453"] }, address: { type: "string" }, public_key: { type: "string" }, signature: { type: "string" } }, ["vendor_id", "text", "address", "signature"]),
         responses: r({ "201": "Verified and shown", "400": "Invalid input", "404": "Unknown vendor", "422": "Signature or address not verified (not stored)", "429": "Rate limited" }),
       },
     },
-    "/v1/trust/observations": { post: { tags: tag, summary: "Owner only: record a Lumi test-buy (ledger-checked)", security: [{ bearer: [] }], responses: r({ "201": "Recorded", "200": "Duplicate tx", "401": "Unauthorized", "422": "Ledger check failed" }) } },
   };
 }
 
