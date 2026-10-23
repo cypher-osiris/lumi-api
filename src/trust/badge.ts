@@ -306,12 +306,14 @@ export function badgeSvg(s: BadgeSummary): string {
     : s.kind === "self"
     ? "Lumi does not test or score its own API."
     : "Tested by Lumi: not yet tested. Lumi has no stored test result for this service.";
+  // Unique ids so several badges inlined in one HTML document do not share a clip path / gradient.
+  const id = `lb${w}${color.slice(1)}`;
   const t = (x: number, y: number, str: string, len: number, shadow: boolean) =>
     `<text${shadow ? ' aria-hidden="true" fill="#010101" fill-opacity=".3"' : ""} x="${x * 10}" y="${y}" transform="scale(.1)" textLength="${len * 10}">${esc(str)}</text>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="20" role="img" aria-label="${esc(`${label}: ${msg}`)}"><title>${esc(title)}</title>` +
-    `<linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>` +
-    `<clipPath id="r"><rect width="${w}" height="20" rx="3" fill="#fff"/></clipPath>` +
-    `<g clip-path="url(#r)"><rect width="${lw}" height="20" fill="#3a3f47"/><rect x="${lw}" width="${mw}" height="20" fill="${color}"/><rect width="${w}" height="20" fill="url(#s)"/></g>` +
+    `<linearGradient id="${id}s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>` +
+    `<clipPath id="${id}r"><rect width="${w}" height="20" rx="3" fill="#fff"/></clipPath>` +
+    `<g clip-path="url(#${id}r)"><rect width="${lw}" height="20" fill="#3a3f47"/><rect x="${lw}" width="${mw}" height="20" fill="${color}"/><rect width="${w}" height="20" fill="url(#${id}s)"/></g>` +
     `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110">` +
     t(lw / 2, 150, label, lw - 10, true) + t(lw / 2, 140, label, lw - 10, false) +
     t(lw + mw / 2, 150, msg, mw - 10, true) + t(lw + mw / 2, 140, msg, mw - 10, false) +
