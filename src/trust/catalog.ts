@@ -223,8 +223,11 @@ export interface CatalogStats {
   quote_checked: number;
   quote_checked_24h: number;
   quote_verified: number;
+  /** Bazaar catalog resources with a Lumi test-buy (all chains in catalog_buys). */
   purchase_verified: number;
   test_buys: number;
+  /** Same two counts split by CAIP-2 network (e.g. eip155:8453 = Base USDC). */
+  by_network?: Record<string, { purchase_verified: number; test_buys: number }>;
   domains: number;
   computed_at: number;
 }
@@ -343,6 +346,7 @@ export class MemoryCatalogStore implements CatalogStore {
       quote_checked: r.filter((x) => x.probe_ts != null).length,
       quote_checked_24h: r.filter((x) => (x.probe_ts ?? 0) > now - DAY).length,
       quote_verified: r.filter((x) => x.probe_valid === 1 && (x.probe_ts ?? 0) > now - 2 * DAY).length,
+      by_network: Object.fromEntries([...new Set(this.buys.map((b) => b.network))].map((n) => { const bs = this.buys.filter((b) => b.network === n); return [n, { purchase_verified: new Set(bs.map((b) => b.resource)).size, test_buys: bs.length }]; })),
       purchase_verified: new Set(this.buys.map((b) => b.resource)).size,
       test_buys: this.buys.length,
       domains: new Set(r.map((x) => x.domain)).size,
@@ -500,7 +504,9 @@ export class D1CatalogStore implements CatalogStore {
       .bind(now - DELISTED_AFTER_MS, now - DAY, now - 2 * DAY)
       .first<any>();
     const b = await this.db.prepare("SELECT COUNT(DISTINCT resource) AS pv, COUNT(*) AS n FROM catalog_buys").first<any>();
+    const bn = (await this.db.prepare("SELECT network, COUNT(DISTINCT resource) AS pv, COUNT(*) AS n FROM catalog_buys GROUP BY network").all<any>()).results ?? [];
     return {
+      by_network: Object.fromEntries(bn.map((x: any) => [String(x.network), { purchase_verified: Number(x.pv ?? 0), test_buys: Number(x.n ?? 0) }])),
       catalogued: a?.catalogued ?? 0, active: a?.active ?? 0, quote_checked: a?.quote_checked ?? 0, quote_checked_24h: a?.quote_checked_24h ?? 0,
       quote_verified: a?.quote_verified ?? 0, purchase_verified: b?.pv ?? 0, test_buys: b?.n ?? 0, domains: a?.domains ?? 0, computed_at: now,
     };

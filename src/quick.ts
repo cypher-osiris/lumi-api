@@ -153,6 +153,12 @@ export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: J
     add("not_observed", "warn", "Not in the CDP x402 Bazaar catalog Lumi ingests (refreshed daily) or Lumi's curated list. No observation is not proof of a problem, but there is no evidence either.");
   } else if (!e && !domEntries.length) {
     add("curated_vendor", "info", `In Lumi's curated XRPL vendor list (${curated[0].name}), which Lumi probes every 30 minutes and test-buys; see ${curated[0].detail}.`);
+    const xb = (curated[0].purchases ?? [])[0];
+    const n = curated[0].xrpl_test_buys;
+    if (xb) {
+      if (xb.data_returned === false) add("xrpl_paid_no_data", "warn", `Lumi's latest XRPL test-buy (${xb.at}, tx ${xb.tx_hash}) paid ${xb.amount} ${xb.asset} and got no usable data (HTTP ${xb.http_status}); ${n?.delivered ?? 0} of ${n?.count ?? 0} XRPL test-buys in 30 days returned data.`);
+      else add("xrpl_purchase_verified", "info", `Lumi paid ${xb.amount} ${xb.asset} on XRPL on ${xb.at} and got data back (tx ${xb.tx_hash}); ${n?.delivered ?? 0} of ${n?.count ?? 0} XRPL test-buys in 30 days returned data.`);
+    } else add("no_recent_xrpl_buy", "warn", "No Lumi XRPL test-buy of this vendor in the last 30 days.");
   } else if (!e) {
     add("resource_not_listed", "warn", `This exact URL is not listed, but ${domEntries.length} listing(s) on the same domain are. Compare against those.`);
   }

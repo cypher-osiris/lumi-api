@@ -322,11 +322,12 @@ export function methodologyDoc(base: string) {
         "catalogued, not yet checked": "Listed in the Bazaar; no quote check yet.",
         "quote-verified, low confidence": "A valid x402 quote in the last 48 h. This shows the endpoint is up and asks for payment as listed; it says nothing about what a paid call returns.",
         "quote-checked: no valid x402 quote at the last check": "The last free request did not return a readable 402 quote (e.g. it answered 200, 404, timed out, or quoted a different payTo). Often a parameter issue; not a judgment of the seller.",
-        "purchase-verified": "Lumi paid for one call from its own wallet (Base USDC or XRPL); the payment is confirmed on-chain before it is stored, with HTTP status, data returned yes/no and latency.",
+        "purchase-verified": "Lumi paid for one call from its own wallet. Bazaar catalog listings are bought in USDC on Base; the curated vendor list is bought on XRPL (see the curated list below). The two are counted separately (catalog summary purchase_verified_by_chain) and never added into one XRPL figure; the payment is confirmed on-chain before it is stored, with HTTP status, data returned yes/no and latency.",
         "self, not scored": "Lumi's own endpoints.",
       },
       no_match: "{observed:false, note}: Lumi has not seen this seller. No observation is not a negative signal.",
       not_scored: "Catalog entries get labels, not scores; scores apply only to the curated XRPL list below.",
+      by_chain: "purchase-verified counts are split by chain. base_usdc: Bazaar catalog resources Lumi bought once each in USDC on Base (nearly all purchase-verified entries). xrpl: endpoints of the small curated vendor list that Lumi test-bought on XRPL in the last 30 days, with how many buys returned data. Lumi does not claim broad XRPL seller coverage; the curated XRPL list is a handful of vendors.",
     },
     score: {
       range: "0-100, over the last 30 days",

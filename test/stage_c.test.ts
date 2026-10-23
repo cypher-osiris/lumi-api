@@ -155,8 +155,12 @@ describe("Stage C: /v1/trust/check", () => {
   });
 
   it("curated vendor match links the $0.02 report as the upsell", () => {
-    const v: any = trustVerdict({ url: "https://curated.test/x" }, { catalog: { entries: [] }, curated: [{ id: "printmoneylab", name: "PrintMoneyLab", detail: `${BASE}/v1/trust/vendors/printmoneylab` }] }, null, BASE);
+    const v: any = trustVerdict({ url: "https://curated.test/x" }, { catalog: { entries: [] }, curated: [{ id: "printmoneylab", name: "PrintMoneyLab", detail: `${BASE}/v1/trust/vendors/printmoneylab`, xrpl_test_buys: { count: 3, delivered: 3 }, purchases: [{ at: "2026-10-22T10:00:00.000Z", network: "xrpl:0", amount: "0.001", asset: "RLUSD", tx_hash: "AB".repeat(32), http_status: 200, data_returned: true }] }] }, null, BASE);
     expect(v.verdict).toBe("allow");
+    expect(v.reasons.find((r: any) => r.code === "xrpl_purchase_verified").detail ?? JSON.stringify(v.reasons)).toContain("AB".repeat(32));
+    const none: any = trustVerdict({ url: "https://curated.test/x" }, { catalog: { entries: [] }, curated: [{ id: "printmoneylab", name: "PrintMoneyLab", detail: "d", xrpl_test_buys: { count: 0, delivered: 0 }, purchases: [] }] }, null, BASE);
+    expect(none.verdict).toBe("warn");
+    expect(none.reasons.map((r: any) => r.code)).toContain("no_recent_xrpl_buy");
     expect(v.next_steps.full_report.url).toMatch(/printmoneylab\/report$/);
     expect(v.reasons.map((r: any) => r.code)).not.toContain("quote_verified");
   });

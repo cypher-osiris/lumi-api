@@ -31,7 +31,41 @@ export interface CatalogDeps {
   buyers: { xrpl: string[]; evm: string[] };
   self: SelfEntry;
   isOwner(request: Request): Promise<boolean>;
+  /** Lumi's own test-buys of the curated XRPL vendor list since `since` (trust store observations). */
+  curatedBuys?: (since: number) => Promise<CuratedBuy[]>;
 }
+
+export interface CuratedBuy {
+  vendor_id: string;
+  endpoint: string;
+  ts: number;
+  network: string;
+  tx_hash: string;
+  amount: string;
+  asset: string;
+  http_status: number | null;
+  data_returned: boolean;
+}
+
+/** XRPL purchase-verified window for the curated list. */
+export const CURATED_WINDOW_MS = 30 * 86_400_000;
+
+/** Purchase-verified, split by chain: Base USDC buys of Bazaar listings vs XRPL buys of the curated list. Never merged into one number. */
+export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
+  const base = s?.by_network?.["eip155:8453"] ?? (s && !s.by_network ? { purchase_verified: s.purchase_verified, test_buys: s.test_buys } : { purchase_verified: 0, test_buys: 0 });
+  const otherBazaar = s?.by_network ? Object.entries(s.by_network).filter(([n]) => n !== "eip155:8453") : [];
+  return {
+    base_usdc: { network: "eip155:8453", asset: "USDC", source: "CDP Bazaar catalog listings Lumi bought once each", purchase_verified_resources: base.purchase_verified, test_buys: base.test_buys },
+    xrpl: {
+      network: "xrpl:0", assets: x?.assets ?? [], source: "Lumi's curated XRPL vendor list (daily test-buys)", window_days: CURATED_WINDOW_MS / 86_400_000,
+      purchase_verified_endpoints: x?.endpoints ?? 0, vendors: x?.vendors ?? 0, test_buys: x?.buys ?? 0, delivered: x?.delivered ?? 0,
+    },
+    ...(otherBazaar.length ? { other_bazaar_networks: Object.fromEntries(otherBazaar) } : {}),
+    note: "Counted separately per chain. The Bazaar catalog test-buys are Base USDC; XRPL test-buys cover only the small curated list, so XRPL coverage is much smaller.",
+  };
+}
+
+export interface XrplAgg { buys: number; delivered: number; endpoints: number; vendors: number; assets: string[]; rows: CuratedBuy[] }
 
 const STATS_EVERY_MS = 25 * 60_000; // every cron run (one aggregate query), so the summary matches the entries
 /** Read path recomputes when the stored stats are older than this (e.g. a cron run was missed). */
@@ -54,6 +88,27 @@ const BANNED = /\b(scam|fraud|rug|fake|ponzi|steal|thief|criminal)\b/i;
 
 export function createCatalog(deps: CatalogDeps) {
   const { store, now } = deps;
+
+  let xrplMemo: { at: number; agg: XrplAgg } | undefined;
+  /** XRPL test-buys of the curated list in the last 30 days (memoised 5 min). */
+  async function xrplAgg(): Promise<XrplAgg | null> {
+    if (!deps.curatedBuys) return null;
+    const t = now();
+    if (xrplMemo && t - xrplMemo.at < 300_000) return xrplMemo.agg;
+    try {
+      const rows = (await deps.curatedBuys(t - CURATED_WINDOW_MS)).filter((r) => r.network.startsWith("xrpl:") && r.ts >= t - CURATED_WINDOW_MS).sort((a, b) => b.ts - a.ts);
+      const agg: XrplAgg = {
+        buys: rows.length, delivered: rows.filter((r) => r.data_returned).length,
+        endpoints: new Set(rows.map((r) => r.endpoint)).size, vendors: new Set(rows.map((r) => r.vendor_id)).size,
+        assets: [...new Set(rows.map((r) => r.asset))].sort(), rows,
+      };
+      xrplMemo = { at: t, agg };
+      return agg;
+    } catch (e) {
+      deps.log({ event: "curated_buys_error", error: String(e) });
+      return xrplMemo?.agg ?? null;
+    }
+  }
 
   /** Jobs are spaced `spacing` seconds apart (queue delay) so upstream APIs and vendors see a slow, steady rate. */
   async function send(jobs: CatalogJob[], spacing = 0) {
@@ -198,14 +253,36 @@ export function createCatalog(deps: CatalogDeps) {
     return false;
   }
 
-  function curatedMatches(q: LookupQuery, base: string) {
+  /** Curated XRPL vendors matching the query, with their own XRPL purchase rows (counted apart from the Base catalog). */
+  async function curatedMatches(q: LookupQuery, base: string, free: boolean) {
     const d = q.domain ? normalizeDomain(q.domain) : q.url && normalizeUrl(q.url) ? normalizeDomain(new URL(normalizeUrl(q.url)!).hostname) : null;
     const pt = q.payTo?.trim().toLowerCase();
-    return VENDORS.filter((v) => {
+    const vs = VENDORS.filter((v) => {
       const hosts = [v.homepage, ...v.endpoints.map((e) => e.url)].map((u) => { try { return normalizeDomain(new URL(u).hostname); } catch { return ""; } });
       const pays = [...v.pay_to.xrpl, ...(v.pay_to.evm ?? [])].map((x) => x.toLowerCase());
       return (d && hosts.some((h) => h === d || h.endsWith("." + d))) || (pt && pays.includes(pt));
-    }).map((v) => ({ id: v.id, name: v.name, homepage: v.homepage, tier: "purchase-verified (curated XRPL list, scored)", detail: `${base}/v1/trust/vendors/${v.id}` }));
+    });
+    if (!vs.length) return [];
+    const agg = await xrplAgg();
+    return vs.map((v) => {
+      const buys = (agg?.rows ?? []).filter((r) => r.vendor_id === v.id);
+      const last = buys[0];
+      return {
+        id: v.id, name: v.name, homepage: v.homepage, network: "xrpl:0",
+        tier: buys.length ? "purchase-verified (XRPL, curated list)" : "curated XRPL list: no Lumi test-buy in the last 30 days",
+        xrpl_test_buys: {
+          window_days: CURATED_WINDOW_MS / 86_400_000, count: buys.length, delivered: buys.filter((b) => b.data_returned).length,
+          ...(last ? { last_at: iso(last.ts), last_data_returned: last.data_returned } : {}),
+        },
+        ...(free ? {} : {
+          purchases: buys.slice(0, 10).map((b) => ({
+            at: iso(b.ts), network: b.network, endpoint: b.endpoint, amount: b.amount, asset: b.asset, tx_hash: b.tx_hash, explorer: explorerFor(b.network, b.tx_hash),
+            http_status: b.http_status, data_returned: b.data_returned,
+          })),
+        }),
+        detail: `${base}/v1/trust/vendors/${v.id}`,
+      };
+    });
   }
 
   async function lookupDoc(q: LookupQuery, base: string, opts: { free?: boolean; limit?: number } = {}) {
@@ -219,7 +296,7 @@ export function createCatalog(deps: CatalogDeps) {
         self: { name: deps.self.name, url: deps.self.url, label: LABELS.self, note: "This is Lumi's own API. Lumi does not score or quote-check itself." },
       };
     }
-    const curated = curatedMatches(q, base);
+    const curated = await curatedMatches(q, base, free);
     const { total, rows } = await store.lookup(q, limit);
     const buys = await store.buysFor(rows.map((r) => r.resource));
     const doms = free ? new Map<string, any>() : new Map((await store.domainInfo([...new Set(rows.map((r) => r.reg_domain).filter((x): x is string => !!x))])).map((x) => [x.domain, x]));
@@ -237,7 +314,7 @@ export function createCatalog(deps: CatalogDeps) {
     const st = await stats();
     return {
       kind: "trust_lookup", query, observed: true, generated_at: iso(t),
-      ...(st ? { coverage: coverageLine(st) } : {}),
+      ...(st ? { coverage: coverageLine(st, await xrplAgg()) } : {}),
       labels: LABEL_NOTES,
       curated,
       catalog: { total_matches: total, shown: entries.length, ordering: "Bazaar 30-day calls, most used first", tiers_shown: tiers, entries },
@@ -257,14 +334,16 @@ export function createCatalog(deps: CatalogDeps) {
 
   async function summary(base: string) {
     const s = await stats();
+    const x = await xrplAgg();
     const ing = await store.getMeta("ingest_last");
     return {
       source: "CDP x402 Bazaar discovery (free); x402scan's resource API is paid, so it is not ingested",
       lookup: `${base}/v1/trust/vendors?url=<resource url> | ?domain=<host> | ?payTo=<address>`,
       browse: `${base}/v1/trust/catalog (free teaser: the ${FREE_BROWSE_MAX} most-used listings, ${FREE_BROWSE_PAGE} per page)`,
       labels: LABEL_NOTES,
-      coverage: s ? coverageLine(s) : null,
-      counts: s ? { catalogued: s.catalogued, active: s.active, quote_checked: s.quote_checked, quote_checked_24h: s.quote_checked_24h, quote_verified: s.quote_verified, purchase_verified: s.purchase_verified, test_buys: s.test_buys, domains: s.domains, as_of: iso(s.computed_at) } : null,
+      coverage: s ? coverageLine(s, x) : null,
+      counts: s ? { catalogued: s.catalogued, active: s.active, quote_checked: s.quote_checked, quote_checked_24h: s.quote_checked_24h, quote_verified: s.quote_verified, purchase_verified: s.purchase_verified, test_buys: s.test_buys, purchase_verified_note: "Bazaar catalog resources only (Base USDC). XRPL test-buys of the curated list are in purchase_verified_by_chain.xrpl, counted separately.", domains: s.domains, as_of: iso(s.computed_at) } : null,
+      purchase_verified_by_chain: chainSplit(s, x),
       last_ingest: ing ? (() => { const j = JSON.parse(ing); return { at: iso(j.at), listed_total: j.total }; })() : null,
       checks: "free, unpaid 402-quote checks rotate through the catalog in slices every 30 minutes (valid 402, price vs listing, payTo vs listing, latency); counts.quote_checked_24h shows how many resources were actually checked in the last 24 h. Registrable-domain age via RDAP monthly",
     };
@@ -345,6 +424,11 @@ export function createCatalog(deps: CatalogDeps) {
     };
     const ins = await store.addBuy(buy);
     deps.log({ event: "catalog_buy", domain: row.domain, inserted: ins === "inserted" });
+    if (ins === "inserted") {
+      // Keep the public purchase-verified counts in step with the entries.
+      try { await store.setMeta("stats", JSON.stringify(await store.computeStats(now()))); } catch { /* next cron run */ }
+      topMemo = undefined;
+    }
     return json(ins === "inserted" ? 201 : 200, { recorded: ins === "inserted", duplicate: ins === "duplicate", tx_hash: tx, explorer: explorerFor(network, tx) });
   }
 
@@ -366,7 +450,7 @@ export function createCatalog(deps: CatalogDeps) {
     return null;
   }
 
-  return { cron, consume, lookupDoc, summary, handle, startIngest, stats };
+  return { cron, consume, lookupDoc, summary, handle, startIngest, stats, xrplAgg };
 }
 
 export type Catalog = ReturnType<typeof createCatalog>;
@@ -374,7 +458,9 @@ export type { D1Like };
 
 const fmt = (n: number) => Number(n ?? 0).toLocaleString("en-US");
 /** Honest one-line coverage: what is indexed vs what Lumi actually checked or bought. */
-export function coverageLine(s: { catalogued: number; domains: number; quote_verified: number; purchase_verified: number; quote_checked_24h?: number }): string {
-  return `${fmt(s.catalogued)} resources across ${fmt(s.domains)} domains indexed, ${fmt(s.quote_verified)} quote-verified, ${fmt(s.purchase_verified)} purchase-verified` +
-    (s.quote_checked_24h != null ? ` (${fmt(s.quote_checked_24h)} quote-checked in the last 24 h)` : "");
+export function coverageLine(s: { catalogued: number; domains: number; quote_verified: number; purchase_verified: number; quote_checked_24h?: number; by_network?: CatalogStats["by_network"] }, x?: XrplAgg | null): string {
+  const base = s.by_network?.["eip155:8453"]?.purchase_verified ?? s.purchase_verified;
+  return `${fmt(s.catalogued)} resources across ${fmt(s.domains)} domains indexed, ${fmt(s.quote_verified)} quote-verified, ${fmt(base)} purchase-verified on Base (USDC)` +
+    (s.quote_checked_24h != null ? ` (${fmt(s.quote_checked_24h)} quote-checked in the last 24 h)` : "") +
+    (x ? `; separately, ${fmt(x.endpoints)} XRPL endpoints from ${fmt(x.vendors)} curated vendors purchase-verified (${fmt(x.buys)} XRPL test-buys in 30 days, ${fmt(x.delivered)} returned data)` : "");
 }

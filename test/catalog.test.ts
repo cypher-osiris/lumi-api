@@ -270,3 +270,24 @@ describe("free catalog teaser (v1.0.1)", () => {
     expect(burst[30]).toBe(429);
   });
 });
+
+describe("purchase-verified split by chain", () => {
+  it("counts Base catalog buys and curated XRPL buys separately; XRPL rows answer-only when free", async () => {
+    const { app } = mkApp();
+    await app.fetch(new Request(BASE + "/v1/trust/catalog/ingest?now=1", { method: "POST", headers: owner }));
+    await app.fetch(new Request(BASE + "/v1/trust/catalog/observations", { method: "POST", headers: owner, body: JSON.stringify({ resource: "https://api.seller0.com/v1/thing/2", network: "eip155:8453", tx_hash: "0x" + "c".repeat(64), data_returned: true, http_status: 200, summary: "ok", facilitator: "cdp" }) }));
+    const cat = await get(app, "/v1/trust/catalog?page=1");
+    const split = cat.body.summary.purchase_verified_by_chain;
+    expect(split.base_usdc).toMatchObject({ network: "eip155:8453", purchase_verified_resources: 1, test_buys: 1 });
+    expect(split.xrpl.network).toBe("xrpl:0");
+    expect(split.xrpl.test_buys).toBeGreaterThan(0);
+    expect(split.xrpl.purchase_verified_endpoints).toBeGreaterThan(0);
+    expect(cat.body.summary.coverage).toMatch(/1 purchase-verified on Base \(USDC\).*separately, \d+ XRPL endpoints/);
+    const look = await get(app, "/v1/trust/vendors?domain=asksurf.ai");
+    const cur = look.body.curated[0];
+    expect(cur).toMatchObject({ id: "asksurf", network: "xrpl:0", tier: "purchase-verified (XRPL, curated list)" });
+    expect(cur.xrpl_test_buys.count).toBeGreaterThan(0);
+    expect(cur.purchases).toBeUndefined();
+    expect(JSON.stringify(look.body)).not.toMatch(/"tx_hash"|"explorer"/);
+  });
+});

@@ -306,7 +306,7 @@ export const BAZAAR_ROUTES: Record<PaidRoute, RouteMeta> = {
   trust_check: {
     description:
       "Use this before your agent pays an unfamiliar x402 URL: allow / warn / block with reasons, from Lumi's daily CDP Bazaar " +
-      "index, free quote checks and paid test-buys. Pass url, and optionally the payTo and amount you were quoted to catch " +
+      "index, free quote checks and Lumi's own test-buys (Base USDC for Bazaar listings; XRPL only for a small curated vendor list, counted separately). Pass url, and optionally the payTo and amount you were quoted to catch " +
       "address or price mismatches. Observations, not a guarantee. Not charged on bad input. JSON.",
     query: {
       url: { type: "string", description: "The x402 resource URL you are about to pay (required)" },

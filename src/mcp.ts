@@ -66,7 +66,7 @@ export const VENDOR_REPORT_TOOL_DESCRIPTION =
   "Automated observations, not a rating. Paid ($0.02: ~0.015 XRP / 0.02 RLUSD / 0.02 USDC). The free summary is lumi_vendor_scores.";
 
 export const TRUST_CHECK_TOOL_DESCRIPTION =
-  "Should I pay this x402 URL? allow / warn / block with coded reasons, from Lumi's daily CDP Bazaar index, free 402-quote checks and paid test-buys. " +
+  "Should I pay this x402 URL? allow / warn / block with coded reasons, from Lumi's daily CDP Bazaar index, free 402-quote checks and Lumi's own test-buys (Base USDC for Bazaar listings; XRPL only for a small curated vendor list, counted separately). " +
   "Pass url, and optionally the payTo and USD amount you were quoted, to catch address or price mismatches. Links the free lookup and, for curated vendors, the $0.02 full report. " +
   "Observations, not a guarantee. Paid: $0.004 per call (USDC/RLUSD, or the XRP equivalent).";
 
@@ -79,7 +79,7 @@ export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "Refreshed daily; never sold stale. Paid: $0.25 per call (USDC/RLUSD, or the XRP equivalent). Not financial advice.";
 
 export const VENDOR_LOOKUP_DESCRIPTION =
-  "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus small paid test-buys confirmed on-chain, labelled 'purchase-verified'. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's full evidence.";
+  "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus Lumi's own test-buys confirmed on-chain, labelled 'purchase-verified' and counted per chain (Base USDC buys of Bazaar listings; XRPL buys of a small curated list, separately). Answer-only: tx evidence is in the paid trust check. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's summary (tx evidence is in the paid vendor report).";
 
 /** Same names and descriptions as mcp/src/index.js (PAID_TOOLS). */
 export const PAID_TOOLS: PaidTool[] = [

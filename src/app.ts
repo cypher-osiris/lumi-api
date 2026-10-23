@@ -204,8 +204,10 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     memo: { get: () => catalogStore.getMeta("xrp_usd_rate"), set: (v) => catalogStore.setMeta("xrp_usd_rate", v) },
     extraSources: [{ name: "lumitrades", url: `${config.dataBaseUrl}/prices.json`, pick: (j: any) => j?.assets?.ripple?.price ?? j?.ripple?.price ?? j?.XRP?.price }],
   });
+  const trustStore: TrustStore = opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS));
   const catalog = createCatalog({
     store: catalogStore,
+    curatedBuys: async (since) => (await Promise.all(VENDORS.map((v) => trustStore.observations(v.id, since)))).flat(),
     fetch: doFetch,
     now,
     log: (e) => deps.log?.(e),
@@ -225,7 +227,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     },
   });
   const trust = createTrust({
-    store: opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS)),
+    store: trustStore,
     fetch: doFetch,
     now,
     ownerKey: env.OWNER_MCP_KEY,
