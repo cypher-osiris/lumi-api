@@ -63,7 +63,7 @@ export const PAID_TOOLS = [
       "and other banks, central banks and tokenization firms did in the last days, and how each move maps to XRP, XLM, XDC, QNT, AXL and HBAR (plus RLUSD/USDC). " +
       "Every item is dated and sourced, with why it matters, impact and confidence, and a link_type that separates confirmed links from Lumi's " +
       "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
-      "what to watch next. Refreshed daily; never sold stale. Paid: $0.25 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger); " +
+      "what to watch next. Refreshed daily; never sold stale. Paid: $0.10 per call (USDC on Base; or RLUSD, USDC or XRP at the live rate on the XRP Ledger); " +
       "allowed by the default caps (LUMI_MAX_USD_PER_CALL 0.30, LUMI_MAX_XRP_PER_CALL 0.25). Not financial advice.",
   },
   {

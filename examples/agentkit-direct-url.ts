@@ -25,7 +25,7 @@ process.on("unhandledRejection", (e) => {
 });
 
 const url = `https://api.lumitrades.io${process.argv[2] ?? "/v1/signal/XRP"}`;
-const MAX_USDC_ATOMIC = 50_000n; // refuse anything above $0.05 (the Institutional Brief is $0.25: raise this to buy it)
+const MAX_USDC_ATOMIC = 50_000n; // refuse anything above $0.05 (the Institutional Brief is $0.10: raise this to buy it)
 
 const walletProvider = new ViemWalletProvider(
   createWalletClient({

@@ -37,8 +37,8 @@ function setup(opts: { override?: Record<string, unknown>; now?: number; fac?: F
   return { get, mcp, a2a, fac };
 }
 
-describe("/v1/institutional: 402 terms ($0.25)", () => {
-  it("quotes 0.19 XRP, 0.25 RLUSD, 0.25 USDC on XRPL and 0.25 USDC on Base", async () => {
+describe("/v1/institutional: 402 terms ($0.10)", () => {
+  it("quotes 0.077 XRP, 0.10 RLUSD, 0.10 USDC on XRPL and 0.10 USDC on Base", async () => {
     const { get, fac } = setup();
     const r = await get("/v1/institutional");
     expect(r.status).toBe(402);
@@ -46,7 +46,7 @@ describe("/v1/institutional: 402 terms ($0.25)", () => {
     expect(decodeB64Json(r.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
     expect(body.resource.url).toBe(`${BASE}/v1/institutional`);
     expect(body.accepts.map((a: any) => [a.network, a.extra?.symbol ?? a.asset, a.amount])).toEqual([
-      ["eip155:84532", "USDC", "250000"], ["xrpl:1", "XRP", "190000"], ["xrpl:1", "RLUSD", "0.25"], ["xrpl:1", "USDC", "0.25"],
+      ["eip155:84532", "USDC", "100000"], ["xrpl:1", "XRP", "77000"], ["xrpl:1", "RLUSD", "0.1"], ["xrpl:1", "USDC", "0.1"],
     ]);
     expect(new Set(body.accepts.map((a: any) => a.extra.invoiceId)).size).toBe(1);
     expect(fac.calls).toHaveLength(0);
@@ -56,18 +56,18 @@ describe("/v1/institutional: 402 terms ($0.25)", () => {
     const { get } = setup();
     const idx = await (await get("/")).json();
     const row = idx.paid_endpoints.find((p: any) => p.path === "/v1/institutional");
-    expect(row).toMatchObject({ price_xrp: "0.19", price_drops: "190000", price_rlusd: "0.25", price_usdc: "0.25", price_base_usdc: "0.25" });
+    expect(row).toMatchObject({ price_xrp: "0.077", price_drops: "77000", price_rlusd: "0.1", price_usdc: "0.1", price_base_usdc: "0.1" });
     expect(row.summary).toMatch(/^Use this when you need .*central banks.*regulators/s);
     expect(idx.mcp.tools.paid).toContain("lumi_institutional_brief");
     const oa = await (await get("/openapi.json")).json();
     const op = oa.paths["/v1/institutional"].get;
-    expect(op["x-payment-info"].price).toEqual({ mode: "fixed", currency: "USD", amount: "0.250000" });
+    expect(op["x-payment-info"].price).toEqual({ mode: "fixed", currency: "USD", amount: "0.100000" });
     expect(op.parameters[0]).toMatchObject({ name: "format" });
     const wk = await (await get("/.well-known/x402")).json();
     expect(wk.resources.map((r: any) => r.url)).toContain(`${BASE}/v1/institutional`);
     const skill = await (await get("/skill.md")).text();
     expect(skill).toContain("GET /v1/institutional");
-    expect(skill).toContain("0.19 XRP");
+    expect(skill).toContain("0.077 XRP");
   });
 });
 
@@ -103,7 +103,7 @@ describe("/v1/institutional: payload", () => {
     expect(b.markdown).toContain("indirect alignment (Lumi analysis)");
     expect(b.markdown).toContain("Not financial advice");
     expect(b.disclaimer).toMatch(/Not financial advice/);
-    expect(b.payment).toMatchObject({ asset: "RLUSD", amount: "0.25" });
+    expect(b.payment).toMatchObject({ asset: "RLUSD", amount: "0.1" });
   });
 
   it("?format=md returns text/markdown with the receipt", async () => {
@@ -112,7 +112,7 @@ describe("/v1/institutional: payload", () => {
     expect(r.headers.get("PAYMENT-RESPONSE")).toBeTruthy();
     const t = await r.text();
     expect(t).toContain("## By token");
-    expect(t).toContain("_Paid: 0.25 RLUSD");
+    expect(t).toContain("_Paid: 0.1 RLUSD");
   });
 
   it("scrubs private names and personal-holdings text from the published file", async () => {
@@ -199,7 +199,7 @@ describe("institutional brief over MCP and A2A", () => {
     const { mcp, fac } = setup();
     const pub = await mcp("lumi_institutional_brief");
     expect(pub.isError).toBe(true);
-    expect(pub.content[0].text).toMatch(/0\.25 USDC on Base Sepolia, or 0\.19 XRP or 0\.25 RLUSD or 0\.25 USDC on the XRP Ledger/);
+    expect(pub.content[0].text).toMatch(/0\.1 USDC on Base Sepolia, or 0\.077 XRP or 0\.1 RLUSD or 0\.1 USDC on the XRP Ledger/);
     expect(pub.content[0].text).toContain(`${BASE}/v1/institutional`);
     const own = await mcp("lumi_institutional_brief", {}, { Authorization: `Bearer ${KEY}` });
     expect(own.isError).toBeUndefined();
@@ -214,7 +214,7 @@ describe("institutional brief over MCP and A2A", () => {
     const { a2a } = setup();
     const p = await a2a([{ text: "what are the BIS and IMF doing that matters for XRP?" }]);
     expect(p[1].data.url).toBe(`${BASE}/v1/institutional`);
-    expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.25", "0.19", "0.25", "0.25"]);
+    expect(p[1].data.options.map((o: any) => o.amount)).toEqual(["0.1", "0.077", "0.1", "0.1"]);
     expect((await a2a([{ text: "today's crypto market brief" }]))[1].data.url).toBe(`${BASE}/v1/brief`);
     expect((await a2a([{ data: { skill: "institutional" } }]))[1].data.url).toBe(`${BASE}/v1/institutional`);
   });
@@ -244,7 +244,7 @@ describe("?format validation", () => {
 describe("Bazaar resource descriptions", () => {
   it("use the v2 listing text verbatim, with no price in the text (prices live in accepts[]), never cut and never instructions to agents", async () => {
     const { get } = setup();
-    for (const [p, route, usd] of [["/v1/signal/xrp", "signal", "0.01"], ["/v1/institutional", "institutional", "0.25"], ["/v1/trust/check?url=https://a.example/x", "trust_check", ""]] as const) {
+    for (const [p, route, usd] of [["/v1/signal/xrp", "signal", "0.01"], ["/v1/institutional", "institutional", "0.1"], ["/v1/trust/check?url=https://a.example/x", "trust_check", ""]] as const) {
       const d = (await (await get(p)).json()).resource.description as string;
       expect(d.length, p).toBeLessThanOrEqual(500);
       expect(d, p).toBe(BAZAAR_ROUTES[route].description);

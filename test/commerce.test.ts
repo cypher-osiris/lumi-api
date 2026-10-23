@@ -49,7 +49,7 @@ async function pay(s: ReturnType<typeof setup>, path: string) {
 
 describe("seller monitoring", () => {
   it("enrols with an XRPL payTo proof, rejects reused nonces and endpoints above the cap", async () => {
-    const s = setup();
+    const s = setup({ PRICE_INSTITUTIONAL_XRP: "0.19", PRICE_INSTITUTIONAL_RLUSD: "0.25", PRICE_INSTITUTIONAL_USDC: "0.25" }); // above the $0.10 test-buy cap
     const { r, body, proof } = await enroll(s, [{ url: `${BASE}/v1/lite/XRP` }, { url: `${BASE}/v1/institutional` }]);
     expect(r.status).toBe(201);
     expect(body.enrollment_id).toMatch(/^men_[a-f0-9]{24}$/);

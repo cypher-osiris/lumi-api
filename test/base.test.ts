@@ -299,14 +299,15 @@ describe("v1.0 docs: free trial documented everywhere", () => {
     const { get } = setup();
     const index = await (await get("/")).json();
     expect(index.free_trial).toMatchObject({ free_calls_per_wallet: 3, header: "SIGN-IN-WITH-X", extension_key: "sign-in-with-x" });
-    expect(index.free_trial.not_eligible).toEqual(["institutional"]);
+    expect(index.free_trial.not_eligible ?? []).toEqual([]);
+    expect(index.free_trial.eligible_routes).toContain("institutional");
     expect(index.free_trial.eligible_routes).toContain("sentiment");
     const wk = await (await get("/.well-known/x402")).json();
     expect(wk.free_trial.free_calls_per_wallet).toBe(3);
     const oa = await (await get("/openapi.json")).json();
     expect(oa["x-free-trial"].header).toBe("SIGN-IN-WITH-X");
     expect(oa.paths["/v1/sentiment"].get["x-free-trial"].eligible).toBe(true);
-    expect(oa.paths["/v1/institutional"].get["x-free-trial"].eligible).toBe(false);
+    expect(oa.paths["/v1/institutional"].get["x-free-trial"].eligible).toBe(true);
     const skill = await (await get("/skill.md")).text();
     expect(skill).toContain("## Free trial: 3 calls per new wallet");
     expect(skill).toContain("wrapFetchWithSIWx");

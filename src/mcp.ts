@@ -77,7 +77,7 @@ export const INSTITUTIONAL_TOOL_DESCRIPTION =
   "Every item is dated and sourced, with why it matters, impact and confidence, and a link_type that separates confirmed links from Lumi's " +
   "indirect-alignment analysis (institution goals vs token mission, both sides quoted). Includes a per-token map, connections, no-news notes and " +
   "what to watch next. Use it when you need the institutional/regulatory picture behind these tokens without reading dozens of releases. " +
-  "Refreshed daily; never sold stale. Paid: $0.25 per call (USDC/RLUSD, or the XRP equivalent). Not financial advice.";
+  "Refreshed daily; never sold stale. Paid: $0.10 per call (USDC/RLUSD, or the XRP equivalent). Not financial advice.";
 
 export const VENDOR_LOOKUP_DESCRIPTION =
   "Free. Check an x402 seller before you pay it: pass url (the resource you are about to buy), domain, or payTo (the address in its 402 quote, case-insensitive). Lumi ingests the full CDP x402 Bazaar catalog daily and runs free, unpaid 402-quote checks of listings on a rotating schedule (valid quote, price and payTo vs the listing, latency, domain age; live coverage counts in the response), labelled 'quote-verified, low confidence', plus Lumi's own test-buys confirmed on-chain, labelled 'purchase-verified' and counted per chain (Base USDC buys of Bazaar listings; XRPL buys of a small curated list, separately). Answer-only: tx evidence is in the paid trust check. Observations, not ratings; no match is not a negative signal. With no arguments: the curated XRPL vendor scores and catalog counts; vendor_id gives one curated vendor's summary (tx evidence is in the paid vendor report).";
@@ -249,7 +249,7 @@ const INSTRUCTIONS =
   "Lumi Trades (lumitrades.io) crypto market reads: daily brief, live signals for 50 coins (lumi_signal, cheap lumi_lite, or all at once with lumi_scan), support/resistance levels, paper-trade slate, " +
   "BTC/macro backdrop, yen carry-trade watch, sentiment, funding rates, Fear & Greed, events and the next 48h, lumi_trust_check (should I pay this x402 URL? allow/warn/block), and a daily policy brief " +
   "(BIS, IMF, US regulators, major banks and tokenization firms mapped to XRP, XLM, XDC, QNT, AXL, HBAR). lumi_catalog, lumi_coins, lumi_samples (truncated previews of every paid product), lumi_quote, lumi_vendor_scores (Lumi's observations of other x402 vendors), lumi_seller_monitoring (seller monitoring plans: Monitor $9/30d, Monitor Plus $29/30d, Audit $99) and lumi_trust_feed (licensed data feed: free 1,000 lookups/month, Feed $99/30d, Feed Pro $199/30d) are free; lumi_vendor_report is the paid full history for one vendor ($0.02). " +
-  "Paid tools cost $0.003 to $0.02 per call (the daily policy brief $0.25) via x402; paid in XRP, RLUSD or USDC on the XRP Ledger or USDC on Base; " + TRIAL_SHORT + "; without access they return the price and how to pay. " +
+  "Paid tools cost $0.003 to $0.10 per call (the daily policy brief is $0.10, everything else $0.02 or less) via x402; paid in XRP, RLUSD or USDC on the XRP Ledger or USDC on Base or Stellar; " + TRIAL_SHORT + "; without access they return the price and how to pay. " +
   PAID_TOOLS_NOTE + " Analytics and education only, not financial advice. Cite 'Lumi Trades (lumitrades.io)'.";
 
 // ---------------------------------------------------------------- auth

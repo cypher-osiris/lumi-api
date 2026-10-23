@@ -18,7 +18,7 @@
  *   account reserve is already locked), checked on-chain;
  * - caps, enforced in one atomic INSERT over one shared ledger for both chains: 3 trial calls per wallet ever, 3 per (daily-rotating keyed) IP hash per day, and a
  *   global daily cap. Raw IPs are never stored.
- * - the daily policy brief (/v1/institutional) and anything above $0.03 are not eligible.
+ * - every paid route is eligible (the daily policy brief /v1/institutional, $0.10, since Oct 23 2026); anything above $0.10 is not.
  */
 import type { D1Like, PaidRoute } from "./config";
 import { recoverEvmSigner, verifyXrplSignature, xrplAddressOf, XRPL_ADDR_RE } from "./trust/verify";
@@ -35,12 +35,12 @@ export type TrialChain = { chainId: string; type: string };
 export function trialChains(evmNetwork: string | undefined, xrplNetwork: string): TrialChain[] {
   return [...(evmNetwork ? [{ chainId: evmNetwork, type: "eip191" }] : []), { chainId: xrplNetwork, type: XRPL_SIWX_TYPE }];
 }
-export const TRIAL_LIMITS = { perWallet: 3, perIpDay: 3, globalDay: 300, challengeTtlSec: 300, maxUsd: 0.03, minUsdcAtomic: 10_000n };
-export const TRIAL_EXCLUDED: PaidRoute[] = ["institutional"];
+export const TRIAL_LIMITS = { perWallet: 3, perIpDay: 3, globalDay: 300, challengeTtlSec: 300, maxUsd: 0.10, minUsdcAtomic: 10_000n };
+export const TRIAL_EXCLUDED: PaidRoute[] = [];
 export const TRIAL_STATEMENT = "Lumi API free trial: sign to prove you control this wallet. This is not a payment and moves no funds.";
 
 export const TRIAL_SUMMARY =
-  `Free trial: ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except /v1/institutional. ` +
+  `Free trial: ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint. ` +
   `Send the request with header X-Lumi-Trial: 1 and the 402 also carries extensions["sign-in-with-x"] (x402 SIWX, CAIP-122): sign it with a ` +
   `Base wallet holding at least 0.01 USDC (EIP-4361, @x402/extensions wrapFetchWithSIWx does this) or an activated XRP Ledger account ` +
   `(type "xrpl", ripple-keypairs signature plus publicKey) and retry with the SIGN-IN-WITH-X header. ` +

@@ -694,7 +694,7 @@ lumitrades.io publishes market data, signals and analysis four times a day (6 AM
 
 ## Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet (Base or XRPL)
 
-Every paid endpoint except \`/v1/institutional\` can be tried for free, ${TRIAL_LIMITS.perWallet} calls per wallet, using the
+Every paid endpoint (including \`/v1/institutional\`) can be tried for free, ${TRIAL_LIMITS.perWallet} calls per wallet, using the
 x402 **sign-in-with-x** extension (CAIP-122). Nothing is charged and no funds move. It works with a Base wallet or an XRP Ledger
 wallet; it is one trial per wallet (one shared ledger and the same caps for both chains, not 3 per chain).
 
@@ -1064,7 +1064,7 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
 <strong>Daily market brief:</strong> <a href="${esc(base)}/v1/brief">GET /v1/brief</a> ($${usdPrice(cfg, "brief")}, returns HTTP 402 with the price until paid).<br>
-<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with ${cfg.evm ? "a Base wallet holding at least 0.01 USDC or " : ""}an activated XRP Ledger account (no payment, nothing moves; one trial per wallet). <a href="#trial">How</a>.<br>
+<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint, including <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with ${cfg.evm ? "a Base wallet holding at least 0.01 USDC or " : ""}an activated XRP Ledger account (no payment, nothing moves; one trial per wallet). <a href="#trial">How</a>.<br>
 <strong>New:</strong> <a href="${esc(base)}/v1/scan">/v1/scan</a> (all ${coins.length} coins in one call, $${usdPrice(cfg, "scan")}) &middot;
 <a href="${esc(base)}/v1/trust/check?url=https%3A%2F%2Fapi.example.com%2Fv1%2Fdata">/v1/trust/check</a> (should I pay this x402 URL? allow / warn / block, $${usdPrice(cfg, "trust_check")}) &middot;
 <a href="${esc(base)}/v1/lite/${EXAMPLE_COIN}">/v1/lite/{coin}</a> &middot; <a href="${esc(base)}/v1/funding">/v1/funding</a> &middot; <a href="${esc(base)}/v1/fear-greed">/v1/fear-greed</a> &middot; <a href="${esc(base)}/v1/events/next48h">/v1/events/next48h</a></p></div>
@@ -1089,7 +1089,7 @@ ${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
 <h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
 <p class="note">Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}
 <h2 id="trial">Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet (Base or XRPL)</h2>${cfg.evm ? pre(trialSnippet) : ""}${pre(xrplTrialSnippet(base, cfg.network))}
-<p class="note">Uses the x402 <code>sign-in-with-x</code> extension (CAIP-122). ${cfg.evm ? `Base: EIP-4361 signed by an EOA holding at least 0.01 USDC on ${esc(cfg.evm.networkName)}. ` : ""}XRP Ledger: type <code>xrpl</code>, signed with the account's master key or current regular key (ripple-keypairs) plus <code>publicKey</code>; the account must be activated. Nothing is charged or moved. Limits: ${TRIAL_LIMITS.perWallet} per wallet (one trial per wallet, not per chain), ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges, not for <code>/v1/institutional</code>. The response carries <code>access.mode: "trial"</code>, <code>charged: false</code>. After that, pay per call as usual.</p>
+<p class="note">Uses the x402 <code>sign-in-with-x</code> extension (CAIP-122). ${cfg.evm ? `Base: EIP-4361 signed by an EOA holding at least 0.01 USDC on ${esc(cfg.evm.networkName)}. ` : ""}XRP Ledger: type <code>xrpl</code>, signed with the account's master key or current regular key (ripple-keypairs) plus <code>publicKey</code>; the account must be activated. Nothing is charged or moved. Limits: ${TRIAL_LIMITS.perWallet} per wallet (one trial per wallet, not per chain), ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges. The response carries <code>access.mode: "trial"</code>, <code>charged: false</code>. After that, pay per call as usual.</p>
 <h2>Quickstart: XRP Ledger (XRP, RLUSD, USDC)</h2>${pre(xrplSnippet)}
 <h2>MCP (Claude, Cursor, any MCP client)</h2>${pre(mcpSnippet)}
 <p class="note">The remote server lists prices and payment terms; the npm package <code>lumi-trades-mcp</code> pays from your own wallet within per-call caps.</p>

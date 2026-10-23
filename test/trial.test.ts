@@ -50,7 +50,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(siweMessage(p as any)).toBe(lib);
   });
 
-  it("plain 402s are standard x402 quotes (no SIWX extension, trial hint only); X-Lumi-Trial: 1 adds the challenge; institutional never", async () => {
+  it("plain 402s are standard x402 quotes (no SIWX extension, trial hint only); X-Lumi-Trial: 1 adds the challenge; institutional too (since Oct 23 2026)", async () => {
     const { appFetch } = setup();
     const plain = await appFetch(BASE + "/v1/sentiment");
     expect(plain.status).toBe(402);
@@ -70,8 +70,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(body.extensions.bazaar).toBeTruthy();
     expect(body.accepts).toEqual(expect.arrayContaining([expect.objectContaining({ network: "eip155:84532" })]));
     const inst = await (await appFetch(BASE + "/v1/institutional", TRIAL)).json();
-    expect(inst.extensions["sign-in-with-x"]).toBeUndefined();
-    expect(inst.trial).toBeUndefined();
+    expect(inst.extensions["sign-in-with-x"].info.resources).toEqual([BASE + "/v1/institutional"]);
   });
 
   it("official wrapFetchWithSIWx client gets 3 free calls per wallet, never charged, then the normal 402", async () => {

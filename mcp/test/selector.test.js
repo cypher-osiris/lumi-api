@@ -43,7 +43,7 @@ const baseOpt = (payTo = "0x5E617bac19912e6d212CB303ae84655E9E203532", amount = 
   maxTimeoutSeconds: 300, extra: { name: "USD Coin", version: "2", symbol: "USDC", decimals: 6 },
 });
 
-test("default caps allow the $0.25 Institutional Brief on every rail", () => {
+test("default caps allow the $0.10 Institutional Brief on every rail", () => {
   assert.equal(makeSelector(loadSettings({}), { spent: 0 })(accepts(MAINNET_PAY_TO, "190000")).asset, "XRP");
   assert.equal(makeSelector(loadSettings({ LUMI_PAY_ASSET: "RLUSD" }), { spent: 0 })([{ ...accepts()[1], amount: "0.25" }]).extra.symbol, "RLUSD");
   assert.equal(makeSelector(loadSettings({ EVM_PRIVATE_KEY: KEY }), { spent: 0 })([...accepts(), baseOpt()]).network, "eip155:8453");

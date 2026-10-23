@@ -177,10 +177,10 @@ export const DEFAULT_PRICES: Record<PaidRoute, { xrp: string; usd: string }> = {
   sentiment: { xrp: "0.0038", usd: "0.005" },
   events: { xrp: "0.0038", usd: "0.005" },
   trades: { xrp: "0.01", usd: "0.02" },
-  // Premium daily Institutional & Policy Brief: $0.25. Stablecoins are exactly 0.25; XRP is a fixed amount set from
-  // XRP ~= $1.32 on Oct 22 2026 (0.25 / 1.32 = 0.189 -> 0.19 XRP). There is no live XRP/USD repricing: update
-  // PRICE_INSTITUTIONAL_XRP in wrangler.toml if XRP moves a lot.
-  institutional: { xrp: "0.19", usd: "0.25" },
+  // Daily Institutional & Policy Brief: $0.10 (was $0.25 until Oct 23 2026). Stablecoins are exactly 0.10; the XRP
+  // default is set from XRP ~= $1.30 on Oct 23 2026 (0.10 / 1.30 = 0.077 XRP); XRP_PRICING=live reprices it from the
+  // live rate, otherwise update PRICE_INSTITUTIONAL_XRP in wrangler.toml if XRP moves a lot.
+  institutional: { xrp: "0.077", usd: "0.10" },
   // Paid detailed x402 vendor report (trust layer): $0.02. Stablecoins exactly 0.02; XRP fixed from XRP ~= $1.32 on
   // Oct 22 2026 (0.02 / 1.32 = 0.0152 -> 0.015 XRP), same no-live-repricing rule as PRICE_INSTITUTIONAL_XRP.
   vendor_report: { xrp: "0.015", usd: "0.02" },
