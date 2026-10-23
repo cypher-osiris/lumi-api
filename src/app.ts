@@ -33,7 +33,7 @@ import { D1EvidenceStore, MemoryEvidenceStore, type EvidenceStore } from "./trus
 import { D1ReceiptStore, MemoryReceiptStore, type ReceiptStore } from "./trust/receipts";
 import { productSample, sampleEntry, SAMPLE_ARGS, SAMPLE_LABEL } from "./samples";
 import { applyRate, createXrpPricer, type XrpPricer } from "./pricing";
-import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
+import { D1TrafficStore, MemoryTrafficStore, TRAFFIC_RETENTION_DAYS, TrafficBuffer, trafficRow, trafficSummary, type TrafficStore } from "./traffic";
 import { D1FeedStore, MemoryFeedStore, FEEDS, dueFeed, refreshFeed, feedFresh, type FeedStore } from "./feeds";
 import { liteView, scanView, fundingView, fearGreedView, fearGreedFromContext, events48View, trustVerdict } from "./quick";
 import { lookupError } from "./trust/index";
@@ -61,6 +61,9 @@ export interface AppOptions {
   queue?: QueueLike;
   /** Private request log override (tests). Default: D1 (TRUST_DB) when bound, else in-memory. */
   trafficStore?: TrafficStore;
+  /** Traffic flush window (ms) and max requests per batch; tests use 0 / 1 to flush every request. */
+  trafficFlushMs?: number;
+  trafficFlushMax?: number;
   /** Live signal store override (tests). Default: D1 (TRUST_DB) when bound, else in-memory (empty: site files are used). */
   liveStore?: LiveStore;
   feedStore?: FeedStore;
@@ -109,7 +112,12 @@ export interface App {
   traffic: TrafficStore;
   /** Best-effort private request log (hashed IPs only); call once per request from the Worker entry point. */
   logTraffic(request: Request, response: Response, ctx?: WaitUntil): void;
+  /** Write this isolate's buffered traffic counts now. */
+  flushTraffic(): Promise<void>;
 }
+
+/** Persist the last-known XRP/USD fallback rate at most this often (D1 write budget). */
+export const XRP_MEMO_MS = 30 * 60_000;
 
 /** The scan is sold only when at least this many live signals are fresh. */
 const SCAN_MIN = 40;
@@ -176,6 +184,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const sales: SalesStore = opts.salesStore ?? (env.TRUST_DB ? new D1SalesStore(env.TRUST_DB) : new MemorySalesStore());
   const traffic: TrafficStore = opts.trafficStore ?? (env.TRUST_DB ? new D1TrafficStore(env.TRUST_DB) : new MemoryTrafficStore());
   const trafficOn = env.TRAFFIC_LOG !== "0";
+  const trafficBuf = new TrafficBuffer(traffic, { flushMs: opts.trafficFlushMs, maxRequests: opts.trafficFlushMax });
+  const trafficErr = (e: unknown) => console.error(JSON.stringify({ event: "traffic_log_error", error: String(e).slice(0, 200) }));
   const trials: TrialStore = opts.trialStore ?? (env.TRUST_DB ? new D1TrialStore(env.TRUST_DB) : new MemoryTrialStore());
   const trialsOn = env.TRIALS !== "0";
   const live: LiveStore = opts.liveStore ?? (env.TRUST_DB ? new D1LiveStore(env.TRUST_DB) : new MemoryLiveStore());
@@ -212,13 +222,29 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   ];
   const xrplBuyers = split(env.TRUST_BUYER_ADDRESSES).length ? split(env.TRUST_BUYER_ADDRESSES) : [config.payTo];
   const catalogStore = opts.catalogStore ?? (env.TRUST_DB ? new D1CatalogStore(env.TRUST_DB) : new MemoryCatalogStore());
+  /**
+   * The persisted rate is only a last-known fallback (used when every live source fails, valid 7 days), so it is
+   * stored at most every XRP_MEMO_MS across isolates: each isolate refreshes every 5 minutes and used to write a
+   * meta row each time (~3.5k D1 rows/day).
+   */
+  let xrpMemoAt = 0;
+  const memoXrpRate = async (v: string) => {
+    const t = now();
+    if (t - xrpMemoAt < XRP_MEMO_MS) return;
+    xrpMemoAt = t;
+    try {
+      const old = JSON.parse((await catalogStore.getMeta("xrp_usd_rate")) ?? "null");
+      if (old && Number.isFinite(Number(old.at)) && t - Number(old.at) < XRP_MEMO_MS) return;
+    } catch { /* overwrite unreadable value */ }
+    await catalogStore.setMeta("xrp_usd_rate", v);
+  };
   /** Live XRP/USD rate (only used when XRP_PRICING=live); last known rate persisted in catalog meta. */
   const pricer = createXrpPricer({
     fetch: doFetch,
     fallback: config.xrpUsdFallback,
     now,
     log: (e) => deps.log?.(e),
-    memo: { get: () => catalogStore.getMeta("xrp_usd_rate"), set: (v) => catalogStore.setMeta("xrp_usd_rate", v) },
+    memo: { get: () => catalogStore.getMeta("xrp_usd_rate"), set: (v) => memoXrpRate(v) },
     extraSources: [{ name: "lumitrades", url: `${config.dataBaseUrl}/prices.json`, pick: (j: any) => j?.assets?.ripple?.price ?? j?.ripple?.price ?? j?.XRP?.price }],
   });
   const trustStore: TrustStore = opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS));
@@ -924,10 +950,11 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     logTraffic(request: Request, response: Response, ctx?: WaitUntil) {
       if (!trafficOn || request.method === "OPTIONS") return;
       const p = trafficRow(request, response, env.TRAFFIC_SALT || env.INVOICE_SECRET || undefined, now())
-        .then((row) => traffic.insert(row))
-        .catch((e) => console.error(JSON.stringify({ event: "traffic_log_error", error: String(e).slice(0, 200) })));
+        .then((row) => trafficBuf.add(row, now()))
+        .catch(trafficErr);
       if (ctx) ctx.waitUntil(p);
     },
+    flushTraffic: () => trafficBuf.flush().catch(trafficErr),
     live,
     feeds,
     async liveRefresh() {
@@ -946,7 +973,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       return r;
     },
     async scheduled() {
-      const prune = traffic.prune(now() - TRAFFIC_RETENTION_DAYS * 86_400_000).catch(() => {});
+      const prune = Promise.all([trafficBuf.flush().catch(trafficErr), traffic.prune(now() - TRAFFIC_RETENTION_DAYS * 86_400_000).catch(() => {})]);
       const [probes, cat, , com] = await Promise.allSettled([trust.runProbes(), catalog.cron(), prune, commerce.cron(config.publicBaseUrl ?? "https://api.lumitrades.io")]);
       return {
         probes: probes.status === "fulfilled" ? probes.value : { error: String(probes.reason) },

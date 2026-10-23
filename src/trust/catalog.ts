@@ -14,10 +14,31 @@ export const RDAP_PER_BATCH = 3;
 export const RUNS_PER_DAY = 46; // */30 cron = 48 runs; 46 leaves slack so every entry is checked within 24 h
 const DAY = 86_400_000;
 export const REFRESH_SEEN_MS = 6 * DAY;
-/** Bazaar quality fields (30-day calls, unique payers, last called) are re-stored at most this often per row, when they changed. */
+/**
+ * Bazaar quality fields (30-day calls, unique payers, last called) are re-stored at most this often per row, and only
+ * on a material change (QUALITY_MIN_DELTA). Rolling 30-day counters move for nearly every listing every day, so
+ * "any change" rewrote the whole catalog (~33k rows) daily on D1 Free. Small drifts ride along with the 6-day
+ * last_seen refresh; the stored values are always dated (bazaar_quality.as_of = quality_at).
+ */
 export const QUALITY_REFRESH_MS = 20 * 3_600_000;
+/** Material change: null <-> value, zero <-> non-zero, or a move of at least 25% and at least 3. */
+export const QUALITY_MIN_DELTA = { ratio: 0.25, abs: 3 } as const;
+const materialMove = (a: number | null | undefined, b: number | null | undefined) => {
+  if ((a == null) !== (b == null)) return true;
+  const x = a ?? 0, y = b ?? 0;
+  if ((x === 0) !== (y === 0)) return true;
+  const d = Math.abs(x - y);
+  return d >= QUALITY_MIN_DELTA.abs && d >= QUALITY_MIN_DELTA.ratio * Math.max(x, 1);
+};
 export const qualityChanged = (r: { calls_30d: number | null; payers_30d: number | null; last_called_at?: number | null }, l: Listing) =>
-  r.calls_30d !== l.calls_30d || r.payers_30d !== l.payers_30d || (r.last_called_at ?? null) !== l.last_called_at;
+  materialMove(r.calls_30d, l.calls_30d) || materialMove(r.payers_30d, l.payers_30d) || ((r.last_called_at ?? null) === null) !== (l.last_called_at === null);
+/** SQL twin of materialMove for the upsert WHERE (o = stored column, n = excluded column). */
+const sqlMove = (o: string, n: string) =>
+  `((${o} IS NULL) <> (${n} IS NULL) OR (COALESCE(${o}, 0) = 0) <> (COALESCE(${n}, 0) = 0)` +
+  ` OR (ABS(COALESCE(${n}, 0) - COALESCE(${o}, 0)) >= ${QUALITY_MIN_DELTA.abs} AND ABS(COALESCE(${n}, 0) - COALESCE(${o}, 0)) >= ${QUALITY_MIN_DELTA.ratio} * MAX(COALESCE(${o}, 0), 1)))`;
+export const QUALITY_CHANGED_SQL =
+  `(${sqlMove("catalog.calls_30d", "excluded.calls_30d")} OR ${sqlMove("catalog.payers_30d", "excluded.payers_30d")}` +
+  ` OR (catalog.last_called_at IS NULL) <> (excluded.last_called_at IS NULL))`;
 export const DELISTED_AFTER_MS = 10 * DAY;
 const PROBE_TIMEOUT_MS = 10_000;
 const BASE_USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
@@ -429,8 +450,7 @@ export class D1CatalogStore implements CatalogStore {
                description = excluded.description, calls_30d = excluded.calls_30d, payers_30d = excluded.payers_30d, sig = excluded.sig, last_seen = excluded.last_seen,
                last_called_at = excluded.last_called_at, quality_at = excluded.quality_at
              WHERE catalog.sig IS NOT excluded.sig OR catalog.last_seen < ?16
-               OR ((catalog.quality_at IS NULL OR catalog.quality_at < ?17)
-                   AND (catalog.calls_30d IS NOT excluded.calls_30d OR catalog.payers_30d IS NOT excluded.payers_30d OR catalog.last_called_at IS NOT excluded.last_called_at))`,
+               OR ((catalog.quality_at IS NULL OR catalog.quality_at < ?17) AND ${QUALITY_CHANGED_SQL})`,
           )
           .bind(l.resource, l.domain, l.reg_domain, l.pay_tos.join(","), l.method, l.body, l.networks.join(","), l.price_usd, l.accepts, l.service_name, l.description, l.calls_30d, l.payers_30d, l.sig, now, now - REFRESH_SEEN_MS, now - QUALITY_REFRESH_MS, l.last_called_at),
       );
