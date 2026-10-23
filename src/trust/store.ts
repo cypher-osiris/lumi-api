@@ -28,6 +28,10 @@ export interface ObservationRow {
   latency_ms: number | null;
   summary: string;
   source: string;
+  /** Set when Lumi never saw an HTTP response (Lumi-side): delivery unknown, never "no data" (delivery.ts). */
+  inconclusive?: string | null;
+  corrected_at?: number | null;
+  summary_before?: string | null;
 }
 
 export interface ReportRow {
@@ -85,6 +89,8 @@ export interface TrustStore {
   probeHistory(vendorId: string, since: number, limit: number): Promise<ProbeRow[]>;
   addObservation(row: ObservationRow): Promise<InsertResult>;
   observations(vendorId: string, since: number): Promise<ObservationRow[]>;
+  /** Owner correction: mark a stored test-buy inconclusive (Lumi-side). Keeps the old summary in summary_before. */
+  markObservationInconclusive(tx: string, reason: string, summary: string, at: number): Promise<ObservationRow | null>;
   addReport(row: ReportRow): Promise<InsertResult>;
   hasVerifiedReport(txHash: string): Promise<boolean>;
   verifiedReports(vendorId: string, since: number): Promise<ReportRow[]>;
@@ -135,6 +141,13 @@ export class MemoryTrustStore implements TrustStore {
     if (this.obs.some((o) => o.tx_hash === row.tx_hash)) return "duplicate";
     this.obs.push({ ...row });
     return "inserted";
+  }
+  async markObservationInconclusive(tx: string, reason: string, summary: string, at: number) {
+    const o = this.obs.find((x) => x.tx_hash === tx);
+    if (!o) return null;
+    if (o.summary_before == null) o.summary_before = o.summary;
+    Object.assign(o, { inconclusive: reason, summary, corrected_at: at, data_returned: false });
+    return { ...o };
   }
   async observations(vendorId: string, since: number) {
     return this.obs.filter((o) => o.vendor_id === vendorId && o.ts >= since).sort((a, b) => b.ts - a.ts);
@@ -216,14 +229,21 @@ export class D1TrustStore implements TrustStore {
   async addObservation(r: ObservationRow): Promise<InsertResult> {
     try {
       await this.db
-        .prepare("INSERT INTO observations (vendor_id, endpoint, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(r.vendor_id, r.endpoint, r.ts, r.network, r.tx_hash, r.amount, r.asset, r.http_status, r.data_returned ? 1 : 0, r.latency_ms, r.summary, r.source)
+        .prepare("INSERT INTO observations (vendor_id, endpoint, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source, inconclusive) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .bind(r.vendor_id, r.endpoint, r.ts, r.network, r.tx_hash, r.amount, r.asset, r.http_status, r.data_returned ? 1 : 0, r.latency_ms, r.summary, r.source, r.inconclusive ?? null)
         .run();
       return "inserted";
     } catch (e) {
       if (isUnique(e)) return "duplicate";
       throw e;
     }
+  }
+  async markObservationInconclusive(tx: string, reason: string, summary: string, at: number) {
+    await this.db
+      .prepare("UPDATE observations SET summary_before = COALESCE(summary_before, summary), inconclusive = ?2, summary = ?3, corrected_at = ?4, data_returned = 0 WHERE tx_hash = ?1")
+      .bind(tx, reason, summary, at).run();
+    const r = await this.db.prepare("SELECT * FROM observations WHERE tx_hash = ?1").bind(tx).first<Record<string, any>>();
+    return r ? obsFrom(r) : null;
   }
   async observations(vendorId: string, since: number) {
     const r = await this.db.prepare("SELECT * FROM observations WHERE vendor_id = ? AND ts >= ? ORDER BY ts DESC LIMIT 500").bind(vendorId, since).all();

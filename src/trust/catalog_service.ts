@@ -1,5 +1,6 @@
 /** Catalog orchestration: cron scheduling, queue consumer, lookups and owner-posted purchase evidence. */
 import type { Receipt, ReceiptStore } from "./receipts";
+import { dataReturnedView, deliveryCounts, deliveryState, guardBuy, inconclusiveReason, INCONCLUSIVE_REASONS, isInconclusiveReason } from "./delivery";
 import type { D1Like } from "../config";
 import { VENDORS } from "../vendors";
 import {
@@ -79,6 +80,7 @@ export interface CuratedBuy {
   asset: string;
   http_status: number | null;
   data_returned: boolean;
+  inconclusive?: string | null;
 }
 
 /**
@@ -86,16 +88,21 @@ export interface CuratedBuy {
  * Oct 22-23 2026; each buy re-verified on the ledger when it was merged). A fixed, dated fact, not a live count:
  * new XRPL hosts listed after Oct 23 2026 are not covered by it.
  */
-const SWEEP_COUNTS = { as_of: "2026-10-23", as_of_label: "Oct 23 2026", hosts_checked: 98, hosts_total: 98, hosts_bought: 93, delivered: 82 } as const;
-// Counts from /workspace/notes/xrpl_testbuys_2026-10-23.json bazaar_coverage (98 third-party XRPL hosts; Lumi's own host excluded).
+const SWEEP_COUNTS = { as_of: "2026-10-23", as_of_label: "Oct 23 2026", hosts_checked: 98, hosts_total: 98, hosts_bought: 93, delivered: 82, not_delivered: 2, inconclusive: 9 } as const;
+// Counts from /workspace/notes/xrpl_testbuys_2026-10-23.json bazaar_coverage (98 third-party XRPL hosts; Lumi's own host excluded),
+// recomputed by scripts/sweep_counts.py. inconclusive = paid, but Lumi recorded no HTTP response (Lumi's 90 s client timeout or
+// an interrupted run): delivery unknown, Lumi-side, not counted against the seller (correction logged Oct 23 2026).
 // Curated-vendor buys that are not Bazaar hosts (e.g. cloudpayx) are not part of this sweep.
 export const XRPL_BAZAAR_SWEEP = {
-  statement: `${SWEEP_COUNTS.hosts_bought} of ${SWEEP_COUNTS.hosts_total} XRPL Bazaar hosts bought, ${SWEEP_COUNTS.delivered} delivered, checked ${SWEEP_COUNTS.hosts_checked} of ${SWEEP_COUNTS.hosts_total}, as of ${SWEEP_COUNTS.as_of_label}`,
+  statement: `${SWEEP_COUNTS.hosts_bought} of ${SWEEP_COUNTS.hosts_total} XRPL Bazaar hosts bought, ${SWEEP_COUNTS.delivered} delivered, ${SWEEP_COUNTS.not_delivered} not delivered, ${SWEEP_COUNTS.inconclusive} inconclusive (Lumi-side, no response recorded), checked ${SWEEP_COUNTS.hosts_checked} of ${SWEEP_COUNTS.hosts_total}, as of ${SWEEP_COUNTS.as_of_label}`,
   as_of: SWEEP_COUNTS.as_of,
   hosts_checked: SWEEP_COUNTS.hosts_checked,
   hosts_total: SWEEP_COUNTS.hosts_total,
   hosts_bought: SWEEP_COUNTS.hosts_bought,
   delivered: SWEEP_COUNTS.delivered,
+  not_delivered: SWEEP_COUNTS.not_delivered,
+  inconclusive: SWEEP_COUNTS.inconclusive,
+  corrections: "/v1/monitor/corrections",
   note: "Dated snapshot. Hosts not bought had no payable XRPL quote within Lumi's limits at the time; that is a dated observation, not a judgement of the seller.",
 } as const;
 
@@ -119,7 +126,7 @@ export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
   };
 }
 
-export interface XrplAgg { buys: number; delivered: number; endpoints: number; vendors: number; assets: string[]; rows: CuratedBuy[] }
+export interface XrplAgg { buys: number; delivered: number; inconclusive?: number; endpoints: number; vendors: number; assets: string[]; rows: CuratedBuy[] }
 
 const STATS_EVERY_MS = 25 * 60_000; // every cron run (one aggregate query), so the summary matches the entries
 /** Read path recomputes when the stored stats are older than this (e.g. a cron run was missed). */
@@ -134,7 +141,8 @@ export const WRITE_BUDGET = { ingest: 55_000, probe: 85_000, evidence: 95_000 };
 export function buyCandidate(body: any, exact: any, t = Date.now()) {
   const e = exact?.catalog?.entries?.[0];
   if (!e || exact?.self || !body?.matched?.exact) return null;
-  const last = (e.purchases ?? [])[0];
+  // Inconclusive buys (Lumi-side, delivery unknown) do not count as a recent purchase: the listing may be retested.
+  const last = (e.purchases ?? []).find((p: any) => p?.delivery !== "inconclusive" && p?.data_returned !== null && !(p?.data_returned === false && (p?.http_status == null || p?.http_status === 0)));
   if (last && Date.parse(last.at) > t - 30 * 86_400_000) return null;
   const reasons: string[] = (body.reasons ?? []).map((r: any) => String(r.code)).filter((c: string) => BUY_SIGNALS.includes(c));
   if (!reasons.length) return null;
@@ -166,7 +174,7 @@ export function createCatalog(deps: CatalogDeps) {
     try {
       const rows = (await deps.curatedBuys(t - CURATED_WINDOW_MS)).filter((r) => r.network.startsWith("xrpl:") && r.ts >= t - CURATED_WINDOW_MS).sort((a, b) => b.ts - a.ts);
       const agg: XrplAgg = {
-        buys: rows.length, delivered: rows.filter((r) => r.data_returned).length,
+        buys: rows.length, delivered: deliveryCounts(rows).delivered, inconclusive: deliveryCounts(rows).inconclusive,
         endpoints: new Set(rows.map((r) => r.endpoint)).size, vendors: new Set(rows.map((r) => r.vendor_id)).size,
         assets: [...new Set(rows.map((r) => r.asset))].sort(), rows,
       };
@@ -602,13 +610,14 @@ export function createCatalog(deps: CatalogDeps) {
         id: v.id, name: v.name, homepage: v.homepage, network: "xrpl:0",
         tier: buys.length ? "purchase-verified (XRPL, curated list)" : "curated XRPL list: no Lumi test-buy in the last 30 days",
         xrpl_test_buys: {
-          window_days: CURATED_WINDOW_MS / 86_400_000, count: buys.length, delivered: buys.filter((b) => b.data_returned).length,
-          ...(last ? { last_at: iso(last.ts), last_data_returned: last.data_returned } : {}),
+          window_days: CURATED_WINDOW_MS / 86_400_000, count: buys.length, ...deliveryCounts(buys),
+          ...(last ? { last_at: iso(last.ts), last_data_returned: dataReturnedView(last), last_delivery: deliveryState(last) } : {}),
         },
         ...(free ? {} : {
           purchases: buys.slice(0, 10).map((b) => ({
             at: iso(b.ts), network: b.network, endpoint: b.endpoint, amount: b.amount, asset: b.asset, tx_hash: b.tx_hash, explorer: explorerFor(b.network, b.tx_hash),
-            http_status: b.http_status, data_returned: b.data_returned,
+            http_status: b.http_status, data_returned: dataReturnedView(b), delivery: deliveryState(b),
+            ...(inconclusiveReason(b) ? { inconclusive_reason: inconclusiveReason(b) } : {}),
           })),
         }),
         detail: `${base}/v1/trust/vendors/${v.id}`,
@@ -770,11 +779,14 @@ export function createCatalog(deps: CatalogDeps) {
     if (!pay) return json(422, { recorded: false, reason: "no payment from a Lumi wallet to a listed payTo in this tx" });
     const http = b.http_status == null ? null : Number(b.http_status);
     const lat = b.latency_ms == null ? null : Number(b.latency_ms);
-    const buy: BuyRow = {
+    if (b.inconclusive != null && !isInconclusiveReason(b.inconclusive)) return json(400, { error: "invalid_field", field: "inconclusive", detail: Object.keys(INCONCLUSIVE_REASONS).join(" | ") });
+    // Guard: no HTTP status + no data is inconclusive (Lumi-side), never "no data returned".
+    const buy: BuyRow = guardBuy({
       resource: row.resource, domain: row.domain, ts: Number.isFinite(pay.ts) ? pay.ts : now(), network, tx_hash: tx, amount: pay.amount, asset: pay.asset,
       pay_to: pay.to, facilitator: typeof b.facilitator === "string" ? b.facilitator.slice(0, 80) : null,
       http_status: Number.isInteger(http) ? http : null, data_returned: b.data_returned, latency_ms: Number.isInteger(lat) ? lat : null, summary: summaryText,
-    };
+      inconclusive: b.inconclusive ?? null,
+    });
     const ins = await store.addBuy(buy);
     deps.log({ event: "catalog_buy", domain: row.domain, inserted: ins === "inserted" });
     if (ins === "inserted") {
@@ -810,7 +822,9 @@ export function createCatalog(deps: CatalogDeps) {
     return null;
   }
 
-  return { cron, consume, lookupDoc, summary, handle, startIngest, stats, xrplAgg, queueBuy };
+  /** Owner correction: reclassify a stored catalog buy as inconclusive (Lumi-side). The prior summary is kept. */
+  const markInconclusive = (tx: string, reason: string, summary: string) => deps.store.markInconclusive(tx, reason, summary, deps.now());
+  return { cron, consume, lookupDoc, summary, handle, startIngest, stats, xrplAgg, queueBuy, markInconclusive };
 }
 
 export type Catalog = ReturnType<typeof createCatalog>;

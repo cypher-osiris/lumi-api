@@ -138,6 +138,11 @@ interface Reason { code: string; severity: "block" | "warn" | "info"; detail: st
  * warn = not enough evidence (unlisted, unchecked, failing quotes, young domain, slow);
  * allow = listed and its quotes check out (purchase-verified = Lumi paid and got data).
  */
+/** A purchase whose delivery is known (inconclusive = Lumi never recorded a response: never a reason to warn or block). */
+const conclusive = (p: Json) => p?.delivery !== "inconclusive" && p?.data_returned !== null && !(p?.data_returned === false && (p?.http_status == null || p?.http_status === 0));
+const inconclusiveText = (p: Json, what: string) =>
+  `Lumi's latest ${what} (${p.at}, tx ${p.tx_hash}) paid ${p.amount} ${p.asset}, but Lumi recorded no HTTP response (${p.inconclusive_reason ?? "no_http_response"}): delivery unknown. This was a Lumi-side failure and is not counted against the seller.`;
+
 export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: Json | null, base: string) {
   const reasons: Reason[] = [];
   const add = (code: string, severity: Reason["severity"], detail: string) => reasons.push({ code, severity, detail });
@@ -153,8 +158,10 @@ export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: J
     add("not_observed", "warn", "Not in the CDP x402 Bazaar catalog Lumi ingests (refreshed daily) or Lumi's curated list. No observation is not proof of a problem, but there is no evidence either.");
   } else if (!e && !domEntries.length) {
     add("curated_vendor", "info", `In Lumi's curated XRPL vendor list (${curated[0].name}), which Lumi probes every 30 minutes and test-buys; see ${curated[0].detail}.`);
-    const xb = (curated[0].purchases ?? [])[0];
+    const xps: Json[] = curated[0].purchases ?? [];
+    const xb = xps.find(conclusive);
     const n = curated[0].xrpl_test_buys;
+    if (xps[0] && !conclusive(xps[0])) add("xrpl_purchase_inconclusive", "info", inconclusiveText(xps[0], "XRPL test-buy"));
     if (xb) {
       if (xb.data_returned === false) add("xrpl_paid_no_data", "warn", `Lumi's latest XRPL test-buy (${xb.at}, tx ${xb.tx_hash}) paid ${xb.amount} ${xb.asset} and got no usable data (HTTP ${xb.http_status}); ${n?.delivered ?? 0} of ${n?.count ?? 0} XRPL test-buys in 30 days returned data.`);
       else add("xrpl_purchase_verified", "info", `Lumi paid ${xb.amount} ${xb.asset} on XRPL on ${xb.at} and got data back (tx ${xb.tx_hash}); ${n?.delivered ?? 0} of ${n?.count ?? 0} XRPL test-buys in 30 days returned data.`);
@@ -183,7 +190,9 @@ export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: J
       if (typeof q.valid_quote_rate === "number" && q.checks_recorded >= 3 && q.valid_quote_rate < 0.5) add("unreliable_quotes", "warn", `Only ${Math.round(q.valid_quote_rate * 100)}% of ${q.checks_recorded} quote checks were valid.`);
       if (typeof q.median_latency_ms === "number" && q.median_latency_ms > 5000) add("slow", "warn", `Median quote latency ${q.median_latency_ms} ms.`);
     }
-    const last = (e.purchases ?? [])[0];
+    const ps: Json[] = e.purchases ?? [];
+    const last = ps.find(conclusive);
+    if (ps[0] && !conclusive(ps[0])) add("purchase_inconclusive", "info", inconclusiveText(ps[0], "test-buy"));
     if (last) {
       if (last.data_returned === false) add("paid_no_data", "block", `Lumi's latest test-buy (${last.at}, tx ${last.tx_hash}) paid and got no usable data (HTTP ${last.http_status}).`);
       else add("purchase_verified", "info", `Lumi paid ${last.amount} ${last.asset} on ${last.at} and got data back (tx ${last.tx_hash}).`);
@@ -217,7 +226,7 @@ export function trustVerdict(input: CheckInput, exact: Json | null, domainDoc: J
 
   const verdict = self ? "allow" : reasons.some((r) => r.severity === "block") ? "block" : reasons.some((r) => r.severity === "warn") ? "warn" : "allow";
   if (verdict === "allow" && e && !reasons.some((r) => r.code === "purchase_verified")) add("quote_verified", "info", "Listed in the Bazaar and its recent free quote checks are valid.");
-  const confidence = self ? "n/a" : e?.purchases?.length || (!e && curated.length) ? "medium" : e?.quote_checks ? "low" : "very low";
+  const confidence = self ? "n/a" : (e?.purchases ?? []).some(conclusive) || (!e && curated.length) ? "medium" : e?.quote_checks ? "low" : "very low";
   const cur = curated[0];
   return envelope("trust_check", compact({
     query: compact({ url: input.url, payTo: input.payTo, amount_usd: input.amountUsd, network: input.network }),

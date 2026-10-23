@@ -93,7 +93,8 @@ describe("vendors.ts listing fixes (2026-10-23 test-buys)", () => {
 describe("dated XRPL Bazaar sweep wording", () => {
   it("states the exact dated counts and never claims every XRPL site", async () => {
     const { XRPL_BAZAAR_SWEEP, chainSplit, coverageLine } = await import("../src/trust/catalog_service");
-    const S = "93 of 98 XRPL Bazaar hosts bought, 82 delivered, checked 98 of 98, as of Oct 23 2026";
+    const S = "93 of 98 XRPL Bazaar hosts bought, 82 delivered, 2 not delivered, 9 inconclusive (Lumi-side, no response recorded), checked 98 of 98, as of Oct 23 2026";
+    expect(XRPL_BAZAAR_SWEEP.delivered + XRPL_BAZAAR_SWEEP.not_delivered + XRPL_BAZAAR_SWEEP.inconclusive).toBe(XRPL_BAZAAR_SWEEP.hosts_bought);
     expect(XRPL_BAZAAR_SWEEP.statement).toBe(S);
     const split = chainSplit(null, null);
     expect(split.xrpl.bazaar_sweep.statement).toBe(S);

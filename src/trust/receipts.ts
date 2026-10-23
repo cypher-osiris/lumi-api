@@ -10,10 +10,11 @@
  */
 import { recoverEvmSigner, sha256Hex, verifyXrplSignature, xrplAddressOf, XRPL_ADDR_RE, EVM_ADDR_RE, XRPL_TX_RE, EVM_TX_RE } from "./verify";
 import type { D1Like } from "../config";
+import { dataReturnedView, deliveryState, inconclusiveReason } from "./delivery";
 
 export const RECEIPT_TYPE = "counterparty_delivery_receipt";
 export const RECEIPT_VERSION = "ars-evidence/0.1";
-export const RECEIPT_OUTCOMES = ["delivered", "no_data", "empty_result", "error_status", "timeout", "wrong_data", "other"] as const;
+export const RECEIPT_OUTCOMES = ["delivered", "no_data", "empty_result", "error_status", "timeout", "wrong_data", "other", "inconclusive"] as const;
 export type ReceiptNetwork = "xrpl:0" | "eip155:8453";
 
 export interface Receipt {
@@ -27,7 +28,10 @@ export interface Receipt {
     network: ReceiptNetwork; asset: string; issuer?: string; amount: string; amount_atomic?: number;
     tx_hash: string; payer: string; ledger_result: string; ledger_index?: number; block_number?: number;
   };
-  delivery: { observed_at: string; http_status: number; data_returned: boolean; outcome: (typeof RECEIPT_OUTCOMES)[number]; latency_ms?: number; source?: string };
+  /** data_returned null + outcome "inconclusive": Lumi recorded no HTTP response (Lumi-side); delivery unknown. */
+  delivery: { observed_at: string; http_status: number; data_returned: boolean | null; outcome: (typeof RECEIPT_OUTCOMES)[number]; latency_ms?: number; source?: string; inconclusive_reason?: string; note?: string };
+  /** A corrected receipt names the receipt it replaces; the old one stays verifiable (receipts_superseded). */
+  supersedes?: { receipt_hash: string; reason: string; corrections_url?: string };
   receipt_hash: string;
   signer: { key_type: "ripple-keypairs" | "eip191"; address: string; public_key?: string; message: string; signature: string };
 }
@@ -53,7 +57,9 @@ export async function receiptHash(r: ReceiptBody | Receipt): Promise<string> {
 export const receiptMessage = (network: string, tx: string, hash: string) => `lumi-receipt:${network}:${tx}:${hash}`;
 
 /** delivery.outcome from a stored test-buy row. */
-export function outcomeOf(httpStatus: number | null | undefined, dataReturned: boolean, summary = ""): Receipt["delivery"]["outcome"] {
+export function outcomeOf(httpStatus: number | null | undefined, dataReturned: boolean, summary = "", inconclusive?: string | null): Receipt["delivery"]["outcome"] {
+  // Guard (H-1): no HTTP response recorded = inconclusive (Lumi-side), never no_data / timeout / other.
+  if (deliveryState({ http_status: httpStatus, data_returned: dataReturned, inconclusive }) === "inconclusive") return "inconclusive";
   if (dataReturned) return "delivered";
   if (httpStatus == null || httpStatus === 0) return /timeout|timed out|abort/i.test(summary) ? "timeout" : "other";
   if (httpStatus >= 200 && httpStatus < 300) return /empty/i.test(summary) ? "empty_result" : "no_data";
@@ -84,6 +90,8 @@ export async function verifyReceipt(r: any): Promise<ReceiptCheck> {
   if (p.network === "eip155:8453" && !EVM_TX_RE.test(String(p.tx_hash))) errors.push("payment.tx_hash");
   if (!/^[0-9]+(\.[0-9]+)?$/.test(String(p.amount))) errors.push("payment.amount");
   if (!RECEIPT_OUTCOMES.includes(r.delivery?.outcome)) errors.push("delivery.outcome");
+  if (r.delivery?.outcome === "inconclusive" ? r.delivery?.data_returned !== null : typeof r.delivery?.data_returned !== "boolean") errors.push("delivery.data_returned");
+  if (r.supersedes != null && !/^[0-9a-f]{64}$/.test(String(r.supersedes?.receipt_hash))) errors.push("supersedes.receipt_hash");
   if (!/^[0-9a-f]{64}$/.test(String(r.receipt_hash))) errors.push("receipt_hash");
   let hash = "";
   try { hash = await receiptHash(r); } catch { errors.push("canonicalization"); }
@@ -104,7 +112,9 @@ export async function verifyReceipt(r: any): Promise<ReceiptCheck> {
     out.signature_ok = !!rec && EVM_ADDR_RE.test(String(s.address)) && rec === String(s.address).toLowerCase();
     out.signer_is_payer = String(s.address).toLowerCase() === String(p.payer).toLowerCase();
   } else errors.push("signer.key_type");
-  if (!out.signature_ok) errors.push("signature_invalid");
+  // I-2: a valid signature over a stated hash that does not match the body proves nothing about this body.
+  if (out.signature_ok && !out.hash_ok) { out.signature_ok = false; errors.push("signature_not_over_body"); }
+  else if (!out.signature_ok) errors.push("signature_invalid");
   if (!out.signer_is_payer) errors.push("signer_not_payer");
   out.ok = !errors.length;
   return out;
@@ -120,6 +130,10 @@ export interface ReceiptStore {
   /** The stored test-buy for a tx (either table), signed or not. */
   buy(tx: string): Promise<PendingBuy | null>;
   count(): Promise<number>;
+  /** Keep a replaced receipt verbatim (append-only) before its correction is stored. */
+  archive(row: SupersededReceipt): Promise<void>;
+  /** A receipt that was replaced by a correction, by its hash. */
+  superseded(hash: string): Promise<SupersededReceipt | null>;
 }
 
 export interface PendingBuy {
@@ -138,7 +152,10 @@ export interface PendingBuy {
   latency_ms: number | null;
   summary: string;
   source: string;
+  inconclusive?: string | null;
 }
+
+export interface SupersededReceipt { receipt_hash: string; tx_hash: string; receipt: Receipt; superseded_at: number; superseded_by: string; reason: string }
 
 export class MemoryReceiptStore implements ReceiptStore {
   rows = new Map<string, { network: string; kind: string; ref: string; receipt: Receipt }>();
@@ -155,6 +172,9 @@ export class MemoryReceiptStore implements ReceiptStore {
   async pending(limit: number) { return this.buys.filter((b) => !this.rows.has(b.tx_hash)).slice(0, limit); }
   async buy(tx: string) { return this.buys.find((b) => b.tx_hash === tx) ?? null; }
   async count() { return this.rows.size; }
+  old = new Map<string, SupersededReceipt>();
+  async archive(row: SupersededReceipt) { if (!this.old.has(row.receipt_hash)) this.old.set(row.receipt_hash, row); }
+  async superseded(hash: string) { return this.old.get(hash) ?? null; }
 }
 
 export class D1ReceiptStore implements ReceiptStore {
@@ -179,23 +199,32 @@ export class D1ReceiptStore implements ReceiptStore {
   async pending(limit: number) {
     const n = Math.max(1, Math.min(200, limit));
     const res = await this.db.prepare(
-      `SELECT 'vendor' kind, vendor_id ref, endpoint, NULL domain, NULL pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source
+      `SELECT 'vendor' kind, vendor_id ref, endpoint, NULL domain, NULL pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source, inconclusive
          FROM observations o WHERE NOT EXISTS (SELECT 1 FROM receipts r WHERE r.tx_hash = o.tx_hash)
        UNION ALL
-       SELECT 'catalog', resource, resource, domain, pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, 'lumi_catalog_buy'
+       SELECT 'catalog', resource, resource, domain, pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, 'lumi_catalog_buy', inconclusive
          FROM catalog_buys b WHERE NOT EXISTS (SELECT 1 FROM receipts r WHERE r.tx_hash = b.tx_hash)
        ORDER BY ts LIMIT ?`).bind(n).all<any>();
     return (res.results ?? []).map((r: any) => ({ ...r, data_returned: !!r.data_returned }));
   }
   async buy(tx: string) {
     const r = await this.db.prepare(
-      `SELECT 'vendor' kind, vendor_id ref, endpoint, NULL domain, NULL pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source FROM observations WHERE tx_hash = ?1
+      `SELECT 'vendor' kind, vendor_id ref, endpoint, NULL domain, NULL pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source, inconclusive FROM observations WHERE tx_hash = ?1
        UNION ALL
-       SELECT 'catalog', resource, resource, domain, pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, 'lumi_catalog_buy' FROM catalog_buys WHERE tx_hash = ?1 LIMIT 1`).bind(tx).first<any>();
+       SELECT 'catalog', resource, resource, domain, pay_to, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, 'lumi_catalog_buy', inconclusive FROM catalog_buys WHERE tx_hash = ?1 LIMIT 1`).bind(tx).first<any>();
     return r ? { ...r, data_returned: !!r.data_returned } : null;
   }
   async count() {
     return (await this.db.prepare("SELECT COUNT(*) n FROM receipts").first<{ n: number }>())?.n ?? 0;
+  }
+  async archive(r: SupersededReceipt) {
+    await this.db.prepare("INSERT OR IGNORE INTO receipts_superseded (receipt_hash, tx_hash, receipt, superseded_at, superseded_by, reason) VALUES (?,?,?,?,?,?)")
+      .bind(r.receipt_hash, r.tx_hash, JSON.stringify(r.receipt), r.superseded_at, r.superseded_by, r.reason).run();
+  }
+  async superseded(hash: string) {
+    const r = await this.db.prepare("SELECT * FROM receipts_superseded WHERE receipt_hash = ?1").bind(hash).first<any>();
+    if (!r) return null;
+    try { return { ...r, receipt: JSON.parse(r.receipt) } as SupersededReceipt; } catch { return null; }
   }
 }
 
@@ -206,7 +235,8 @@ export function receiptMatchesBuy(r: Receipt, b: PendingBuy): string | null {
   if (Math.abs(Number(r.payment.amount) - Number(b.amount)) > 1e-9) return "amount_mismatch";
   if (r.payment.asset !== b.asset) return "asset_mismatch";
   if (b.pay_to && r.seller.pay_to.toLowerCase() !== b.pay_to.toLowerCase()) return "pay_to_mismatch";
-  if (r.delivery.data_returned !== b.data_returned) return "delivery_mismatch";
+  if (r.delivery.data_returned !== dataReturnedView(b)) return "delivery_mismatch";
+  if ((r.delivery.outcome === "inconclusive") !== (deliveryState(b) === "inconclusive")) return "delivery_mismatch";
   if (r.delivery.http_status !== (b.http_status ?? 0)) return "http_status_mismatch";
   return null;
 }
@@ -244,7 +274,7 @@ export function receiptVerifyDoc(base: string) {
 export function buildReceiptBody(
   b: PendingBuy,
   chain: { payer: string; pay_to: string; ledger_result: string; ledger_index?: number; block_number?: number; iou_issuer?: string },
-  opts: { base?: string; issuedAt: string },
+  opts: { base?: string; issuedAt: string; supersedes?: { receipt_hash: string; reason: string } },
 ): ReceiptBody {
   const base = opts.base ?? "https://api.lumitrades.io";
   const xrpl = b.network === "xrpl:0";
@@ -276,11 +306,13 @@ export function buildReceiptBody(
     delivery: {
       observed_at: new Date(b.ts).toISOString(),
       http_status: b.http_status ?? 0,
-      data_returned: b.data_returned,
-      outcome: outcomeOf(b.http_status, b.data_returned, b.summary),
+      data_returned: dataReturnedView(b),
+      outcome: outcomeOf(b.http_status, b.data_returned, b.summary, b.inconclusive),
+      ...(inconclusiveReason(b) ? { inconclusive_reason: inconclusiveReason(b)!, note: "Lumi recorded no HTTP response for this paid call (Lumi-side); delivery unknown. Not counted against the seller." } : {}),
       ...(b.latency_ms != null ? { latency_ms: b.latency_ms } : {}),
       // Label from the buy's own chain and asset (an XRPL catalog buy is not "Base USDC").
       source: b.kind === "catalog" ? `Lumi catalog test-buy (${rail})` : b.source === "lumi_buy" ? "Lumi paid buy (seeded)" : `Lumi daily test-buy (${xrpl ? "XRPL" : rail})`,
     },
+    ...(opts.supersedes ? { supersedes: { ...opts.supersedes, corrections_url: `${base}/v1/monitor/corrections` } } : {}),
   };
 }

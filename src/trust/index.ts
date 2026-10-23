@@ -17,6 +17,7 @@ import { VENDORS, vendorById, type Vendor, type VendorEndpoint } from "../vendor
 import type { Catalog } from "./catalog_service";
 import { XRPL_BAZAAR_SWEEP } from "./catalog_service";
 import { receiptMatchesBuy, receiptVerifyDoc, verifyReceipt, type Receipt, type ReceiptStore } from "./receipts";
+import { dataReturnedView, deliveryCounts, deliveryState, deliveryText, guardBuy, inconclusiveReason, INCONCLUSIVE_REASONS, isInconclusiveReason } from "./delivery";
 import type { LookupQuery } from "./catalog";
 import type { ObservationRow, ProbeRow, ProbeSummary, ReportRow, TrustStore } from "./store";
 import {
@@ -34,7 +35,7 @@ export const WEIGHTS = { delivery: 0.5, uptime: 0.2, latency: 0.15, agent_report
 export const REPORT_OUTCOMES = ["delivered", "no_data", "empty_result", "error_status", "timeout", "wrong_data", "other"] as const;
 export const CONTACT_EMAIL = "hello@lumitrades.io";
 const BANNED_WORDS = /\b(scam\w*|fraud\w*|untrustworthy|rip-?off|thie(f|ves)|steal\w*)\b/i;
-export const TRUST_POST_PATHS = ["/v1/reports", "/v1/tips", "/v1/trust/replies", "/v1/trust/observations", "/v1/trust/probe"];
+export const TRUST_POST_PATHS = ["/v1/reports", "/v1/tips", "/v1/trust/replies", "/v1/trust/observations", "/v1/trust/probe", "/v1/trust/buys/inconclusive"];
 
 export const LABEL =
   "Lumi's automated observations of this x402 endpoint (free 402-quote checks plus small paid test-buys), not a rating or review of the business. Few samples = low confidence.";
@@ -218,13 +219,15 @@ export interface ScoreResult {
   value: number | null;
   confidence: "low" | "medium" | "high";
   components: Record<string, unknown>;
-  samples: { paid_test_buys: number; delivered: number; probes: number; probes_ok: number; verified_reports_counted: number };
+  samples: { paid_test_buys: number; delivered: number; inconclusive_test_buys?: number; probes: number; probes_ok: number; verified_reports_counted: number };
 }
 
 export function scoreVendor(probes: ProbeSummary, obs: ObservationRow[], reports: ReportRow[], now: number): ScoreResult {
   const paid = obs.length;
-  const delivered = obs.filter((o) => o.data_returned).length;
-  const delivery = paid ? delivered / paid : null;
+  // Inconclusive buys (Lumi never saw a response) are not evidence about the seller: excluded from the delivery rate.
+  const dc = deliveryCounts(obs);
+  const delivered = dc.delivered;
+  const delivery = dc.conclusive ? delivered / dc.conclusive : null;
   const uptime = probes.n ? probes.ok / probes.n : null;
   const med = median(probes.latencies);
   const latency = med == null ? null : clamp01(1 - (med - 500) / 4500);
@@ -247,7 +250,7 @@ export function scoreVendor(probes: ProbeSummary, obs: ObservationRow[], reports
       pos += 1;
     } else {
       const t = r.tx_ts ?? r.ts;
-      const corroborated = obs.some((o) => !o.data_returned && Math.abs(o.ts - t) <= 6 * 3_600_000);
+      const corroborated = obs.some((o) => deliveryState(o) === "not_delivered" && Math.abs(o.ts - t) <= 6 * 3_600_000);
       neg += corroborated ? 1.5 : 1;
     }
   }
@@ -268,12 +271,12 @@ export function scoreVendor(probes: ProbeSummary, obs: ObservationRow[], reports
     value,
     confidence,
     components: {
-      delivery: { value: round(delivery), weight: WEIGHTS.delivery, delivered, paid_test_buys: paid, meaning: "share of Lumi's paid test-buys whose response contained data" },
+      delivery: { value: round(delivery), weight: WEIGHTS.delivery, delivered, paid_test_buys: paid, inconclusive: dc.inconclusive, meaning: "share of Lumi's paid test-buys whose response contained data; inconclusive buys (Lumi-side, no response recorded) are excluded" },
       uptime: { value: round(uptime), weight: WEIGHTS.uptime, valid_quotes: probes.ok, probes: probes.n, meaning: "share of free probes that got a valid x402 402 quote with an XRPL option to a listed address" },
       latency: { value: round(latency), weight: WEIGHTS.latency, median_ms: med == null ? null : Math.round(med), samples: probes.latencies.length, meaning: "median time to a valid 402 quote; 500 ms or less = 1, 5 s or more = 0" },
       agent_reports: { value: round(agentReports), weight: WEIGHTS.agent_reports, counted, meaning: "verified agent reports (on-ledger payment + payer signature), after a 24 h hold; excluded when there are none" },
     },
-    samples: { paid_test_buys: paid, delivered, probes: probes.n, probes_ok: probes.ok, verified_reports_counted: counted },
+    samples: { paid_test_buys: paid, delivered, inconclusive_test_buys: dc.inconclusive, probes: probes.n, probes_ok: probes.ok, verified_reports_counted: counted },
   };
 }
 
@@ -377,7 +380,7 @@ export function methodologyDoc(base: string) {
       ordering: "vendors are listed in allowlist order, not ranked",
     },
     data_returned_rule:
-      "A response 'contained data' when the HTTP status is 2xx and the body has non-empty content for that endpoint (e.g. a non-empty result list). Error bodies, empty lists and empty objects count as no data.",
+      "A response 'contained data' when the HTTP status is 2xx and the body has non-empty content for that endpoint (e.g. a non-empty result list). Error bodies, empty lists and empty objects count as no data. A paid call where Lumi recorded no HTTP response at all (Lumi's client timed out or Lumi's run was interrupted) is inconclusive: delivery unknown, shown as data_returned null and delivery \"inconclusive\", excluded from delivery rates and scores, and never a reason for a warn or block verdict. Corrections are logged at /v1/monitor/corrections.",
     right_to_reply: rightToReply(base),
     reports: {
       endpoint: `POST ${base}/v1/reports`,
@@ -428,11 +431,11 @@ export const FREE_LIMITS = {
 
 /** Free, answer-only view of a paid test-buy: outcome only; tx hash and explorer link are in the paid vendor report. */
 function obsFreeView(o: ObservationRow) {
-  return { observed_at: iso(o.ts), endpoint: o.endpoint, network: o.network, http_status: o.http_status, data_returned: o.data_returned, source: o.source === "lumi_buy" ? "Lumi paid buy (seeded)" : "Lumi daily test-buy" };
+  return { observed_at: iso(o.ts), endpoint: o.endpoint, network: o.network, http_status: o.http_status, data_returned: dataReturnedView(o), delivery: deliveryState(o), source: o.source === "lumi_buy" ? "Lumi paid buy (seeded)" : "Lumi daily test-buy" };
 }
 
 function obsView(o: ObservationRow) {
-  const evidence = `paid ${o.amount} ${o.asset} on ${iso(o.ts).replace(".000Z", "Z")}, tx ${o.tx_hash}, HTTP ${o.http_status ?? "none"}, response ${o.data_returned ? "contained data" : "contained no data"}`;
+  const evidence = `paid ${o.amount} ${o.asset} on ${iso(o.ts).replace(".000Z", "Z")}, tx ${o.tx_hash}, HTTP ${o.http_status ?? "none"}, ${deliveryText(o)}`;
   return {
     observed_at: iso(o.ts),
     endpoint: o.endpoint,
@@ -442,9 +445,12 @@ function obsView(o: ObservationRow) {
     tx_hash: o.tx_hash,
     explorer: explorer(o.network, o.tx_hash),
     http_status: o.http_status,
-    data_returned: o.data_returned,
+    data_returned: dataReturnedView(o),
+    delivery: deliveryState(o),
+    ...(inconclusiveReason(o) ? { inconclusive_reason: inconclusiveReason(o) } : {}),
     latency_ms: o.latency_ms,
     summary: o.summary,
+    ...(o.corrected_at ? { corrected_at: iso(o.corrected_at) } : {}),
     evidence,
     source: o.source === "lumi_buy" ? "Lumi paid buy (seeded)" : "Lumi daily test-buy",
   };
@@ -624,7 +630,8 @@ export function createTrust(deps: TrustDeps): Trust {
       const p = probes.filter((x) => x.ts >= since);
       const o = obs.filter((x) => x.ts >= since);
       const valid = p.filter((x) => x.ok).length;
-      const delivered = o.filter((x) => x.data_returned).length;
+      const dcw = deliveryCounts(o);
+      const delivered = dcw.delivered;
       return {
         window: d === 1 ? "24h" : `${d}d`,
         probes: p.length,
@@ -633,7 +640,8 @@ export function createTrust(deps: TrustDeps): Trust {
         quote_latency: latencyStats(p.filter((x) => x.ok && x.latency_ms != null).map((x) => x.latency_ms!)),
         paid_test_buys: o.length,
         delivered,
-        delivery_pct: pct(delivered, o.length),
+        inconclusive: dcw.inconclusive,
+        delivery_pct: pct(delivered, dcw.conclusive),
         confidence: confidenceOf(o.length, p.length),
       };
     });
@@ -651,7 +659,7 @@ export function createTrust(deps: TrustDeps): Trust {
       const k = days.get(iso(o.ts).slice(0, 10));
       if (!k) continue;
       k.buys++;
-      if (o.data_returned) k.delivered++;
+      if (deliveryState(o) === "delivered") k.delivered++;
     }
     const daily = [...days.entries()]
       .filter(([, k]) => k.probes || k.buys)
@@ -700,7 +708,8 @@ export function createTrust(deps: TrustDeps): Trust {
         quoted_price_history: prices,
         probe_results_without_valid_quote: [...failures.entries()].map(([result, count]) => ({ result, count })).sort((a, b) => b.count - a.count),
         paid_test_buys: o.length,
-        delivered: o.filter((x) => x.data_returned).length,
+        delivered: deliveryCounts(o).delivered,
+        inconclusive: deliveryCounts(o).inconclusive,
       };
     });
     const epIndex = new Map(urls.map((u, i) => [u, i]));
@@ -709,7 +718,8 @@ export function createTrust(deps: TrustDeps): Trust {
     for (const o of obs) spent.set(o.asset, (spent.get(o.asset) ?? 0) + Number(o.amount || 0));
     const statuses = new Map<string, number>();
     for (const o of obs) statuses.set(String(o.http_status ?? "none"), (statuses.get(String(o.http_status ?? "none")) ?? 0) + 1);
-    const delivered = obs.filter((o) => o.data_returned).length;
+    const dcAll = deliveryCounts(obs);
+    const delivered = dcAll.delivered;
 
     const confidence = g.score.confidence;
     const doc = {
@@ -747,12 +757,14 @@ export function createTrust(deps: TrustDeps): Trust {
       paid_test_buys: {
         count: obs.length,
         delivered,
-        not_delivered: obs.length - delivered,
-        delivery_pct: pct(delivered, obs.length),
+        not_delivered: dcAll.not_delivered,
+        inconclusive: dcAll.inconclusive,
+        delivery_pct: pct(delivered, dcAll.conclusive),
+        delivery_note: "inconclusive = Lumi never recorded an HTTP response (our client timed out or our run was interrupted); delivery unknown, excluded from delivery_pct and the score, not counted against the vendor.",
         spent: [...spent.entries()].map(([asset, amount]) => ({ asset, amount: String(Math.round(amount * 1e6) / 1e6) })),
         http_statuses: Object.fromEntries(statuses),
         latency: latencyStats(obs.filter((o) => o.latency_ms != null).map((o) => o.latency_ms!)),
-        history: obs.map((o) => ({ ...obsView(o), delivered: o.data_returned ? "yes" : "no", ...(rcpts.has(o.tx_hash) ? { receipt: rcpts.get(o.tx_hash) } : {}) })),
+        history: obs.map((o) => ({ ...obsView(o), delivered: { delivered: "yes", not_delivered: "no", inconclusive: "unknown (inconclusive, Lumi-side)" }[deliveryState(o)], ...(rcpts.has(o.tx_hash) ? { receipt: rcpts.get(o.tx_hash) } : {}) })),
         receipts: { signed: obs.filter((o) => rcpts.has(o.tx_hash)).length, of: obs.length, format: "counterparty_delivery_receipt v0.1, signed by the paying wallet", verify: `${base}/v1/trust/receipts/verify` },
       },
       quote_checks: {
@@ -1084,7 +1096,9 @@ export function createTrust(deps: TrustDeps): Trust {
     if (b.amount != null && Math.abs(Number(b.amount) - Number(pay.amount)) > 1e-9) return json(422, { recorded: false, reason: "amount_mismatch", ledger_amount: pay.amount });
     if (b.asset != null && b.asset !== pay.asset) return json(422, { recorded: false, reason: "asset_mismatch", ledger_asset: pay.asset });
 
-    const row: ObservationRow = {
+    if (b.inconclusive != null && !isInconclusiveReason(b.inconclusive)) return bad("inconclusive", Object.keys(INCONCLUSIVE_REASONS).join(" | "));
+    // Guard: no HTTP status + no data is inconclusive (Lumi-side), never "no data returned".
+    const row: ObservationRow = guardBuy({
       vendor_id: vendor.id,
       endpoint,
       ts: Number.isFinite(pay.ts) ? pay.ts : now(),
@@ -1097,11 +1111,36 @@ export function createTrust(deps: TrustDeps): Trust {
       latency_ms: latency,
       summary,
       source: "lumi_test_buy",
-    };
+      inconclusive: b.inconclusive ?? null,
+    });
     const ins = await store.addObservation(row);
     deps.log({ event: "trust_observation", vendor: vendor.id, inserted: ins === "inserted" });
     if (ins === "duplicate") return json(200, { recorded: false, duplicate: true, tx_hash: tx });
     return json(201, { recorded: true, observation: obsView(row) });
+  }
+
+  // ---------------- POST /v1/trust/buys/inconclusive (owner): correct a stored buy to "delivery unknown, Lumi-side"
+
+  async function postInconclusive(request: Request): Promise<Response> {
+    if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+    const parsed = await readJson(request);
+    if (!parsed.ok) return parsed.res;
+    const b = parsed.body;
+    const tx = typeof b.tx_hash === "string" ? b.tx_hash.trim() : "";
+    if (!/^(0x[0-9a-fA-F]{64}|[0-9A-Fa-f]{64})$/.test(tx)) return bad("tx_hash", "XRPL (64 hex) or Base (0x + 64 hex) tx hash");
+    if (!isInconclusiveReason(b.reason)) return bad("reason", Object.keys(INCONCLUSIVE_REASONS).join(" | "));
+    const norm = tx.startsWith("0x") ? tx.toLowerCase() : tx.toUpperCase();
+    const prior = deps.receipts ? await deps.receipts.buy(norm) : null;
+    if (!prior) return json(404, { error: "unknown_test_buy", tx_hash: norm });
+    if (prior.data_returned && b.force !== true) return json(409, { error: "buy_returned_data", detail: "This buy is recorded as delivered; not reclassified." });
+    const summary = guardBuy({ http_status: prior.http_status, data_returned: false, inconclusive: b.reason, summary: prior.summary }).summary;
+    const at = now();
+    const row = prior.kind === "catalog"
+      ? await deps.catalog?.markInconclusive(norm, b.reason, summary)
+      : await store.markObservationInconclusive(norm, b.reason, summary, at);
+    if (!row) return json(404, { error: "unknown_test_buy", tx_hash: norm });
+    deps.log({ event: "buy_marked_inconclusive", tx: norm, kind: prior.kind, reason: b.reason });
+    return json(200, { corrected: true, tx_hash: norm, kind: prior.kind, reason: b.reason, summary_before: prior.summary, summary, delivery: deliveryState(row), data_returned: dataReturnedView(row), note: "Prior summary kept (summary_before). Log the public correction at POST /v1/owner/corrections and upload a superseding receipt." });
   }
 
   async function lookup(q: LookupQuery, base: string, opts: { free?: boolean } = {}): Promise<Record<string, unknown>> {
@@ -1133,7 +1172,11 @@ export function createTrust(deps: TrustDeps): Trust {
       const out: Record<string, unknown> = { kind: "receipt_verification_result", ...check };
       if (check.hash_ok && deps.receipts) {
         const known = (await deps.receipts.byTx([String(r.payment.tx_hash)]).catch(() => new Map())).get(String(r.payment.tx_hash));
-        out.issued_by_lumi = known ? known.receipt_hash === r.receipt_hash : false;
+        const current = !!known && known.receipt_hash === r.receipt_hash;
+        const old = current ? null : await deps.receipts.superseded(String(r.receipt_hash)).catch(() => null);
+        out.issued_by_lumi = current || !!old;
+        out.status = current ? "current" : old ? "superseded" : "unknown";
+        if (old) out.superseded = { at: iso(old.superseded_at), by_receipt_hash: old.superseded_by, reason: old.reason, corrections: `${base}/v1/monitor/corrections` };
       }
       if (new URL(request.url).searchParams.get("ledger") === "1" && check.ok) {
         const p = r.payment;
@@ -1151,12 +1194,19 @@ export function createTrust(deps: TrustDeps): Trust {
           out.ledger = { ok: !errs.length, errors: errs, checked_at: iso(now()) };
         }
       }
-      out.note = "Hash and signature prove the paying wallet signed this receipt. delivery.* is the tester's signed statement; it cannot be proven on-chain.";
+      out.note = "Hash and signature prove the paying wallet signed this receipt (signature_ok is only true when the signature covers this exact body). delivery.* is the tester's signed statement; it cannot be proven on-chain. status superseded = Lumi replaced this receipt with a correction (see superseded).";
       return json(200, out, { "Cache-Control": "no-store" });
     }
     if (!deps.receipts) return json(404, { error: "not_found" });
     if (path === "/v1/trust/receipts/pending" && (method === "GET" || method === "HEAD")) {
       if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+      const one = new URL(request.url).searchParams.get("tx");
+      if (one) {
+        // Re-sign one stored buy (correction): its current row and the receipt it would supersede.
+        const buy = await deps.receipts.buy(one);
+        const cur = buy ? (await deps.receipts.byTx([buy.tx_hash]).catch(() => new Map<string, Receipt>())).get(buy.tx_hash) : undefined;
+        return json(buy ? 200 : 404, { pending: buy ? [buy] : [], current_receipt_hash: cur?.receipt_hash ?? null }, { "Cache-Control": "no-store" });
+      }
       const n = Number(new URL(request.url).searchParams.get("limit") ?? 100);
       return json(200, { pending: await deps.receipts.pending(Number.isFinite(n) ? n : 100), stored: await deps.receipts.count() }, { "Cache-Control": "no-store" });
     }
@@ -1178,8 +1228,15 @@ export function createTrust(deps: TrustDeps): Trust {
         if (!buy) { results.push({ tx_hash: tx, stored: false, errors: ["unknown_test_buy"] }); continue; }
         const mm = receiptMatchesBuy(r, buy);
         if (mm) { results.push({ tx_hash: tx, stored: false, errors: [mm] }); continue; }
+        // Replacing a stored receipt is a correction: the new receipt must name the one it supersedes, and the old one is
+        // archived verbatim (still verifiable, marked superseded) instead of being silently overwritten.
+        const cur = (await deps.receipts.byTx([tx]).catch(() => new Map<string, Receipt>())).get(tx);
+        if (cur && cur.receipt_hash === r.receipt_hash) { results.push({ tx_hash: tx, stored: false, duplicate: true }); continue; }
+        if (cur && r.supersedes?.receipt_hash !== cur.receipt_hash) { results.push({ tx_hash: tx, stored: false, errors: ["supersedes_required"], current_receipt_hash: cur.receipt_hash }); continue; }
+        if (!cur && r.supersedes) { results.push({ tx_hash: tx, stored: false, errors: ["nothing_to_supersede"] }); continue; }
+        if (cur) await deps.receipts.archive({ receipt_hash: cur.receipt_hash, tx_hash: tx, receipt: cur, superseded_at: now(), superseded_by: r.receipt_hash, reason: String(r.supersedes.reason ?? "").slice(0, 300) });
         ok.push({ tx_hash: tx, network: buy.network, kind: buy.kind, ref: buy.ref, receipt: r });
-        results.push({ tx_hash: tx, stored: true });
+        results.push({ tx_hash: tx, stored: true, ...(cur ? { superseded: cur.receipt_hash } : {}) });
       }
       await deps.receipts.put(ok);
       deps.log({ event: "receipts_stored", n: ok.length, rejected: list.length - ok.length });
@@ -1243,6 +1300,8 @@ export function createTrust(deps: TrustDeps): Trust {
         return postReply(request, base);
       case "/v1/trust/observations":
         return postObservation(request, base);
+      case "/v1/trust/buys/inconclusive":
+        return postInconclusive(request);
       case "/v1/trust/probe":
         if (!(await isOwner(request))) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
         return json(200, { ran: true, ...(await runProbes()) });

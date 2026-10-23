@@ -5,6 +5,7 @@
  * "purchase-verified". Nothing here rates a seller as good or bad.
  */
 import type { D1Like } from "../config";
+import { dataReturnedView, deliveryCounts, deliveryState, inconclusiveReason } from "./delivery";
 
 export const DISCOVERY_URL = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources";
 export const INGEST_PAGE = 30; // CDP discovery forces limit=30 and snaps offset down to a multiple of 30, so pages must be 30-aligned (a 50-item stride skipped 40% of the catalog)
@@ -218,6 +219,10 @@ export interface BuyRow {
   data_returned: boolean;
   latency_ms: number | null;
   summary: string;
+  /** Set when Lumi never saw an HTTP response (Lumi-side): delivery unknown, never "no data" (delivery.ts). */
+  inconclusive?: string | null;
+  corrected_at?: number | null;
+  summary_before?: string | null;
 }
 
 export interface DomainRow {
@@ -262,6 +267,8 @@ export interface CatalogStore {
   byPayTos(payTosLc: string[], limit: number): Promise<CatalogRow[]>;
   buysFor(resources: string[]): Promise<BuyRow[]>;
   addBuy(row: BuyRow): Promise<"inserted" | "duplicate">;
+  /** Owner correction: mark a stored buy inconclusive (Lumi-side). Keeps the old summary in summary_before. */
+  markInconclusive(tx: string, reason: string, summary: string, at: number): Promise<BuyRow | null>;
   boughtResources(): Promise<string[]>;
   popular(maxUsd: number, limit: number, network: string): Promise<CatalogRow[]>;
   /** Most-used listings first (Bazaar 30-day calls), for the free teaser browse. */
@@ -343,6 +350,13 @@ export class MemoryCatalogStore implements CatalogStore {
     if (this.buys.some((b) => b.tx_hash === row.tx_hash)) return "duplicate" as const;
     this.buys.push({ ...row });
     return "inserted" as const;
+  }
+  async markInconclusive(tx: string, reason: string, summary: string, at: number) {
+    const b = this.buys.find((x) => x.tx_hash === tx);
+    if (!b) return null;
+    if (b.summary_before == null) b.summary_before = b.summary;
+    Object.assign(b, { inconclusive: reason, summary, corrected_at: at, data_returned: false });
+    return { ...b };
   }
   async boughtResources() { return [...new Set(this.buys.map((b) => b.resource))]; }
   async top(offset: number, limit: number) {
@@ -491,12 +505,19 @@ export class D1CatalogStore implements CatalogStore {
   async addBuy(b: BuyRow) {
     const r: any = await this.db
       .prepare(
-        `INSERT OR IGNORE INTO catalog_buys (resource, domain, ts, network, tx_hash, amount, asset, pay_to, facilitator, http_status, data_returned, latency_ms, summary)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
+        `INSERT OR IGNORE INTO catalog_buys (resource, domain, ts, network, tx_hash, amount, asset, pay_to, facilitator, http_status, data_returned, latency_ms, summary, inconclusive)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
       )
-      .bind(b.resource, b.domain, b.ts, b.network, b.tx_hash, b.amount, b.asset, b.pay_to, b.facilitator, b.http_status, b.data_returned ? 1 : 0, b.latency_ms, b.summary)
+      .bind(b.resource, b.domain, b.ts, b.network, b.tx_hash, b.amount, b.asset, b.pay_to, b.facilitator, b.http_status, b.data_returned ? 1 : 0, b.latency_ms, b.summary, b.inconclusive ?? null)
       .run();
     return (r?.meta?.changes ?? 1) > 0 ? "inserted" : "duplicate";
+  }
+  async markInconclusive(tx: string, reason: string, summary: string, at: number) {
+    await this.db
+      .prepare("UPDATE catalog_buys SET summary_before = COALESCE(summary_before, summary), inconclusive = ?2, summary = ?3, corrected_at = ?4, data_returned = 0 WHERE tx_hash = ?1")
+      .bind(tx, reason, summary, at).run();
+    const r = await this.db.prepare("SELECT * FROM catalog_buys WHERE tx_hash = ?1").bind(tx).first<any>();
+    return r ? ({ ...r, data_returned: !!r.data_returned } as BuyRow) : null;
   }
   async boughtResources() {
     return (await this.db.prepare("SELECT DISTINCT resource FROM catalog_buys").all<{ resource: string }>()).results.map((r) => r.resource);
@@ -718,7 +739,10 @@ export function catalogView(row: CatalogRow, buys: BuyRow[], dom: DomainRow | un
     purchases: buys.length
       ? buys.slice(0, 5).map((b) => ({
           at: iso(b.ts), network: b.network, tx_hash: b.tx_hash, explorer: explorerFor(b.network, b.tx_hash), amount: b.amount, asset: b.asset,
-          facilitator: b.facilitator, http_status: b.http_status, data_returned: b.data_returned, latency_ms: b.latency_ms, summary: b.summary,
+          facilitator: b.facilitator, http_status: b.http_status, data_returned: dataReturnedView(b), delivery: deliveryState(b),
+          ...(inconclusiveReason(b) ? { inconclusive_reason: inconclusiveReason(b) } : {}),
+          latency_ms: b.latency_ms, summary: b.summary,
+          ...(b.corrected_at ? { corrected_at: iso(b.corrected_at), corrections: "https://api.lumitrades.io/v1/monitor/corrections" } : {}),
         }))
       : [],
     listed_until: row.last_seen < now - DELISTED_AFTER_MS ? iso(row.last_seen) : null,
@@ -751,7 +775,9 @@ export function catalogFreeView(row: CatalogRow, buys: BuyRow[], now: number) {
           pays_listed_address: row.probe_pay_to_match == null ? null : row.probe_pay_to_match === 1,
           price_matches_listing: row.probe_price_match == null ? null : row.probe_price_match === 1,
         },
-    test_buys: buys.length ? { count: buys.length, last_at: iso(last.ts), last_data_returned: last.data_returned } : { count: 0 },
+    test_buys: buys.length
+      ? { count: buys.length, last_at: iso(last.ts), last_data_returned: dataReturnedView(last), last_delivery: deliveryState(last), ...deliveryCounts(buys) }
+      : { count: 0 },
     listed_until: row.last_seen < now - DELISTED_AFTER_MS ? iso(row.last_seen) : null,
   };
 }
