@@ -6,7 +6,7 @@
 import { setPrivateNames } from "./sanitize";
 import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
-import { D1TrialStore, MemoryTrialStore, SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, trialHint, wantsTrial, decodeSiwx, siwxChallenge, trialEligible, trialIpHash, usdcBalance, verifySiwx, type TrialStore } from "./trial";
+import { D1TrialStore, MemoryTrialStore, SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, trialHint, wantsTrial, decodeSiwx, siwxChallenge, trialEligible, trialIpHash, usdcBalance, verifySiwx, trialChains, xrplTrialAccount, type TrialStore } from "./trial";
 import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, staleRefusal, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
@@ -849,7 +849,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     // Free trial (x402 sign-in-with-x): eligible 402s carry a one-time challenge; a valid SIGN-IN-WITH-X retry (and no payment
     // header, which always wins) is served free within the caps. See src/trial.ts.
     const usdPrice = Number(config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route]);
-    if (trialsOn && config.evm && trialEligible(route, usdPrice)) {
+    if (trialsOn && trialEligible(route, usdPrice)) {
       const trialUri = `${url.origin}${path}${url.search}`;
       const siwxHeader = request.headers.get(SIWX_HEADER);
       const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
@@ -857,7 +857,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       // x402 payment quote, because discovery scanners (x402scan / @agentcash/discovery) classify any 402 carrying
       // extensions["sign-in-with-x"] as an identity-only free route. The plain 402 advertises the trial in a top-level `trial` field.
       if (wantsTrial(request) || siwxHeader) {
-        quote.extensions = { [SIWX_KEY]: await siwxChallenge(config.invoiceSecret, trialUri, now(), config.evm.network) };
+        quote.extensions = { [SIWX_KEY]: await siwxChallenge(config.invoiceSecret, trialUri, now(), trialChains(config.evm?.network, config.network)) };
       } else {
         quote.trial = trialHint();
       }
@@ -923,12 +923,18 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   async function runTrial(request: Request, header: string, uri: string, route: PaidRoute): Promise<{ ok: true; wallet: string; used: number } | { ok: false; reason: string }> {
     const payload = decodeSiwx(header);
     if (!payload) return { ok: false, reason: "invalid_sign_in_with_x_header" };
-    const v = await verifySiwx(config.invoiceSecret, payload, uri, now(), config.evm!.network);
+    const v = await verifySiwx(config.invoiceSecret, payload, uri, now(), trialChains(config.evm?.network, config.network));
     if (!v.ok) return v;
+    // One trial per wallet: Base and XRPL wallets share the same ledger and caps (wallet column: 0x lowercase or r-address).
     if ((await trials.usedByWallet(v.wallet).catch(() => 0)) >= TRIAL_LIMITS.perWallet) return { ok: false, reason: "wallet_trial_used_up" };
-    const bal = await usdcBalance(doFetch, trialRpcs, config.evm!.asset, v.wallet);
-    if (bal === null) return { ok: false, reason: "balance_check_unavailable" };
-    if (bal < TRIAL_LIMITS.minUsdcAtomic) return { ok: false, reason: "wallet_needs_0.01_usdc_on_base" };
+    if (v.chain === "xrpl") {
+      const acct = await xrplTrialAccount(doFetch, xrplRpc, v.wallet, v.signingKeyAddress!);
+      if (!acct.ok) return acct;
+    } else {
+      const bal = await usdcBalance(doFetch, trialRpcs, config.evm!.asset, v.wallet);
+      if (bal === null) return { ok: false, reason: "balance_check_unavailable" };
+      if (bal < TRIAL_LIMITS.minUsdcAtomic) return { ok: false, reason: "wallet_needs_0.01_usdc_on_base" };
+    }
     const ts = now();
     const day = new Date(ts).toISOString().slice(0, 10);
     const ipHash = await trialIpHash(request, env.TRAFFIC_SALT || config.invoiceSecret, day);

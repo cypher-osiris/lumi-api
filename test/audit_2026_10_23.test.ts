@@ -102,17 +102,21 @@ describe("L-9 error codes", () => {
 });
 
 describe("L-1 trial text", () => {
-  it("states the Base 0.01 USDC condition and no XRPL-only trial", async () => {
+  it("states the Base 0.01 USDC condition and the XRPL trial (one per wallet)", async () => {
     expect(TRIAL_SHORT).toMatch(/Base/);
     expect(TRIAL_SHORT).toMatch(/0\.01 USDC/);
-    expect(TRIAL_SHORT).toMatch(/XRPL-only wallets get no trial/);
-    expect(TRIAL_SUMMARY).toMatch(/XRPL-only wallets get no free trial/);
+    expect(TRIAL_SHORT).toMatch(/activated XRP Ledger account/);
+    expect(TRIAL_SHORT).toMatch(/one trial per wallet/);
+    expect(TRIAL_SHORT).not.toMatch(/no trial/);
+    expect(TRIAL_SUMMARY).toMatch(/XRP Ledger/);
+    expect(TRIAL_SUMMARY).not.toMatch(/no free trial/);
     const s = setup({ EVM_PAY_TO: "0x5E617bac19912e6d212CB303ae84655E9E203532" });
     const root = await (await s.req("/", { headers: { Accept: "application/json" } })).json();
-    expect(JSON.stringify(root)).toMatch(/XRPL-only/);
+    expect(JSON.stringify(root)).toMatch(/activated XRP Ledger account/);
+    expect(JSON.stringify(root)).not.toMatch(/XRPL-only wallets get no/);
     const init = await (await s.post("/mcp", { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } }, { Accept: "application/json, text/event-stream" })).json();
-    expect(init.result.instructions).toMatch(/XRPL-only wallets get no trial/);
-    expect(init.result.instructions).not.toMatch(/3 free trial calls \(XRP Ledger/);
+    expect(init.result.instructions).toMatch(/activated XRP Ledger account/);
+    expect(init.result.instructions).not.toMatch(/no trial/);
   });
 });
 

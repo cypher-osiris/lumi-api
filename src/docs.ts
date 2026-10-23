@@ -7,32 +7,68 @@ import { PAID_ENDPOINTS, priceTable, EXAMPLE_COIN } from "./catalog";
 import { BAZAAR_ROUTES, TRUST_ROUTES, VENDOR_ID_PATTERN, serviceNameFor } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
 import { RECEIPT_OUTCOMES } from "./trust/receipts";
-import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SHORT, TRIAL_SUMMARY, trialEligible } from "./trial";
+import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SHORT, TRIAL_SUMMARY, XRPL_SIWX_TYPE, trialChains, trialEligible } from "./trial";
 
 /** Free-trial terms (x402 sign-in-with-x), shown in the index, /.well-known/x402, OpenAPI, skill.md and the home page. */
 export function freeTrialInfo(cfg: Config) {
-  if (!cfg.evm) return null;
   return {
     summary: TRIAL_SUMMARY,
     free_calls_per_wallet: TRIAL_LIMITS.perWallet,
     eligible_routes: PAID_ENDPOINTS.filter((e) => trialEligible(e.route, Number(usdPrice(cfg, e.route)))).map((e) => e.route),
     not_eligible: PAID_ENDPOINTS.filter((e) => !trialEligible(e.route, Number(usdPrice(cfg, e.route)))).map((e) => e.route),
-    protocol: "x402 sign-in-with-x extension (CAIP-122 / EIP-4361), opt-in: send header X-Lumi-Trial: 1 and the 402 adds extensions[\"sign-in-with-x\"]",
+    protocol: "x402 sign-in-with-x extension (CAIP-122; EIP-4361 for Base), opt-in: send header X-Lumi-Trial: 1 and the 402 adds extensions[\"sign-in-with-x\"]",
     opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`,
     default_402: "without the opt-in header every 402 is a plain x402 payment quote (prices in accepts[]) with a top-level trial hint; it never carries the sign-in-with-x extension",
     header: SIWX_HEADER,
     extension_key: SIWX_KEY,
-    chain: cfg.evm.network,
-    signature: "EIP-191 personal_sign by an EOA (smart-contract wallets not supported for trials)",
-    requires: "the signing wallet holds at least 0.01 USDC on Base (checked on-chain, nothing is moved)",
-    xrpl_only: "no free trial for XRPL-only wallets: the trial needs a Base EOA holding at least 0.01 USDC; XRPL wallets pay per call",
+    chains: trialChains(cfg.evm?.network, cfg.network),
+    ...(cfg.evm
+      ? {
+          base: {
+            chain: cfg.evm.network,
+            signature: "EIP-191 personal_sign of the EIP-4361 message by an EOA (smart-contract wallets not supported for trials)",
+            requires: `the signing wallet holds at least 0.01 USDC on ${cfg.evm.networkName} (checked on-chain, nothing is moved)`,
+          },
+        }
+      : {}),
+    xrpl: {
+      chain: cfg.network,
+      type: XRPL_SIWX_TYPE,
+      message: `the same CAIP-122 message built from the challenge info, first line "<domain> wants you to sign in with your XRP Ledger account:", then the r-address; "Chain ID: ${cfg.network.split(":")[1]}"`,
+      signature: "ripple-keypairs sign(<UTF-8 bytes of the message as uppercase hex>, privateKey), hex; the payload adds publicKey (hex)",
+      key: "the master key (not disabled) or the account's current RegularKey, checked on the validated ledger",
+      requires: "an activated XRP Ledger account (its reserve is already locked; nothing is moved). XRP, RLUSD and USDC payers all qualify",
+    },
+    one_trial_per_wallet: "one ledger and the same caps for Base and XRPL wallets: 3 free calls per wallet in total, not per chain; the per-IP daily cap is shared across chains",
     limits: { per_wallet_lifetime: TRIAL_LIMITS.perWallet, per_ip_per_day: TRIAL_LIMITS.perIpDay, challenge_ttl_seconds: TRIAL_LIMITS.challengeTtlSec, one_time_challenge: true },
     response: "normal paid body plus access: { mode: \"trial\", charged: false, wallet, trial_calls_used, trial_calls_remaining }; no PAYMENT-RESPONSE, nothing settled",
     refused: "normal 402 (pay as usual) with a top-level trial: { granted: false, reason }",
     precedence: "a PAYMENT-SIGNATURE header always wins: a paid retry is settled normally",
-    client: "@x402/extensions/sign-in-with-x wrapFetchWithSIWx(fetch, account), called with headers { \"X-Lumi-Trial\": \"1\" }, does the signing and retry",
+    client: "Base: @x402/extensions/sign-in-with-x wrapFetchWithSIWx(fetch, account), called with headers { \"X-Lumi-Trial\": \"1\" }, does the signing and retry. XRPL: build the message, sign it with ripple-keypairs and send the payload yourself (see /llms.txt)",
     rest_only: "REST endpoints only (not MCP or A2A)",
   };
+}
+
+/** Runnable XRPL free-trial client (sign-in-with-x, type "xrpl"), shown in llms.txt and on the home page. */
+export function xrplTrialSnippet(base: string, network: string): string {
+  return `// npm i xrpl ripple-keypairs   (3 free calls per new wallet; nothing is charged)
+import { Wallet } from "xrpl";
+import { sign } from "ripple-keypairs";
+
+const wallet = Wallet.fromSeed(process.env.XRPL_SEED);
+const url = "${base}/v1/sentiment";
+const quote = await (await fetch(url, { headers: { "X-Lumi-Trial": "1" } })).json();
+const ext = quote.extensions["sign-in-with-x"], i = ext.info;
+const chain = ext.supportedChains.find((c) => c.type === "xrpl"); // { chainId: "${network}", type: "xrpl" }
+const message = [
+  \`\${i.domain} wants you to sign in with your XRP Ledger account:\`, wallet.classicAddress, "", i.statement, "",
+  \`URI: \${i.uri}\`, \`Version: \${i.version}\`, \`Chain ID: \${chain.chainId.split(":")[1]}\`, \`Nonce: \${i.nonce}\`,
+  \`Issued At: \${i.issuedAt}\`, \`Expiration Time: \${i.expirationTime}\`, "Resources:", ...i.resources.map((r) => \`- \${r}\`),
+].join("\\n");
+const signature = sign(Buffer.from(message, "utf8").toString("hex").toUpperCase(), wallet.privateKey);
+const payload = { ...i, address: wallet.classicAddress, chainId: chain.chainId, type: "xrpl", signature, publicKey: wallet.publicKey };
+const res = await fetch(url, { headers: { "SIGN-IN-WITH-X": Buffer.from(JSON.stringify(payload)).toString("base64") } });
+const body = await res.json(); // body.access = { mode: "trial", charged: false, trial_calls_remaining, ... }`;
 }
 
 /** OpenAPI schema of a receipt's delivery block. data_returned is null when delivery is inconclusive (Lumi recorded no HTTP response). */
@@ -51,7 +87,7 @@ export const RECEIPT_DELIVERY_SCHEMA = {
   required: ["observed_at", "http_status", "data_returned", "outcome"],
 } as const;
 
-export const VERSION = "1.1.2";
+export const VERSION = "1.1.3";
 
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
@@ -85,7 +121,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       "ideas, the BTC/macro backdrop, a daily market brief, a yen carry-trade watch, a sentiment snapshot (Fear & Greed + funding), an events calendar " +
       "and the raw paper-trade history, an all-coins signal scan, lite per-coin reads, funding rates, CoinMarketCap Fear & Greed with history, the next 48h of events, " +
       "plus an x402 'should I pay this URL?' check, paid x402 vendor reports and a daily policy brief. " +
-      (cfg.evm ? `Trial: ${TRIAL_SHORT} (see free_trial). ` : "") +
+      `Trial: ${TRIAL_SHORT} (see free_trial). ` +
       `Agents call an endpoint, receive HTTP 402 with the price in ${acceptsOrder(cfg)}, sign ${cfg.evm ? "an EIP-3009 USDC authorization or " : ""}a small XRPL Payment, retry, and get JSON back. ` +
       FRESHNESS_FIELDS,
     source: SOURCE,
@@ -271,7 +307,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           : e.route === "trust_check"
           ? { "x-example-url": `${base}${e.template}?url=${encodeURIComponent("https://api.example.com/v1/data")}` }
           : {}),
-        ...(cfg.evm ? { "x-free-trial": trialEligible(e.route, Number(usdPrice(cfg, e.route))) ? { eligible: true, free_calls_per_wallet: TRIAL_LIMITS.perWallet, opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`, header: SIWX_HEADER, extension: SIWX_KEY } : { eligible: false } } : {}),
+        "x-free-trial": trialEligible(e.route, Number(usdPrice(cfg, e.route))) ? { eligible: true, free_calls_per_wallet: TRIAL_LIMITS.perWallet, opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`, header: SIWX_HEADER, extension: SIWX_KEY } : { eligible: false },
         "x-payment-info": {
           // x402scan discovery spec: protocols as objects, price in decimal USD (the per-asset terms follow).
           protocols: [{ x402: {} }],
@@ -333,7 +369,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         `Pay-per-call crypto market reads from lumitrades.io for AI agents: per-coin buy/sell signal scores, support/resistance levels, ` +
         `paper-trade ideas, macro backdrop, sentiment, events, a daily market brief and a daily policy brief, ` +
         `plus x402 seller checks (free lookup; paid pre-payment check and vendor reports). No API key: pay a few cents per call in ${settledIn(cfg)} via x402. ` +
-        (cfg.evm ? `${TRIAL_SUMMARY} ` : "") +
+        `${TRIAL_SUMMARY} ` +
         `Not charged on bad input or stale data; every response carries as_of, data_age_seconds, next_update and stale_after.`,
       "x-guidance":
         `Use this API when you need a current technical read or trade-idea context. Signals cover ${coins.length} top coins (computed live, 1h refreshed about every 13 minutes); levels, slate and trades cover ${siteOnly(coins).map((c) => c.symbol).join(", ")}. ` +
@@ -605,21 +641,26 @@ Free: \`GET /\`, \`GET /health\`, \`GET /skill.md\`, \`GET /v1/coins\`, \`GET /v
 
 Every paid response is JSON with \`kind\`, \`timestamp\`, \`source: "${SOURCE}"\`, \`as_of\`, \`data_age_seconds\`, \`next_update\`, \`stale_after\`, a \`payment\` block (network, tx hash, explorer link) and a \`disclaimer\`. All timestamps are ISO 8601 UTC.
 lumitrades.io publishes market data, signals and analysis four times a day (6 AM, 12 PM, 6 PM and 11 PM US Central); the policy brief (\`/v1/institutional\`) once a day (not sold if older than 36 h).
-${cfg.evm ? `
-## Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet
 
-Every paid endpoint except \`/v1/institutional\` can be tried for free, ${TRIAL_LIMITS.perWallet} calls per wallet, using the official
-x402 **sign-in-with-x** extension (CAIP-122 / EIP-4361). Nothing is charged and no funds move.
+## Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet (Base or XRPL)
 
-1. Send the request with header \`${TRIAL_OPT_IN_HEADER}: 1\`. The 402 then also carries \`extensions["sign-in-with-x"]\` = \`{ info: { domain, uri, version: "1", nonce, issuedAt, expirationTime, statement, resources: [uri] }, supportedChains: [{ chainId: "${cfg.evm.network}", type: "eip191" }] }\`.
+Every paid endpoint except \`/v1/institutional\` can be tried for free, ${TRIAL_LIMITS.perWallet} calls per wallet, using the
+x402 **sign-in-with-x** extension (CAIP-122). Nothing is charged and no funds move. It works with a Base wallet or an XRP Ledger
+wallet; it is one trial per wallet (one shared ledger and the same caps for both chains, not 3 per chain).
+
+1. Send the request with header \`${TRIAL_OPT_IN_HEADER}: 1\`. The 402 then also carries \`extensions["sign-in-with-x"]\` = \`{ info: { domain, uri, version: "1", nonce, issuedAt, expirationTime, statement, resources: [uri] }, supportedChains: ${JSON.stringify(trialChains(cfg.evm?.network, cfg.network))} }\`.
    The challenge is one-time, bound to that exact URL and valid for ${TRIAL_LIMITS.challengeTtlSec / 60} minutes.
-2. Sign the EIP-4361 message for those fields with an EOA wallet on ${cfg.evm.networkName} (EIP-191 \`personal_sign\`). The wallet must hold at least 0.01 USDC on ${cfg.evm.networkName} (checked on-chain, nothing is moved).
-3. Retry the same URL with header \`${SIWX_HEADER}: base64(JSON{ domain, address, statement, uri, version, chainId, type, nonce, issuedAt, expirationTime, resources, signature })\`.
+2. Sign it with your wallet (proof of control; not a payment):
+${cfg.evm ? `   - **Base** (\`type: "eip191"\`): sign the EIP-4361 message for those fields with an EOA on ${cfg.evm.networkName} (EIP-191 \`personal_sign\`). The wallet must hold at least 0.01 USDC on ${cfg.evm.networkName} (checked on-chain, nothing is moved).
+` : ""}   - **XRP Ledger** (\`type: "${XRPL_SIWX_TYPE}"\`, \`chainId: "${cfg.network}"\`): build the same CAIP-122 message, with first line \`<domain> wants you to sign in with your XRP Ledger account:\`, your r-address on the second line and \`Chain ID: ${cfg.network.split(":")[1]}\`, then sign its UTF-8 bytes with ripple-keypairs: \`sign(utf8 hex, privateKey)\`. Add \`publicKey\` (hex) to the payload. The key must be the account's master key (not disabled) or its current RegularKey, and the account must be activated (checked on the validated ledger, nothing is moved). XRP, RLUSD and USDC payers all qualify.
+3. Retry the same URL with header \`${SIWX_HEADER}: base64(JSON{ domain, address, statement, uri, version, chainId, type, nonce, issuedAt, expirationTime, resources, signature[, publicKey] })\`.
 4. You get the normal body plus \`access: { mode: "trial", charged: false, wallet, trial_calls_used, trial_calls_remaining }\`. If the trial is not granted
-   (used up, ${TRIAL_LIMITS.perIpDay} per IP per day, bad or reused signature, empty wallet) you get the normal 402 with \`trial: { granted: false, reason }\`: just pay.
+   (used up, ${TRIAL_LIMITS.perIpDay} per IP per day, bad or reused signature, unfunded wallet) you get the normal 402 with \`trial: { granted: false, reason }\`: just pay.
 
 Without that header the 402 is a plain x402 payment quote (with a top-level \`trial\` hint), so normal payers and discovery scanners see prices only.
-A \`PAYMENT-SIGNATURE\` header always takes precedence. REST only (not MCP/A2A). With the official client:
+A \`PAYMENT-SIGNATURE\` header always takes precedence. REST only (not MCP/A2A).
+${cfg.evm ? `
+Base, with the official client:
 
 \`\`\`ts
 import { wrapFetchWithSIWx } from "@x402/extensions/sign-in-with-x";
@@ -628,6 +669,12 @@ const tryFree = wrapFetchWithSIWx(fetch, privateKeyToAccount(process.env.EVM_PRI
 const r = await tryFree("${base}/v1/sentiment", { headers: { "${TRIAL_OPT_IN_HEADER}": "1" } }); // 200 with access.mode "trial" (first ${TRIAL_LIMITS.perWallet} calls), else the 402 to pay
 \`\`\`
 ` : ""}
+XRP Ledger:
+
+\`\`\`ts
+${xrplTrialSnippet(base, cfg.network)}
+\`\`\`
+
 ## How payment works
 
 \`accepts[]\` order: ${acceptsOrder(cfg)}. Choose by \`network\` + \`asset\`, not by position; all options share one invoice that can be paid once.
@@ -819,7 +866,7 @@ export function indexHtml(cfg: Config, base: string, coins: CoinRef[]): string {
   const title = "Lumi API: pay-per-call crypto signals and x402 seller checks (pay on XRPL or Base)";
   const desc =
     "Crypto trading signals for 50 coins (single, lite or all-in-one scan), support/resistance levels, funding, Fear & Greed, a daily market brief, sentiment, events and free x402 vendor trust " +
-    "observations for AI agents. No API key: most calls cost $0.003-$0.02 with x402 in USDC on Base or XRP/RLUSD/USDC on the XRP Ledger, and new Base wallets holding at least 0.01 USDC get 3 free trial calls (XRPL-only wallets: no trial).";
+    "observations for AI agents. No API key: most calls cost $0.003-$0.02 with x402 in USDC on Base or XRP/RLUSD/USDC on the XRP Ledger, and new wallets get 3 free trial calls (a Base wallet holding at least 0.01 USDC or an activated XRP Ledger account; one trial per wallet).";
   const rows = priceTable(cfg)
     .map((p) => {
       const usd = p.price_base_usdc ?? p.price_rlusd ?? p.price_usdc;
@@ -959,7 +1006,7 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
 <strong>Daily market brief:</strong> <a href="${esc(base)}/v1/brief">GET /v1/brief</a> ($${usdPrice(cfg, "brief")}, returns HTTP 402 with the price until paid).<br>
-${cfg.evm ? `<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with a Base wallet holding at least 0.01 USDC (no payment, nothing moves). XRPL-only wallets get no trial. <a href="#trial">How</a>.<br>` : ""}
+<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with ${cfg.evm ? "a Base wallet holding at least 0.01 USDC or " : ""}an activated XRP Ledger account (no payment, nothing moves; one trial per wallet). <a href="#trial">How</a>.<br>
 <strong>New:</strong> <a href="${esc(base)}/v1/scan">/v1/scan</a> (all ${coins.length} coins in one call, $${usdPrice(cfg, "scan")}) &middot;
 <a href="${esc(base)}/v1/trust/check?url=https%3A%2F%2Fapi.example.com%2Fv1%2Fdata">/v1/trust/check</a> (should I pay this x402 URL? allow / warn / block, $${usdPrice(cfg, "trust_check")}) &middot;
 <a href="${esc(base)}/v1/lite/${EXAMPLE_COIN}">/v1/lite/{coin}</a> &middot; <a href="${esc(base)}/v1/funding">/v1/funding</a> &middot; <a href="${esc(base)}/v1/fear-greed">/v1/fear-greed</a> &middot; <a href="${esc(base)}/v1/events/next48h">/v1/events/next48h</a></p></div>
@@ -983,9 +1030,9 @@ ${planPriceTable(base).filter((p) => p.path.startsWith("/v1/feed")).map((p) => `
 ${evm ? `<h2>Quickstart: USDC on Base (x402 fetch SDK)</h2>${pre(baseSnippet)}
 <h2>Quickstart: Coinbase AgentKit</h2>${pre(agentkitSnippet)}
 <p class="note">Full runnable example: <a href="https://github.com/cypher-osiris/lumi-api/blob/main/examples/agentkit-direct-url.ts">examples/agentkit-direct-url.ts</a></p>` : ""}
-${cfg.evm ? `<h2 id="trial">Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet</h2>${pre(trialSnippet)}
-<p class="note">Uses the official x402 <code>sign-in-with-x</code> extension (EIP-4361). The wallet must hold at least 0.01 USDC on ${esc(cfg.evm.networkName)}; nothing is charged or moved. Limits: ${TRIAL_LIMITS.perWallet} per wallet, ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges, not for <code>/v1/institutional</code>. The response carries <code>access.mode: "trial"</code>, <code>charged: false</code>. After that, pay per call as usual.</p>
-` : ""}<h2>Quickstart: XRP Ledger (XRP, RLUSD, USDC)</h2>${pre(xrplSnippet)}
+<h2 id="trial">Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet (Base or XRPL)</h2>${cfg.evm ? pre(trialSnippet) : ""}${pre(xrplTrialSnippet(base, cfg.network))}
+<p class="note">Uses the x402 <code>sign-in-with-x</code> extension (CAIP-122). ${cfg.evm ? `Base: EIP-4361 signed by an EOA holding at least 0.01 USDC on ${esc(cfg.evm.networkName)}. ` : ""}XRP Ledger: type <code>xrpl</code>, signed with the account's master key or current regular key (ripple-keypairs) plus <code>publicKey</code>; the account must be activated. Nothing is charged or moved. Limits: ${TRIAL_LIMITS.perWallet} per wallet (one trial per wallet, not per chain), ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges, not for <code>/v1/institutional</code>. The response carries <code>access.mode: "trial"</code>, <code>charged: false</code>. After that, pay per call as usual.</p>
+<h2>Quickstart: XRP Ledger (XRP, RLUSD, USDC)</h2>${pre(xrplSnippet)}
 <h2>MCP (Claude, Cursor, any MCP client)</h2>${pre(mcpSnippet)}
 <p class="note">The remote server lists prices and payment terms; the npm package <code>lumi-trades-mcp</code> pays from your own wallet within per-call caps.</p>
 </main>

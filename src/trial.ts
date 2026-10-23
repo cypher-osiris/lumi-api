@@ -6,38 +6,50 @@
  * that opts in with header `X-Lumi-Trial: 1` gets the same 402 plus `extensions["sign-in-with-x"]` (a one-time challenge;
  * opt-in so discovery scanners never list the paid routes as identity-only SIWX routes). The client signs
  * the EIP-4361 message with its Base wallet (EOA, EIP-191) and retries with header `SIGN-IN-WITH-X: base64(JSON payload)`.
+ * XRPL wallets (v1.1.3) answer the same challenge with `type: "xrpl"`: the same CAIP-122 message with "XRP Ledger account" and
+ * `Chain ID: 0`, signed with ripple-keypairs over its UTF-8 bytes; the payload adds `publicKey`. The key must derive to the
+ * address (master key, not disabled) or be the account's current RegularKey (checked on the validated ledger).
  * If the signature, challenge and caps check out, the call is served free (`access.mode = "trial"`, nothing settled).
  *
  * Abuse resistance:
  * - the challenge nonce is random + HMAC(secret) over (issuedAt, expiry, exact URL): only Lumi can mint one, it is bound to
  *   one URL and expires after 5 minutes; each nonce can be used once (D1 primary key);
- * - the signer must hold at least 0.01 USDC on Base (a funded wallet that could pay), checked on-chain;
- * - caps, enforced in one atomic INSERT: 3 trial calls per wallet ever, 3 per (daily-rotating keyed) IP hash per day, and a
+ * - the signer must be a funded wallet that could pay: at least 0.01 USDC on Base, or an activated XRPL account (the
+ *   account reserve is already locked), checked on-chain;
+ * - caps, enforced in one atomic INSERT over one shared ledger for both chains: 3 trial calls per wallet ever, 3 per (daily-rotating keyed) IP hash per day, and a
  *   global daily cap. Raw IPs are never stored.
  * - the daily policy brief (/v1/institutional) and anything above $0.03 are not eligible.
  */
 import type { D1Like, PaidRoute } from "./config";
-import { recoverEvmSigner } from "./trust/verify";
+import { recoverEvmSigner, verifyXrplSignature, xrplAddressOf, XRPL_ADDR_RE } from "./trust/verify";
 
 export const SIWX_KEY = "sign-in-with-x";
 export const SIWX_HEADER = "SIGN-IN-WITH-X";
 /** Request header that opts in to the SIWX trial challenge on a 402. */
 export const TRIAL_OPT_IN_HEADER = "X-Lumi-Trial";
 export const TRIAL_CHAIN = "eip155:8453";
+/** SIWX signature type for XRPL wallets (Lumi-defined; the official client hooks ignore types they do not sign). */
+export const XRPL_SIWX_TYPE = "xrpl";
+export type TrialChain = { chainId: string; type: string };
+/** supportedChains for the challenge: Base (when configured) first, then the XRP Ledger network. */
+export function trialChains(evmNetwork: string | undefined, xrplNetwork: string): TrialChain[] {
+  return [...(evmNetwork ? [{ chainId: evmNetwork, type: "eip191" }] : []), { chainId: xrplNetwork, type: XRPL_SIWX_TYPE }];
+}
 export const TRIAL_LIMITS = { perWallet: 3, perIpDay: 3, globalDay: 300, challengeTtlSec: 300, maxUsd: 0.03, minUsdcAtomic: 10_000n };
 export const TRIAL_EXCLUDED: PaidRoute[] = ["institutional"];
 export const TRIAL_STATEMENT = "Lumi API free trial: sign to prove you control this wallet. This is not a payment and moves no funds.";
 
 export const TRIAL_SUMMARY =
   `Free trial: ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except /v1/institutional. ` +
-  `Send the request with header X-Lumi-Trial: 1 and the 402 also carries extensions["sign-in-with-x"] (x402 SIWX, EIP-4361): sign it with a ` +
-  `Base wallet holding at least 0.01 USDC and retry with the SIGN-IN-WITH-X header (@x402/extensions wrapFetchWithSIWx does this). ` +
-  `Nothing is charged; caps: ${TRIAL_LIMITS.perWallet} per wallet, ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges. ` +
-  `XRPL-only wallets get no free trial (the trial needs that Base wallet); they pay per call. Without that header every 402 is a plain x402 payment quote.`;
+  `Send the request with header X-Lumi-Trial: 1 and the 402 also carries extensions["sign-in-with-x"] (x402 SIWX, CAIP-122): sign it with a ` +
+  `Base wallet holding at least 0.01 USDC (EIP-4361, @x402/extensions wrapFetchWithSIWx does this) or an activated XRP Ledger account ` +
+  `(type "xrpl", ripple-keypairs signature plus publicKey) and retry with the SIGN-IN-WITH-X header. ` +
+  `Nothing is charged; caps: ${TRIAL_LIMITS.perWallet} per wallet (one trial per wallet, whichever chain), ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges. ` +
+  `Without that header every 402 is a plain x402 payment quote.`;
 
 /** One-line trial terms for listings, MCP instructions and the index (keep in sync with TRIAL_SUMMARY). */
 export const TRIAL_SHORT =
-  `new Base wallets holding at least 0.01 USDC get ${TRIAL_LIMITS.perWallet} free trial calls over REST (x402 sign-in-with-x; nothing is charged or moved); XRPL-only wallets get no trial`;
+  `new wallets get ${TRIAL_LIMITS.perWallet} free trial calls over REST (x402 sign-in-with-x; nothing is charged or moved): a Base wallet holding at least 0.01 USDC or an activated XRP Ledger account, one trial per wallet`;
 
 /** True when the client asked for the SIWX trial challenge (X-Lumi-Trial: 1 / true / yes). */
 export function wantsTrial(request: Request): boolean {
@@ -52,7 +64,8 @@ export function trialHint(): Record<string, unknown> {
     opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`,
     detail:
       `New wallets get ${TRIAL_LIMITS.perWallet} free calls: repeat this request with header ${TRIAL_OPT_IN_HEADER}: 1 to receive a one-time ` +
-      `sign-in-with-x challenge, sign it with a Base wallet holding >= 0.01 USDC and retry with ${SIWX_HEADER}. Not a payment; or pay with any accepts[] option.`,
+      `sign-in-with-x challenge, sign it with a Base wallet holding >= 0.01 USDC or an activated XRP Ledger account (type "xrpl", add publicKey) ` +
+      `and retry with ${SIWX_HEADER}. Not a payment; or pay with any accepts[] option.`,
   };
 }
 
@@ -84,22 +97,41 @@ const SIWX_SCHEMA = {
 const macMsg = (rand: string, issuedAt: string, exp: string, uri: string) => `lumi-siwx|${rand}|${issuedAt}|${exp}|${uri}`;
 
 /** The `extensions["sign-in-with-x"]` declaration for one 402 (fresh nonce, bound to this exact URL). */
-export async function siwxChallenge(secret: string, uri: string, now: number, chainId = TRIAL_CHAIN) {
+export async function siwxChallenge(secret: string, uri: string, now: number, chains: string | TrialChain[] = TRIAL_CHAIN) {
+  const supportedChains = typeof chains === "string" ? [{ chainId: chains, type: "eip191" }] : chains;
   const rand = toHex(crypto.getRandomValues(new Uint8Array(8)));
   const issuedAt = isoS(now);
   const expirationTime = isoS(now + TRIAL_LIMITS.challengeTtlSec * 1000);
   const nonce = rand + (await hmacHex(secret, macMsg(rand, issuedAt, expirationTime, uri))).slice(0, 24);
   return {
     info: { domain: new URL(uri).host, uri, version: "1", nonce, issuedAt, expirationTime, statement: TRIAL_STATEMENT, resources: [uri] },
-    supportedChains: [{ chainId, type: "eip191" }],
+    supportedChains,
     schema: SIWX_SCHEMA,
-    lumi_trial: { free_calls_per_wallet: TRIAL_LIMITS.perWallet, header: SIWX_HEADER, requires: "Base EOA wallet holding >= 0.01 USDC", charged: false },
+    lumi_trial: {
+      free_calls_per_wallet: TRIAL_LIMITS.perWallet,
+      header: SIWX_HEADER,
+      requires: supportedChains.map((c) => (c.type === XRPL_SIWX_TYPE ? "activated XRP Ledger account (master key or current regular key)" : "Base EOA wallet holding >= 0.01 USDC")).join(", or "),
+      ...(supportedChains.some((c) => c.type === XRPL_SIWX_TYPE)
+        ? {
+            xrpl: {
+              type: XRPL_SIWX_TYPE,
+              message: 'the CAIP-122 message for info, with "XRP Ledger account" in the first line and "Chain ID: 0" (mainnet) or "1" (testnet)',
+              signature: "ripple-keypairs sign(<UTF-8 bytes of the message as uppercase hex>, privateKey)",
+              payload_extra: { publicKey: "hex public key of the signing key (master key or the account's current RegularKey)" },
+            },
+          }
+        : {}),
+      one_trial_per_wallet: true,
+      charged: false,
+    },
   };
 }
 
 export interface SiwxPayload {
   domain: string; address: string; statement?: string; uri: string; version: string; chainId: string; type: string;
   nonce: string; issuedAt: string; expirationTime?: string; notBefore?: string; requestId?: string; resources?: string[]; signature: string;
+  /** XRPL only: the public key that signed (master key or the account's RegularKey). */
+  publicKey?: string;
 }
 
 export function decodeSiwx(header: string): SiwxPayload | null {
@@ -112,10 +144,14 @@ export function decodeSiwx(header: string): SiwxPayload | null {
   }
 }
 
-/** EIP-4361 message, byte-identical to SiweMessage.prepareMessage() (what @x402/extensions signs). */
+/**
+ * EIP-4361 message, byte-identical to SiweMessage.prepareMessage() (what @x402/extensions signs). For XRPL (`xrpl:N`) the same
+ * CAIP-122 layout with "XRP Ledger account" and `Chain ID: N`.
+ */
 export function siweMessage(p: SiwxPayload): string {
-  const chainId = /^eip155:(\d+)$/.exec(p.chainId)?.[1] ?? p.chainId;
-  let head = `${p.domain} wants you to sign in with your Ethereum account:\n${p.address}`;
+  const xrpl = /^xrpl:/.test(p.chainId);
+  const chainId = /^(?:eip155|xrpl):(\d+)$/.exec(p.chainId)?.[1] ?? p.chainId;
+  let head = `${p.domain} wants you to sign in with your ${xrpl ? "XRP Ledger" : "Ethereum"} account:\n${p.address}`;
   head = p.statement === undefined ? `${head}\n\n` : `${[head, p.statement].join("\n\n")}\n`;
   const body = [`URI: ${p.uri}`, `Version: ${p.version}`, `Chain ID: ${chainId}`, `Nonce: ${p.nonce}`];
   if (p.issuedAt) body.push(`Issued At: ${p.issuedAt}`);
@@ -126,12 +162,18 @@ export function siweMessage(p: SiwxPayload): string {
   return [head, body.join("\n")].join("\n");
 }
 
-export type SiwxCheck = { ok: true; wallet: string; nonce: string } | { ok: false; reason: string };
+export type SiwxCheck =
+  | { ok: true; wallet: string; nonce: string; chain: "evm" | "xrpl"; signingKeyAddress?: string }
+  | { ok: false; reason: string };
 
 /** Signature + challenge checks (no I/O). `uri` is the URL being requested now. */
-export async function verifySiwx(secret: string, p: SiwxPayload, uri: string, now: number, chainId = TRIAL_CHAIN): Promise<SiwxCheck> {
-  if (p.chainId !== chainId || p.type !== "eip191") return { ok: false, reason: `unsupported_chain (${chainId} eip191 only)` };
-  if (!/^0x[0-9a-fA-F]{40}$/.test(p.address)) return { ok: false, reason: "invalid_address" };
+export async function verifySiwx(secret: string, p: SiwxPayload, uri: string, now: number, chains: string | TrialChain[] = TRIAL_CHAIN): Promise<SiwxCheck> {
+  const list = typeof chains === "string" ? [{ chainId: chains, type: "eip191" }] : chains;
+  if (!list.some((c) => c.chainId === p.chainId && c.type === p.type)) {
+    return { ok: false, reason: `unsupported_chain (${list.map((c) => `${c.chainId} ${c.type}`).join(" or ")} only)` };
+  }
+  const isXrpl = p.type === XRPL_SIWX_TYPE;
+  if (isXrpl ? !XRPL_ADDR_RE.test(p.address) : !/^0x[0-9a-fA-F]{40}$/.test(p.address)) return { ok: false, reason: "invalid_address" };
   if (p.version !== "1" || p.statement !== TRIAL_STATEMENT) return { ok: false, reason: "challenge_mismatch" };
   if (p.uri !== uri || p.domain !== new URL(uri).host || !Array.isArray(p.resources) || p.resources.length !== 1 || p.resources[0] !== uri) {
     return { ok: false, reason: "challenge_not_for_this_url" };
@@ -146,9 +188,55 @@ export async function verifySiwx(secret: string, p: SiwxPayload, uri: string, no
   const exp = Date.parse(p.expirationTime);
   if (!(exp - iat === TRIAL_LIMITS.challengeTtlSec * 1000) || iat > now + 60_000) return { ok: false, reason: "invalid_challenge" };
   if (now > exp) return { ok: false, reason: "challenge_expired" };
+  if (isXrpl) {
+    const pk = typeof p.publicKey === "string" ? p.publicKey.trim() : "";
+    if (!/^(ED[0-9A-F]{64}|0[23][0-9A-F]{64})$/i.test(pk)) return { ok: false, reason: "public_key_required_for_xrpl" };
+    if (typeof p.signature !== "string" || !/^[0-9A-Fa-f]{64,200}$/.test(p.signature)) return { ok: false, reason: "invalid_signature" };
+    if (!verifyXrplSignature(siweMessage(p), p.signature, pk)) return { ok: false, reason: "invalid_signature" };
+    const keyAddr = xrplAddressOf(pk);
+    if (!keyAddr) return { ok: false, reason: "invalid_signature" };
+    // Whether that key controls p.address (master key not disabled, or the current RegularKey) is a ledger check: see xrplTrialAccount.
+    return { ok: true, wallet: p.address, nonce: p.nonce, chain: "xrpl", signingKeyAddress: keyAddr };
+  }
   const signer = recoverEvmSigner(siweMessage(p), p.signature);
   if (!signer || signer !== p.address.toLowerCase()) return { ok: false, reason: "invalid_signature (EOA EIP-191 signatures only)" };
-  return { ok: true, wallet: signer, nonce: p.nonce };
+  return { ok: true, wallet: signer, nonce: p.nonce, chain: "evm" };
+}
+
+/** lsfDisableMaster: the master key may no longer sign for the account. */
+export const LSF_DISABLE_MASTER = 0x00100000;
+
+/**
+ * Ledger half of the XRPL trial check (one validated account_info read, no writes): the account must be activated, and
+ * the signing key must control it (the master key while not disabled, or the current RegularKey).
+ */
+export async function xrplTrialAccount(
+  f: typeof fetch,
+  urls: string[],
+  account: string,
+  signingKeyAddress: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  for (const url of urls) {
+    try {
+      const r = await f(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method: "account_info", params: [{ account, ledger_index: "validated" }] }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const res = ((await r.json()) as { result?: { account_data?: { Flags?: number; RegularKey?: string }; error?: string } })?.result;
+      if (res?.error === "actNotFound") return { ok: false, reason: "xrpl_account_not_activated" };
+      const ad = res?.account_data;
+      if (!ad) continue;
+      if (signingKeyAddress === account) {
+        return (Number(ad.Flags ?? 0) & LSF_DISABLE_MASTER) ? { ok: false, reason: "xrpl_master_key_disabled (sign with the regular key)" } : { ok: true };
+      }
+      return ad.RegularKey && ad.RegularKey === signingKeyAddress ? { ok: true } : { ok: false, reason: "signing_key_does_not_control_address" };
+    } catch {
+      /* next endpoint */
+    }
+  }
+  return { ok: false, reason: "ledger_check_unavailable" };
 }
 
 // ---------------------------------------------------------------- storage

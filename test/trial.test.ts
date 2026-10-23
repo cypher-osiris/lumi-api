@@ -66,7 +66,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(decodeB64Json(r.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
     const ext = body.extensions["sign-in-with-x"];
     expect(ext.info).toMatchObject({ domain: "lumi.test", uri: BASE + "/v1/sentiment", version: "1", statement: TRIAL_STATEMENT, resources: [BASE + "/v1/sentiment"] });
-    expect(ext.supportedChains).toEqual([{ chainId: "eip155:84532", type: "eip191" }]);
+    expect(ext.supportedChains).toEqual([{ chainId: "eip155:84532", type: "eip191" }, { chainId: "xrpl:1", type: "xrpl" }]);
     expect(body.extensions.bazaar).toBeTruthy();
     expect(body.accepts).toEqual(expect.arrayContaining([expect.objectContaining({ network: "eip155:84532" })]));
     const inst = await (await appFetch(BASE + "/v1/institutional", TRIAL)).json();
