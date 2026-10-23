@@ -426,6 +426,9 @@ export function createMonitor(deps: CommerceDeps) {
     return json(200, { kind: "monitor_due", generated_at: iso(t), tasks, post_results: `${base}/v1/owner/monitor/results` }, NO_STORE);
   }
 
+  /** XRP amounts are stored in drops; show them in XRP. */
+  const amt = (a: string | null, asset: string | null) => (a == null ? "?" : asset === "XRP" && /^\d+$/.test(a) ? `${Number(a) / 1e6} XRP` : `${a} ${asset ?? ""}`.trim());
+
   function priceChanged(prev: { amount: string | null; asset: string | null; usd: number | null }, cur: { amount: string | null; asset: string | null; usd: number | null }) {
     if (!cur.asset || !prev.asset) return false;
     if (prev.asset !== cur.asset) {
@@ -483,7 +486,7 @@ export function createMonitor(deps: CommerceDeps) {
       }
       const base0 = prev ? { amount: prev.amount, asset: prev.asset, usd: num(prev.quote_price_usd) } : { amount: ep.amount, asset: ep.asset, usd: num(ep.price_usd) };
       if (priceChanged(base0, { amount: run.amount, asset: run.asset, usd: num(run.quote_price_usd) })) {
-        kinds.push({ kind: "price_changed", detail: `Quoted price changed from ${base0.amount ?? "?"} ${base0.asset ?? ""} (~$${base0.usd ?? "?"}) to ${run.amount} ${run.asset} (~$${run.quote_price_usd ?? "?"}).` });
+        kinds.push({ kind: "price_changed", detail: `Quoted price changed from ${amt(base0.amount, base0.asset)} (~$${base0.usd ?? "?"}) to ${amt(run.amount, run.asset)} (~$${run.quote_price_usd ?? "?"}).` });
       }
       if (prev?.schema_hash && run.schema_hash && prev.schema_hash !== run.schema_hash && run.outcome === "delivered") kinds.push({ kind: "schema_changed", detail: "The structure (keys/types) of the paid response changed since the previous test." });
       if (failed(prev) && run.outcome === "delivered") kinds.push({ kind: "recovered", detail: "The endpoint delivers again after a failed test." });
