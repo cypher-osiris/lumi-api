@@ -267,9 +267,8 @@ describe("openapi scanner hints", () => {
     expect(oa.info.contact.email).toBe("hello@lumitrades.io");
     expect(oa.paths["/v1/coins"].get.security).toEqual([]);
     expect(oa.paths["/v1/trust/vendors"].get.security).toEqual([]);
-    expect(oa.paths["/v1/trust/vendors/{id}"].get.security).toEqual([]);
     // Not products: documented without `security: []` so x402scan does not list them as free resources.
-    for (const [p, m] of [["/health", "get"], ["/v1/reports", "post"], ["/v1/tips", "post"], ["/v1/trust/replies", "post"]]) {
+    for (const [p, m] of [["/health", "get"], ["/v1/reports", "post"], ["/v1/tips", "post"], ["/v1/trust/replies", "post"], ["/v1/trust/vendors/{id}", "get"]]) {
       expect(oa.paths[p][m], p).toBeDefined();
       expect(oa.paths[p][m].security, p).toBeUndefined();
     }
