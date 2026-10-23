@@ -89,6 +89,8 @@ export interface TrustStore {
   probeHistory(vendorId: string, since: number, limit: number): Promise<ProbeRow[]>;
   addObservation(row: ObservationRow): Promise<InsertResult>;
   observations(vendorId: string, since: number): Promise<ObservationRow[]>;
+  /** Badge read path (read-only, one indexed query): the newest `limit` buys across these vendors, any age. */
+  latestObservations(vendorIds: string[], limit: number): Promise<ObservationRow[]>;
   /** Owner correction: mark a stored test-buy inconclusive (Lumi-side). Keeps the old summary in summary_before. */
   markObservationInconclusive(tx: string, reason: string, summary: string, at: number): Promise<ObservationRow | null>;
   addReport(row: ReportRow): Promise<InsertResult>;
@@ -151,6 +153,9 @@ export class MemoryTrustStore implements TrustStore {
   }
   async observations(vendorId: string, since: number) {
     return this.obs.filter((o) => o.vendor_id === vendorId && o.ts >= since).sort((a, b) => b.ts - a.ts);
+  }
+  async latestObservations(vendorIds: string[], limit: number) {
+    return this.obs.filter((o) => vendorIds.includes(o.vendor_id)).sort((a, b) => b.ts - a.ts).slice(0, limit).map((o) => ({ ...o }));
   }
   async addReport(row: ReportRow): Promise<InsertResult> {
     if (row.verified && this.reports.some((r) => r.verified && r.tx_hash === row.tx_hash)) return "duplicate";
@@ -249,6 +254,15 @@ export class D1TrustStore implements TrustStore {
     const r = await this.db.prepare("SELECT * FROM observations WHERE vendor_id = ? AND ts >= ? ORDER BY ts DESC LIMIT 500").bind(vendorId, since).all();
     return r.results.map(obsFrom);
   }
+  async latestObservations(vendorIds: string[], limit: number) {
+    const ids = vendorIds.slice(0, 10);
+    if (!ids.length) return [];
+    const r = await this.db
+      .prepare(`SELECT vendor_id, endpoint, ts, network, tx_hash, amount, asset, http_status, data_returned, latency_ms, summary, source, inconclusive, corrected_at FROM observations WHERE vendor_id IN (${ids.map(() => "?").join(",")}) ORDER BY ts DESC LIMIT ${Math.max(1, Math.min(50, limit))}`)
+      .bind(...ids).all();
+    return (r.results as Record<string, any>[]).map(obsFrom);
+  }
+
   async addReport(r: ReportRow): Promise<InsertResult> {
     try {
       await this.db

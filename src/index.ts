@@ -2,6 +2,7 @@
 import { createApp, type App } from "./app";
 import type { Env } from "./config";
 import type { CatalogJob } from "./trust/catalog_service";
+import { BADGE_PATH_RE } from "./trust/badge";
 
 /** Must match the one-minute entry in wrangler.toml [triggers] crons. */
 const LIVE_CRON = "* * * * *";
@@ -45,9 +46,41 @@ export function storable(res: Response): Response {
   return new Response(res.clone().body, { status: res.status, statusText: res.statusText, headers: h });
 }
 
+/**
+ * Cache key for the public badge paths: origin + lowercased path, no query string and no trailing slash, so
+ * `?v=123` cache-busting or case variants cannot turn into extra D1 reads. GET and HEAD share the entry.
+ */
+export function badgeCacheKey(url: URL): string {
+  return `${url.origin}${url.pathname.replace(/\/+$/, "").toLowerCase()}`;
+}
+
+/**
+ * "Tested by Lumi" badge + result page. Served from the edge cache (1 h); on a miss the app reads at most a few indexed
+ * D1 rows and writes nothing. Deliberately not traffic-logged (embedded badges are hot-linked and would only add
+ * traffic rows) and never routed through the pricer or rate limiter.
+ */
+async function serveBadge(request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }, url: URL): Promise<Response> {
+  const head = request.method === "HEAD";
+  const cache = edgeCache();
+  const key = badgeCacheKey(url);
+  if (cache) {
+    const hit = await cache.match(key).catch(() => undefined);
+    if (hit) {
+      const out = restoreHit(hit);
+      return head ? new Response(null, { status: out.status, headers: out.headers }) : out;
+    }
+  }
+  const res = (await appFor(env).badge(new Request(key, { method: "GET" }))) ?? new Response("Not found", { status: 404 });
+  if (cache && res.status < 500 && /public, max-age=\d+/.test(res.headers.get("Cache-Control") ?? "")) {
+    ctx.waitUntil(cache.put(key, storable(res)).catch(() => {}));
+  }
+  return head ? new Response(null, { status: res.status, headers: res.headers }) : res;
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
     const url = new URL(request.url);
+    if ((request.method === "GET" || request.method === "HEAD") && BADGE_PATH_RE.test(url.pathname)) return serveBadge(request, env, ctx, url);
     const cache = request.method === "GET" && !request.headers.has("Authorization") && EDGE_CACHED.test(url.pathname) ? edgeCache() : undefined;
     if (cache) {
       const hit = await cache.match(request).catch(() => undefined);

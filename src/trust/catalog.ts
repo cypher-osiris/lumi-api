@@ -287,6 +287,8 @@ export interface CatalogStore {
   /** Listings paying any of these payTos (lowercase), most used first (licence feed / audits). */
   byPayTos(payTosLc: string[], limit: number): Promise<CatalogRow[]>;
   buysFor(resources: string[]): Promise<BuyRow[]>;
+  /** Badge read path (read-only, catalog_buys_domain index): the newest `limit` test-buys on this exact host. */
+  buysByDomain(domain: string, limit: number): Promise<BuyRow[]>;
   addBuy(row: BuyRow): Promise<"inserted" | "duplicate">;
   /** Owner correction: mark a stored buy inconclusive (Lumi-side). Keeps the old summary in summary_before. */
   markInconclusive(tx: string, reason: string, summary: string, at: number): Promise<BuyRow | null>;
@@ -367,6 +369,7 @@ export class MemoryCatalogStore implements CatalogStore {
     return this.rows.filter((r) => (r.pay_tos ?? "").split(",").some((p) => ps.includes(p.toLowerCase()))).sort((a, b) => (b.calls_30d ?? 0) - (a.calls_30d ?? 0)).slice(0, limit);
   }
   async buysFor(resources: string[]) { return this.buys.filter((b) => resources.includes(b.resource)).sort((a, b) => b.ts - a.ts); }
+  async buysByDomain(domain: string, limit: number) { return this.buys.filter((b) => b.domain === domain).sort((a, b) => b.ts - a.ts).slice(0, limit).map((b) => ({ ...b })); }
   async addBuy(row: BuyRow) {
     if (this.buys.some((b) => b.tx_hash === row.tx_hash)) return "duplicate" as const;
     this.buys.push({ ...row });
@@ -520,6 +523,12 @@ export class D1CatalogStore implements CatalogStore {
     if (!resources.length) return [];
     const ph = resources.map((_, i) => `?${i + 1}`).join(",");
     const rows = (await this.db.prepare(`SELECT * FROM catalog_buys WHERE resource IN (${ph}) ORDER BY ts DESC LIMIT 200`).bind(...resources).all<any>()).results;
+    return rows.map((r) => ({ ...r, data_returned: !!r.data_returned })) as BuyRow[];
+  }
+  async buysByDomain(domain: string, limit: number) {
+    const rows = (await this.db
+      .prepare(`SELECT resource, domain, ts, network, tx_hash, amount, asset, pay_to, facilitator, http_status, data_returned, latency_ms, summary, inconclusive, corrected_at FROM catalog_buys WHERE domain = ?1 ORDER BY ts DESC LIMIT ${Math.max(1, Math.min(50, limit))}`)
+      .bind(domain).all<any>()).results;
     return rows.map((r) => ({ ...r, data_returned: !!r.data_returned })) as BuyRow[];
   }
   async addBuy(b: BuyRow) {

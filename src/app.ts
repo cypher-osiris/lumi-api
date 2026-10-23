@@ -3,6 +3,7 @@
  * used by the Worker entry (src/index.ts) and the Node server (src/node.ts).
  */
 
+import { createBadges } from "./trust/badge";
 import { setPrivateNames } from "./sanitize";
 import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
@@ -114,6 +115,8 @@ export interface App {
   logTraffic(request: Request, response: Response, ctx?: WaitUntil): void;
   /** Write this isolate's buffered traffic counts now. */
   flushTraffic(): Promise<void>;
+  /** Free public "Tested by Lumi" badge + result page (read-only, no D1 writes). Null for other paths. */
+  badge(request: Request): Promise<Response | null>;
 }
 
 /** Persist the last-known XRP/USD fallback rate at most this often (D1 write budget). */
@@ -297,6 +300,18 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     receipts: receiptStore,
     evmBuyers,
     annotate: (doc, payTos) => commerce.annotate(doc, payTos),
+  });
+  const badges = createBadges({
+    now,
+    latestObservations: (ids, n) => trustStore.latestObservations(ids, n),
+    buysByDomain: (d, n) => catalogStore.buysByDomain(d, n),
+    // Read-only disclosure lookup; page/JSON only, never the SVG.
+    relationships: async (payTos) => {
+      const d = await commerce.annotate({}, payTos);
+      return Array.isArray(d.commercial_relationship) ? (d.commercial_relationship as Record<string, unknown>[]) : [];
+    },
+    selfDomains: ["lumitrades.io", "www.lumitrades.io", "api.lumitrades.io", ...(config.publicBaseUrl ? [new URL(config.publicBaseUrl).hostname] : [])],
+    log: (e) => deps.log?.(e),
   });
   const ownHosts = new Set(["api.lumitrades.io", ...(config.publicBaseUrl ? [new URL(config.publicBaseUrl).hostname] : [])]);
   const commerce = createCommerce({
@@ -992,8 +1007,14 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       console.log(JSON.stringify({ event: "catalog_job", kind: job.kind, ...(job.kind === "ingest" ? { offset: job.offset } : job.kind === "probe" ? { after: job.after } : {}), ...r }));
       return r;
     },
+    badge: (request: Request) => badges.handle(request, config.publicBaseUrl || "https://api.lumitrades.io"),
     async fetch(request: Request, ctx?: WaitUntil): Promise<Response> {
       try {
+        // Badge paths first: no pricer (its memo can write D1), no rate limiter, no other D1 work.
+        if (request.method === "GET" || request.method === "HEAD") {
+          const b = await badges.handle(request, config.publicBaseUrl || "https://api.lumitrades.io");
+          if (b) return b;
+        }
         if (config.xrpPricing === "live") {
           const rate = await pricer.rate(ctx ? (p) => ctx.waitUntil(p) : undefined);
           applyRate(config, rate);
@@ -1095,7 +1116,7 @@ export function prefersHtml(accept: string | null | undefined): boolean {
 
 /** API sitemap: the human and machine-readable entry points (paid routes are listed in /openapi.json, not here). */
 export function sitemapXml(base: string): string {
-  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/.well-known/mcp/server-card.json", "/.well-known/agents.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog", "/v1/monitor", "/v1/monitor/sellers", "/v1/monitor/corrections", "/v1/feed", "/v1/feed/license"];
+  const paths = ["/", "/llms.txt", "/skill.md", "/openapi.json", "/.well-known/x402", "/.well-known/agent-card.json", "/.well-known/mcp/server-card.json", "/.well-known/agents.json", "/v1/samples", "/v1/coins", "/v1/trust/vendors", "/v1/trust/methodology", "/v1/trust/catalog", "/badge", "/v1/monitor", "/v1/monitor/sellers", "/v1/monitor/corrections", "/v1/feed", "/v1/feed/license"];
   const day = new Date().toISOString().slice(0, 10);
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
     paths.map((p) => `  <url><loc>${base}${p}</loc><lastmod>${day}</lastmod><changefreq>daily</changefreq></url>`).join("\n") +
