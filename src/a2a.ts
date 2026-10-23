@@ -94,7 +94,7 @@ const SKILLS: SkillDef[] = [
 ];
 
 const FREE_DESCRIPTIONS: Record<string, string> = {
-  catalog: "Lists every Lumi endpoint with live prices on every payment network (XRP Ledger, Base), the MCP and A2A endpoints, and the no-charge-when-stale guarantee.",
+  catalog: "Lists every Lumi endpoint with live prices on every payment network (XRP Ledger, Base, Stellar), the MCP and A2A endpoints, and the no-charge-when-stale guarantee.",
   coins: "The 50 coins Lumi covers (tickers and CoinGecko ids): signals for all, levels for the watchlist and majors.",
   vendor_trust:
     "Check an x402 seller before paying it: {\"url\":\"...\"}, {\"domain\":\"...\"} or {\"payTo\":\"...\"} (case-insensitive) looks it up in the full CDP x402 Bazaar catalog (free quote checks of listings on a rotating schedule: 'quote-verified, low confidence'; live coverage counts in the response) and Lumi's on-chain-confirmed test-buys ('purchase-verified', counted per chain: Base USDC for Bazaar listings, XRPL for a small curated list). Answer-only; tx evidence is in the paid trust check. With no arguments: curated XRPL vendor observations; {\"vendor_id\":\"...\"} for one vendor's summary. Observations, not ratings; no match is not a negative signal.",
@@ -156,7 +156,7 @@ export function agentCard(cfg: Config, base: string) {
           uri: "https://x402.org",
           description:
             "Paid skills are HTTP endpoints priced with x402 v2 (HTTP 402 + PAYMENT-REQUIRED / PAYMENT-SIGNATURE / PAYMENT-RESPONSE). " +
-            "accepts[] lists USDC on Base first, then XRP, RLUSD and USDC on the XRP Ledger; pick by network and asset. Payment happens at the REST URL, not in-band over A2A.",
+            "accepts[] lists USDC on Base first, then XRP, RLUSD and USDC on the XRP Ledger, then USDC on Stellar; pick by network and asset. Payment happens at the REST URL, not in-band over A2A.",
           required: false,
           params: {
             x402Version: 2,

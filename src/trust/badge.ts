@@ -38,7 +38,7 @@ const VENDOR_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const HOST_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/;
 
 export type Verdict = DeliveryState | "not_tested";
-export type Chain = "XRPL" | "Base";
+export type Chain = "XRPL" | "Base" | "Stellar";
 
 export interface BadgeTest {
   at: string;
@@ -97,6 +97,7 @@ export function chainOf(network: string | null | undefined): Chain | null {
   if (!network) return null;
   if (network.startsWith("xrpl:")) return "XRPL";
   if (network === "eip155:8453" || network === "base") return "Base";
+  if (network.startsWith("stellar:")) return "Stellar";
   return null;
 }
 
@@ -370,7 +371,7 @@ export function badgeDoc(s: BadgeSummary, base: string, rel: Record<string, unkn
 export function badgeDocs(base: string) {
   return {
     kind: "lumi_badge_docs",
-    summary: "Free 'Tested by Lumi' badge for x402 sellers: the verdict and date (MM-DD-YYYY, UTC) of Lumi's latest stored paid test-buy, plus the chain (XRPL or Base). Not yet tested = no stored result.",
+    summary: "Free 'Tested by Lumi' badge for x402 sellers: the verdict and date (MM-DD-YYYY, UTC) of Lumi's latest stored paid test-buy, plus the chain (XRPL, Base or Stellar). Not yet tested = no stored result.",
     endpoints: {
       svg: `${base}/badge/{key}.svg`,
       json: `${base}/badge/{key}.json`,

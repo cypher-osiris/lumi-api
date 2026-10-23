@@ -77,7 +77,7 @@ ACCEPT_BASE_USDC = "true"                                 # "false" turns the Ba
 STELLAR_NETWORK = "stellar:pubnet"
 STELLAR_PAY_TO = "GCKTH26VNR4H4WLCXS5DX6563XRQQXWP5QKQWFD6CHOGTZJ2N5GKBU2L" # Lumi's Stellar wallet (address only)
 STELLAR_FACILITATOR_URL = "https://channels.openzeppelin.com/x402"
-ACCEPT_STELLAR_USDC = "false"                             # off until the Stellar account is funded + has a USDC trustline
+ACCEPT_STELLAR_USDC = "true"                              # funded 2026-10-23 (3.3 XLM + USDC trustline); "false" turns the option off
 # XRP options are priced from a live XRP/USD rate (median of several sources, cached 5 min, then last-known, then fixed PRICE_<R>_XRP).
 XRP_PRICING = "live"
 SALES_ALERT_FROM = "hello@lumitrades.io"                  # sender for the private sale alert; the recipient is a secret (SALES_ALERT_EMAIL)

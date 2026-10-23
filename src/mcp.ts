@@ -173,7 +173,7 @@ export const PAID_TOOLS: PaidTool[] = [
 
 /** Shared note for every paid tool, stated once in the server instructions instead of in each tool description. */
 export const PAID_TOOLS_NOTE =
-  "Paid tools on this remote server return the price and how to pay (x402 at the REST URL, or the lumi-trades-mcp npm package with an XRPL or Base wallet); the owner key gets the data. Never charged when data is stale.";
+  "Paid tools on this remote server return the price and how to pay (x402 at the REST URL on XRPL, Base or Stellar, or the lumi-trades-mcp npm package with an XRPL or Base wallet); the owner key gets the data. Never charged when data is stale.";
 
 function toolList() {
   const ro = { readOnlyHint: true, openWorldHint: true };
