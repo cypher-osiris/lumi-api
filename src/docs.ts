@@ -824,7 +824,7 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 
 ## A2A
 
-- **Agent card:** \`${base}/.well-known/agent-card.json\` (alias \`/.well-known/agent.json\`), A2A protocol 1.0 with 0.3 compatibility fields.
+- **Agent card:** \`${base}/.well-known/agent-card.json\` (alias \`/.well-known/agent.json\`), A2A 1.0 and 0.3: \`supportedInterfaces\` lists both (protocolVersion 1.0 and 0.3), and the top-level 0.3 fields say \`protocolVersion: "0.3.0"\`, so 0.3-only registries show 0.3.0.
 - **JSON-RPC endpoint:** \`POST ${base}/a2a\` with \`SendMessage\` (A2A 1.0) or \`message/send\` (0.3). Send text such as "list coins", "catalog" or
   "signal XRP", or a data part \`{ "skill": "signal", "coin": "XRP" }\`. Free skills (\`catalog\`, \`coins\`, \`quote\`, \`vendor_trust\`) answer inline. Paid skills answer with
   the live x402 terms (every network option) and the REST URL to pay at; nothing is charged over A2A.

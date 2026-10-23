@@ -20,8 +20,8 @@ async function listTools() {
   return tools;
 }
 
-test("0.9.0: versions agree across package.json, server.json and the server", () => {
-  assert.equal(VERSION, "0.9.0");
+test("0.9.1: versions agree across package.json, server.json and the server", () => {
+  assert.equal(VERSION, "0.9.1");
   assert.equal(pkg.version, VERSION);
   assert.equal(srv.version, VERSION);
   assert.equal(srv.packages[0].version, VERSION);
@@ -33,6 +33,9 @@ test("0.9.0: versions agree across package.json, server.json and the server", ()
 test("coin counts are current (50 signals, 13 tracked for levels)", () => {
   assert.doesNotMatch(pkg.description, /12 more coins/);
   assert.match(pkg.description, /50 coins/);
+  // npm cuts descriptions at 255 characters (0.9.0 ended mid-word at "fundi"): keep it one complete sentence pair under that
+  assert.ok(pkg.description.length <= 255, `description is ${pkg.description.length} chars`);
+  assert.match(pkg.description, /\.$/);
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   assert.doesNotMatch(readme, /12 more coins|The 13 coins covered|7-day projection/);
 });
