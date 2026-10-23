@@ -2,7 +2,9 @@
  * Free trial calls (v1.0): a few free calls per new wallet, wire-compatible with the x402 "sign-in-with-x" (SIWX,
  * CAIP-122 / EIP-4361) extension, so `wrapFetchWithSIWx` / `createSIWxClientHook` from @x402/extensions work unchanged.
  *
- * Flow: the 402 of every eligible route carries `extensions["sign-in-with-x"]` with a one-time challenge. The client signs
+ * Flow: a plain unauthenticated 402 is a standard x402 payment quote (prices first) with a top-level `trial` hint. A client
+ * that opts in with header `X-Lumi-Trial: 1` gets the same 402 plus `extensions["sign-in-with-x"]` (a one-time challenge;
+ * opt-in so discovery scanners never list the paid routes as identity-only SIWX routes). The client signs
  * the EIP-4361 message with its Base wallet (EOA, EIP-191) and retries with header `SIGN-IN-WITH-X: base64(JSON payload)`.
  * If the signature, challenge and caps check out, the call is served free (`access.mode = "trial"`, nothing settled).
  *
@@ -12,23 +14,43 @@
  * - the signer must hold at least 0.01 USDC on Base (a funded wallet that could pay), checked on-chain;
  * - caps, enforced in one atomic INSERT: 3 trial calls per wallet ever, 3 per (daily-rotating keyed) IP hash per day, and a
  *   global daily cap. Raw IPs are never stored.
- * - premium routes (the Institutional Brief) and anything above $0.03 are not eligible.
+ * - the daily policy brief (/v1/institutional) and anything above $0.03 are not eligible.
  */
 import type { D1Like, PaidRoute } from "./config";
 import { recoverEvmSigner } from "./trust/verify";
 
 export const SIWX_KEY = "sign-in-with-x";
 export const SIWX_HEADER = "SIGN-IN-WITH-X";
+/** Request header that opts in to the SIWX trial challenge on a 402. */
+export const TRIAL_OPT_IN_HEADER = "X-Lumi-Trial";
 export const TRIAL_CHAIN = "eip155:8453";
 export const TRIAL_LIMITS = { perWallet: 3, perIpDay: 3, globalDay: 300, challengeTtlSec: 300, maxUsd: 0.03, minUsdcAtomic: 10_000n };
 export const TRIAL_EXCLUDED: PaidRoute[] = ["institutional"];
 export const TRIAL_STATEMENT = "Lumi API free trial: sign to prove you control this wallet. This is not a payment and moves no funds.";
 
 export const TRIAL_SUMMARY =
-  `Free trial: ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint up to $${TRIAL_LIMITS.maxUsd} (all except /v1/institutional). ` +
-  `The 402 carries extensions["sign-in-with-x"] (x402 SIWX, EIP-4361): sign it with a Base wallet holding at least 0.01 USDC and retry with the ` +
-  `SIGN-IN-WITH-X header (@x402/extensions wrapFetchWithSIWx does this). Nothing is charged; caps: ${TRIAL_LIMITS.perWallet} per wallet, ` +
-  `${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges.`;
+  `Free trial: ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except /v1/institutional. ` +
+  `Send the request with header X-Lumi-Trial: 1 and the 402 also carries extensions["sign-in-with-x"] (x402 SIWX, EIP-4361): sign it with a ` +
+  `Base wallet holding at least 0.01 USDC and retry with the SIGN-IN-WITH-X header (@x402/extensions wrapFetchWithSIWx does this). ` +
+  `Nothing is charged; caps: ${TRIAL_LIMITS.perWallet} per wallet, ${TRIAL_LIMITS.perIpDay} per IP per day, one-time 5-minute challenges. ` +
+  `Without that header every 402 is a plain x402 payment quote.`;
+
+/** True when the client asked for the SIWX trial challenge (X-Lumi-Trial: 1 / true / yes). */
+export function wantsTrial(request: Request): boolean {
+  return /^(1|true|yes)$/i.test(request.headers.get(TRIAL_OPT_IN_HEADER)?.trim() ?? "");
+}
+
+/** Top-level `trial` hint on a plain (non-opted-in) 402 of an eligible route. Not an x402 extension. */
+export function trialHint(): Record<string, unknown> {
+  return {
+    available: true,
+    free_calls_per_wallet: TRIAL_LIMITS.perWallet,
+    opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`,
+    detail:
+      `New wallets get ${TRIAL_LIMITS.perWallet} free calls: repeat this request with header ${TRIAL_OPT_IN_HEADER}: 1 to receive a one-time ` +
+      `sign-in-with-x challenge, sign it with a Base wallet holding >= 0.01 USDC and retry with ${SIWX_HEADER}. Not a payment; or pay with any accepts[] option.`,
+  };
+}
 
 export function trialEligible(route: PaidRoute, usd: number | undefined): boolean {
   return !TRIAL_EXCLUDED.includes(route) && typeof usd === "number" && usd > 0 && usd <= TRIAL_LIMITS.maxUsd;

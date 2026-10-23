@@ -6,7 +6,7 @@
 import { setPrivateNames } from "./sanitize";
 import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
 import { DataSource, type DataFile } from "./data";
-import { D1TrialStore, MemoryTrialStore, SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, decodeSiwx, siwxChallenge, trialEligible, trialIpHash, usdcBalance, verifySiwx, type TrialStore } from "./trial";
+import { D1TrialStore, MemoryTrialStore, SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, trialHint, wantsTrial, decodeSiwx, siwxChallenge, trialEligible, trialIpHash, usdcBalance, verifySiwx, type TrialStore } from "./trial";
 import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, staleRefusal, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
@@ -483,7 +483,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           : {
               "Access-Control-Allow-Origin": "*",
               "Access-Control-Allow-Methods": "GET, OPTIONS",
-              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, SIGN-IN-WITH-X, Content-Type",
+              "Access-Control-Allow-Headers": "PAYMENT-SIGNATURE, X-PAYMENT, SIGN-IN-WITH-X, X-Lumi-Trial, Content-Type",
               "Access-Control-Max-Age": "86400",
             },
       });
@@ -681,6 +681,28 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       });
     }
 
+    // /v1/trust/check probed bare (no ?url=, as x402scan and other discovery scanners do): the normal 402 price quote, so the
+    // paywall is visible. With a payment header the missing url is refused below (400, nothing verified or settled).
+    if (route === "trust_check" && !url.searchParams.get("url")?.trim() && !(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT))) {
+      const endpoint = PAID_ENDPOINTS.find((e) => e.route === route)!;
+      const usd = config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route];
+      const example = `${base}/v1/trust/check?url=https://api.example.com/v1/data&payTo=0x...&amount=0.01`;
+      return paymentRequiredResponse(config, {
+        routeKey: `${route}:probe`,
+        amountDrops: config.pricesDrops[route],
+        ...(config.xrpPricing === "live" ? { liveDrops: true } : {}),
+        xrpUsd: config.xrpRate?.usd ?? config.xrpUsdFallback,
+        samplesUrl: `${base}/v1/samples`,
+        amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
+        amountEvm: config.evm?.amounts[route],
+        description: resourceDescription(route, `Lumi API ${endpoint.template}: ${endpoint.summary}`, { usd }),
+        resourceUrl: `${base}${path}`,
+        bazaar: bazaarExtension(route, undefined, { url: "https://api.example.com/v1/data" }, usd),
+        service: serviceMeta(route),
+        note: `Add ?url=<the x402 resource URL you are about to pay> (optional payTo, amount) and request that URL for a fresh quote before paying: ${example}. A payment sent without url is refused and not charged.`,
+      }, "PAYMENT-SIGNATURE header is required");
+    }
+
     const prep = await prepare(route, route === "trust_check" ? url.search : m[2], base);
     if (!prep.ok) return json(prep.status, prep.error, prep.headers);
     const { coin, body } = prep;
@@ -730,9 +752,16 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     const usdPrice = Number(config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route]);
     if (trialsOn && config.evm && trialEligible(route, usdPrice)) {
       const trialUri = `${url.origin}${path}${url.search}`;
-      quote.extensions = { [SIWX_KEY]: await siwxChallenge(config.invoiceSecret, trialUri, now(), config.evm.network) };
       const siwxHeader = request.headers.get(SIWX_HEADER);
       const hasPayment = !!(request.headers.get(HEADER_PAYMENT_SIGNATURE) || request.headers.get(HEADER_X_PAYMENT));
+      // The SIWX challenge is opt-in (X-Lumi-Trial: 1, or a SIGN-IN-WITH-X retry): a plain unauthenticated 402 stays a standard
+      // x402 payment quote, because discovery scanners (x402scan / @agentcash/discovery) classify any 402 carrying
+      // extensions["sign-in-with-x"] as an identity-only free route. The plain 402 advertises the trial in a top-level `trial` field.
+      if (wantsTrial(request) || siwxHeader) {
+        quote.extensions = { [SIWX_KEY]: await siwxChallenge(config.invoiceSecret, trialUri, now(), config.evm.network) };
+      } else {
+        quote.trial = trialHint();
+      }
       if (siwxHeader && !hasPayment) {
         const stale = staleRefusal(quote);
         if (stale) return stale;

@@ -39,6 +39,8 @@ function setup(opts: { balance?: bigint; env?: Record<string, unknown>; store?: 
   return { app, appFetch, fac, rpcCalls, trialStore, setIp: (v: string) => (ip = v) };
 }
 
+const TRIAL = { headers: { "X-Lumi-Trial": "1" } };
+
 describe("free trial (x402 sign-in-with-x)", () => {
   it("rebuilds the EIP-4361 message byte-identically to the siwe library", async () => {
     const acct = privateKeyToAccount(generatePrivateKey());
@@ -48,9 +50,17 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(siweMessage(p as any)).toBe(lib);
   });
 
-  it("402s on eligible routes carry a SIWX challenge; institutional does not", async () => {
+  it("plain 402s are standard x402 quotes (no SIWX extension, trial hint only); X-Lumi-Trial: 1 adds the challenge; institutional never", async () => {
     const { appFetch } = setup();
-    const r = await appFetch(BASE + "/v1/sentiment");
+    const plain = await appFetch(BASE + "/v1/sentiment");
+    expect(plain.status).toBe(402);
+    const pb = await plain.json();
+    expect(decodeB64Json(plain.headers.get("PAYMENT-REQUIRED"))).toEqual(pb);
+    expect(pb.accepts.length).toBeGreaterThan(0);
+    expect(pb.extensions["sign-in-with-x"]).toBeUndefined();
+    expect(Object.keys(pb.extensions)).toEqual(["bazaar"]);
+    expect(pb.trial).toMatchObject({ available: true, free_calls_per_wallet: 3, opt_in_header: "X-Lumi-Trial: 1" });
+    const r = await appFetch(BASE + "/v1/sentiment", TRIAL);
     expect(r.status).toBe(402);
     const body = await r.json();
     expect(decodeB64Json(r.headers.get("PAYMENT-REQUIRED"))).toEqual(body);
@@ -58,8 +68,10 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(ext.info).toMatchObject({ domain: "lumi.test", uri: BASE + "/v1/sentiment", version: "1", statement: TRIAL_STATEMENT, resources: [BASE + "/v1/sentiment"] });
     expect(ext.supportedChains).toEqual([{ chainId: "eip155:84532", type: "eip191" }]);
     expect(body.extensions.bazaar).toBeTruthy();
-    const inst = await (await appFetch(BASE + "/v1/institutional")).json();
+    expect(body.accepts).toEqual(expect.arrayContaining([expect.objectContaining({ network: "eip155:84532" })]));
+    const inst = await (await appFetch(BASE + "/v1/institutional", TRIAL)).json();
     expect(inst.extensions["sign-in-with-x"]).toBeUndefined();
+    expect(inst.trial).toBeUndefined();
   });
 
   it("official wrapFetchWithSIWx client gets 3 free calls per wallet, never charged, then the normal 402", async () => {
@@ -67,7 +79,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
     const acct = privateKeyToAccount(generatePrivateKey());
     const f = wrapFetchWithSIWx(appFetch, acct);
     for (let i = 1; i <= 3; i++) {
-      const r = await f(BASE + "/v1/sentiment");
+      const r = await f(BASE + "/v1/sentiment", TRIAL);
       expect(r.status).toBe(200);
       expect(r.headers.get("PAYMENT-RESPONSE")).toBeNull();
       const b = await r.json();
@@ -76,7 +88,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
       expect(b.access).toEqual({ mode: "trial", charged: false, wallet: acct.address.toLowerCase(), trial_calls_used: i, trial_calls_remaining: 3 - i });
     }
     expect(rpcCalls[0].params[0].data.slice(0, 10)).toBe("0x70a08231");
-    const r4 = await f(BASE + "/v1/sentiment");
+    const r4 = await f(BASE + "/v1/sentiment", TRIAL);
     expect(r4.status).toBe(402);
     expect((await r4.json()).trial).toMatchObject({ granted: false, reason: "wallet_trial_used_up" });
     expect(fac.calls).toHaveLength(0);
@@ -85,13 +97,13 @@ describe("free trial (x402 sign-in-with-x)", () => {
   it("caps per IP per day, refuses replayed nonces, other URLs, empty wallets and bad signatures", async () => {
     const { appFetch, setIp } = setup();
     // one IP: 3 trial calls a day across wallets
-    for (let i = 0; i < 3; i++) expect((await wrapFetchWithSIWx(appFetch, privateKeyToAccount(generatePrivateKey()))(BASE + "/v1/events")).status).toBe(200);
-    const blocked = await wrapFetchWithSIWx(appFetch, privateKeyToAccount(generatePrivateKey()))(BASE + "/v1/events");
+    for (let i = 0; i < 3; i++) expect((await wrapFetchWithSIWx(appFetch, privateKeyToAccount(generatePrivateKey()))(BASE + "/v1/events", TRIAL)).status).toBe(200);
+    const blocked = await wrapFetchWithSIWx(appFetch, privateKeyToAccount(generatePrivateKey()))(BASE + "/v1/events", TRIAL);
     expect((await blocked.json()).trial.reason).toBe("ip_daily_cap");
     setIp("198.51.100.9");
 
     const acct = privateKeyToAccount(generatePrivateKey());
-    const q = await (await appFetch(BASE + "/v1/sentiment")).json();
+    const q = await (await appFetch(BASE + "/v1/sentiment", TRIAL)).json();
     const info = { ...q.extensions["sign-in-with-x"].info, chainId: "eip155:84532", type: "eip191" };
     const header = encodeSIWxHeader(await createSIWxPayload(info, acct, BASE + "/v1/sentiment"));
     expect((await appFetch(BASE + "/v1/sentiment", { headers: { "SIGN-IN-WITH-X": header } })).status).toBe(200);
@@ -109,7 +121,7 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect((await (await appFetch(BASE + "/v1/sentiment", { headers: { "SIGN-IN-WITH-X": made } })).json()).trial.reason).toBe("challenge_not_issued_by_lumi");
 
     const poor = setup({ balance: 9_999n });
-    const r = await wrapFetchWithSIWx(poor.appFetch, privateKeyToAccount(generatePrivateKey()))(BASE + "/v1/sentiment");
+    const r = await wrapFetchWithSIWx(poor.appFetch, privateKeyToAccount(generatePrivateKey()))(BASE + "/v1/sentiment", TRIAL);
     expect(r.status).toBe(402);
     expect((await r.json()).trial.reason).toBe("wallet_needs_0.01_usdc_on_base");
   });
@@ -122,7 +134,9 @@ describe("free trial (x402 sign-in-with-x)", () => {
     expect(await verifySiwx("k", p as any, BASE + "/v1/brief", NOW + 301_000)).toMatchObject({ ok: false, reason: "challenge_expired" });
     expect(await verifySiwx("other", p as any, BASE + "/v1/brief", NOW + 1000)).toMatchObject({ ok: false, reason: "challenge_not_issued_by_lumi" });
     const off = setup({ env: { TRIALS: "0" } });
-    expect((await (await off.appFetch(BASE + "/v1/sentiment")).json()).extensions["sign-in-with-x"]).toBeUndefined();
+    const offBody = await (await off.appFetch(BASE + "/v1/sentiment", TRIAL)).json();
+    expect(offBody.extensions["sign-in-with-x"]).toBeUndefined();
+    expect(offBody.trial).toBeUndefined();
   });
 });
 

@@ -5,7 +5,7 @@ import { EXPLORERS, dropsToXrp } from "./config";
 import { PAID_ENDPOINTS, priceTable } from "./catalog";
 import { BAZAAR_ROUTES } from "./bazaar";
 import { DISCLAIMER, SOURCE, type CoinRef } from "./views";
-import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_SUMMARY, trialEligible } from "./trial";
+import { SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, TRIAL_OPT_IN_HEADER, TRIAL_SUMMARY, trialEligible } from "./trial";
 
 /** Free-trial terms (x402 sign-in-with-x), shown in the index, /.well-known/x402, OpenAPI, skill.md and the home page. */
 export function freeTrialInfo(cfg: Config) {
@@ -15,7 +15,9 @@ export function freeTrialInfo(cfg: Config) {
     free_calls_per_wallet: TRIAL_LIMITS.perWallet,
     eligible_routes: PAID_ENDPOINTS.filter((e) => trialEligible(e.route, Number(usdPrice(cfg, e.route)))).map((e) => e.route),
     not_eligible: PAID_ENDPOINTS.filter((e) => !trialEligible(e.route, Number(usdPrice(cfg, e.route)))).map((e) => e.route),
-    protocol: "x402 sign-in-with-x extension (CAIP-122 / EIP-4361), 402 extensions[\"sign-in-with-x\"]",
+    protocol: "x402 sign-in-with-x extension (CAIP-122 / EIP-4361), opt-in: send header X-Lumi-Trial: 1 and the 402 adds extensions[\"sign-in-with-x\"]",
+    opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`,
+    default_402: "without the opt-in header every 402 is a plain x402 payment quote (prices in accepts[]) with a top-level trial hint; it never carries the sign-in-with-x extension",
     header: SIWX_HEADER,
     extension_key: SIWX_KEY,
     chain: cfg.evm.network,
@@ -25,12 +27,12 @@ export function freeTrialInfo(cfg: Config) {
     response: "normal paid body plus access: { mode: \"trial\", charged: false, wallet, trial_calls_used, trial_calls_remaining }; no PAYMENT-RESPONSE, nothing settled",
     refused: "normal 402 (pay as usual) with a top-level trial: { granted: false, reason }",
     precedence: "a PAYMENT-SIGNATURE header always wins: a paid retry is settled normally",
-    client: "@x402/extensions/sign-in-with-x wrapFetchWithSIWx(fetch, account) does the signing and retry",
+    client: "@x402/extensions/sign-in-with-x wrapFetchWithSIWx(fetch, account), called with headers { \"X-Lumi-Trial\": \"1\" }, does the signing and retry",
     rest_only: "REST endpoints only (not MCP or A2A)",
   };
 }
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.0.1";
 
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
@@ -230,7 +232,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           : e.route === "trust_check"
           ? { "x-example-url": `${base}${e.template}?url=${encodeURIComponent("https://api.example.com/v1/data")}` }
           : {}),
-        ...(cfg.evm ? { "x-free-trial": trialEligible(e.route, Number(usdPrice(cfg, e.route))) ? { eligible: true, free_calls_per_wallet: TRIAL_LIMITS.perWallet, header: SIWX_HEADER, extension: SIWX_KEY } : { eligible: false } } : {}),
+        ...(cfg.evm ? { "x-free-trial": trialEligible(e.route, Number(usdPrice(cfg, e.route))) ? { eligible: true, free_calls_per_wallet: TRIAL_LIMITS.perWallet, opt_in_header: `${TRIAL_OPT_IN_HEADER}: 1`, header: SIWX_HEADER, extension: SIWX_KEY } : { eligible: false } } : {}),
         "x-payment-info": {
           // x402scan discovery spec: protocols as objects, price in decimal USD (the per-asset terms follow).
           protocols: [{ x402: {} }],
@@ -552,23 +554,24 @@ lumitrades.io publishes market data, signals and analysis four times a day (6 AM
 ${cfg.evm ? `
 ## Free trial: ${TRIAL_LIMITS.perWallet} calls per new wallet
 
-Every paid endpoint up to $${TRIAL_LIMITS.maxUsd} (all except \`/v1/institutional\`) can be tried for free, ${TRIAL_LIMITS.perWallet} calls per wallet, using the official
+Every paid endpoint except \`/v1/institutional\` can be tried for free, ${TRIAL_LIMITS.perWallet} calls per wallet, using the official
 x402 **sign-in-with-x** extension (CAIP-122 / EIP-4361). Nothing is charged and no funds move.
 
-1. The 402 carries \`extensions["sign-in-with-x"]\` = \`{ info: { domain, uri, version: "1", nonce, issuedAt, expirationTime, statement, resources: [uri] }, supportedChains: [{ chainId: "${cfg.evm.network}", type: "eip191" }] }\`.
+1. Send the request with header \`${TRIAL_OPT_IN_HEADER}: 1\`. The 402 then also carries \`extensions["sign-in-with-x"]\` = \`{ info: { domain, uri, version: "1", nonce, issuedAt, expirationTime, statement, resources: [uri] }, supportedChains: [{ chainId: "${cfg.evm.network}", type: "eip191" }] }\`.
    The challenge is one-time, bound to that exact URL and valid for ${TRIAL_LIMITS.challengeTtlSec / 60} minutes.
 2. Sign the EIP-4361 message for those fields with an EOA wallet on ${cfg.evm.networkName} (EIP-191 \`personal_sign\`). The wallet must hold at least 0.01 USDC on ${cfg.evm.networkName} (checked on-chain, nothing is moved).
 3. Retry the same URL with header \`${SIWX_HEADER}: base64(JSON{ domain, address, statement, uri, version, chainId, type, nonce, issuedAt, expirationTime, resources, signature })\`.
 4. You get the normal body plus \`access: { mode: "trial", charged: false, wallet, trial_calls_used, trial_calls_remaining }\`. If the trial is not granted
    (used up, ${TRIAL_LIMITS.perIpDay} per IP per day, bad or reused signature, empty wallet) you get the normal 402 with \`trial: { granted: false, reason }\`: just pay.
 
+Without that header the 402 is a plain x402 payment quote (with a top-level \`trial\` hint), so normal payers and discovery scanners see prices only.
 A \`PAYMENT-SIGNATURE\` header always takes precedence. REST only (not MCP/A2A). With the official client:
 
 \`\`\`ts
 import { wrapFetchWithSIWx } from "@x402/extensions/sign-in-with-x";
 import { privateKeyToAccount } from "viem/accounts";
 const tryFree = wrapFetchWithSIWx(fetch, privateKeyToAccount(process.env.EVM_PRIVATE_KEY as \`0x\${string}\`));
-const r = await tryFree("${base}/v1/sentiment"); // 200 with access.mode "trial" (first ${TRIAL_LIMITS.perWallet} calls), else the 402 to pay
+const r = await tryFree("${base}/v1/sentiment", { headers: { "${TRIAL_OPT_IN_HEADER}": "1" } }); // 200 with access.mode "trial" (first ${TRIAL_LIMITS.perWallet} calls), else the 402 to pay
 \`\`\`
 ` : ""}
 ## How payment works
@@ -790,7 +793,7 @@ import { wrapFetchWithSIWx } from "@x402/extensions/sign-in-with-x";
 import { privateKeyToAccount } from "viem/accounts";
 
 const tryFree = wrapFetchWithSIWx(fetch, privateKeyToAccount(process.env.EVM_PRIVATE_KEY));
-const res = await tryFree("${base}/v1/sentiment");
+const res = await tryFree("${base}/v1/sentiment", { headers: { "${TRIAL_OPT_IN_HEADER}": "1" } });
 const body = await res.json(); // body.access = { mode: "trial", charged: false, trial_calls_remaining, ... }`
     : "";
   const xrplSnippet = `// npm i xrpl x402-xrpl
@@ -897,7 +900,7 @@ footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);colo
 <a href="${esc(base)}/llms.txt">llms.txt</a> &middot; <a href="${esc(base)}/openapi.json">OpenAPI</a> &middot;
 <a href="${esc(base)}/.well-known/agent-card.json">A2A card</a> &middot; MCP <code>${esc(base)}/mcp</code><br>
 <strong>Daily market brief:</strong> <a href="${esc(base)}/v1/brief">GET /v1/brief</a> ($${usdPrice(cfg, "brief")}, returns HTTP 402 with the price until paid).<br>
-${cfg.evm ? `<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every endpoint up to $${TRIAL_LIMITS.maxUsd}: sign the 402's <code>sign-in-with-x</code> challenge with a Base wallet (no payment, nothing moves). <a href="#trial">How</a>.<br>` : ""}
+${cfg.evm ? `<strong>Free trial:</strong> ${TRIAL_LIMITS.perWallet} free calls per new wallet on every paid endpoint except <code>/v1/institutional</code>: send <code>X-Lumi-Trial: 1</code> and sign the 402's <code>sign-in-with-x</code> challenge with a Base wallet (no payment, nothing moves). <a href="#trial">How</a>.<br>` : ""}
 <strong>New:</strong> <a href="${esc(base)}/v1/scan">/v1/scan</a> (all ${coins.length} coins in one call, $${usdPrice(cfg, "scan")}) &middot;
 <a href="${esc(base)}/v1/trust/check?url=https%3A%2F%2Fapi.example.com%2Fv1%2Fdata">/v1/trust/check</a> (should I pay this x402 URL? allow / warn / block, $${usdPrice(cfg, "trust_check")}) &middot;
 <a href="${esc(base)}/v1/lite/BTC">/v1/lite/{coin}</a> &middot; <a href="${esc(base)}/v1/funding">/v1/funding</a> &middot; <a href="${esc(base)}/v1/fear-greed">/v1/fear-greed</a> &middot; <a href="${esc(base)}/v1/events/next48h">/v1/events/next48h</a></p></div>

@@ -84,11 +84,18 @@ describe("Stage C: /v1/lite/{coin}", () => {
 });
 
 describe("Stage C: /v1/trust/check", () => {
-  it("400 without url (not charged)", async () => {
-    const { get } = setup();
+  it("bare probe without url: standard 402 quote; a payment without url is refused 400 (not charged)", async () => {
+    const { get, buy } = setup();
     const r = await get("/v1/trust/check");
-    expect(r.status).toBe(400);
-    const j: any = await r.json();
+    expect(r.status).toBe(402);
+    const q: any = await r.json();
+    expect(q.accepts.length).toBeGreaterThan(0);
+    expect(q.extensions.bazaar).toBeTruthy();
+    expect(q.extensions["sign-in-with-x"]).toBeUndefined();
+    expect(q.note).toMatch(/\?url=/);
+    const paid = await buy("/v1/trust/check");
+    expect(paid.status).toBe(400);
+    const j: any = await paid.json();
     expect(j.error).toBe("invalid_query");
     expect(j.note).toMatch(/Not charged/);
     expect((await get("/v1/trust/check?url=https://x.test/a&amount=abc")).status).toBe(400);
