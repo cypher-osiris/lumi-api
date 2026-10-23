@@ -8,7 +8,7 @@ import {
   toListing, probeRow, rdapRegistered, catalogView, catalogFreeView, normalizeDomain, normalizeUrl, isPlatformHost, explorerFor,
   type CatalogStore, type CatalogStats, type LookupQuery, type BuyRow,
 } from "./catalog";
-import { lookupBaseUsdc, lookupXrplPayment, EVM_TX_RE, XRPL_TX_RE, XRPL_ADDR_RE, EVM_ADDR_RE } from "./verify";
+import { lookupBaseUsdc, lookupXrplPayment, lookupStellarUsdc, EVM_TX_RE, XRPL_TX_RE, XRPL_ADDR_RE, EVM_ADDR_RE, STELLAR_TX_RE, STELLAR_HORIZON } from "./verify";
 import {
   type EvidenceStore, type PayerAgg, type XrplCensusDoc, BASE_NET, XRPL_NET, LUMI_WALLETS, KNOWN_TESTERS, HUB_MIN, CENSUS_FRESH_MS, BASE_WINDOW_MAX, BASE_GROUP, BASE_BLOCK_MS,
   classifyPayers, xrplCensus, baseHead, baseLogs, baseFunder, vet402View, parseVet402, VET402,
@@ -39,7 +39,9 @@ export interface CatalogDeps {
   queue?: QueueLike;
   xrplRpc: string[];
   baseRpc: string;
-  buyers: { xrpl: string[]; evm: string[] };
+  buyers: { xrpl: string[]; evm: string[]; stellar?: string[] };
+  /** Stellar Horizon base URL for verifying Stellar pubnet test-buys (default horizon.stellar.org). */
+  stellarHorizon?: string;
   self: SelfEntry;
   /** Signed test-buy receipts, attached to purchases in full (paid) lookups; trust/check uses them for its verdict but does not return them. */
   receipts?: ReceiptStore;
@@ -112,7 +114,8 @@ export const CURATED_WINDOW_MS = 30 * 86_400_000;
 /** Purchase-verified, split by chain: Base USDC buys of Bazaar listings vs XRPL buys of the curated list. Never merged into one number. */
 export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
   const base = s?.by_network?.["eip155:8453"] ?? (s && !s.by_network ? { purchase_verified: s.purchase_verified, test_buys: s.test_buys } : { purchase_verified: 0, test_buys: 0 });
-  const otherBazaar = s?.by_network ? Object.entries(s.by_network).filter(([n]) => n !== "eip155:8453" && n !== "xrpl:0") : [];
+  const otherBazaar = s?.by_network ? Object.entries(s.by_network).filter(([n]) => n !== "eip155:8453" && n !== "xrpl:0" && n !== "stellar:pubnet") : [];
+  const stel = s?.by_network?.["stellar:pubnet"] ?? { purchase_verified: 0, test_buys: 0 };
   return {
     base_usdc: { network: "eip155:8453", asset: "USDC", source: "CDP Bazaar catalog listings Lumi bought once each", purchase_verified_resources: base.purchase_verified, test_buys: base.test_buys },
     xrpl: {
@@ -121,8 +124,9 @@ export function chainSplit(s: CatalogStats | null, x: XrplAgg | null) {
       bazaar_catalog: { purchase_verified_resources: s?.by_network?.["xrpl:0"]?.purchase_verified ?? 0, test_buys: s?.by_network?.["xrpl:0"]?.test_buys ?? 0, source: "CDP Bazaar catalog listings Lumi bought on XRPL" },
       bazaar_sweep: XRPL_BAZAAR_SWEEP,
     },
+    stellar_usdc: { network: "stellar:pubnet", asset: "USDC", source: "x402 catalog listings (CDP Bazaar) Lumi bought on Stellar with USDC (daily routine, shared cap)", purchase_verified_resources: stel.purchase_verified, test_buys: stel.test_buys },
     ...(otherBazaar.length ? { other_bazaar_networks: Object.fromEntries(otherBazaar) } : {}),
-    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is test-bought by a daily routine within shared caps (about $0.50 a day: 0.40 RLUSD + 0.10 XRP in total, so not every vendor every day), and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
+    note: `Counted separately per chain. Most Bazaar catalog test-buys are Base USDC. XRPL: the curated list is test-bought by a daily routine within shared caps (about $0.50 a day in total: 0.30 RLUSD + 0.10 XRP + 0.15 Stellar USDC, so not every vendor every day). Stellar: catalog listings that accept stellar:pubnet USDC are test-bought from the same shared cap, and a one-off XRPL Bazaar sweep covered ${XRPL_BAZAAR_SWEEP.statement}.`,
   };
 }
 
@@ -771,15 +775,18 @@ export function createCatalog(deps: CatalogDeps) {
     const network = String(b.network ?? "");
     let tx = typeof b.tx_hash === "string" ? b.tx_hash.trim() : "";
     if (network === "eip155:8453") { tx = tx.toLowerCase(); if (!EVM_TX_RE.test(tx)) return json(400, { error: "invalid_field", field: "tx_hash" }); }
+    else if (network === "stellar:pubnet") { tx = tx.toLowerCase(); if (!STELLAR_TX_RE.test(tx)) return json(400, { error: "invalid_field", field: "tx_hash" }); }
     else if (network === "xrpl:0") { tx = tx.toUpperCase(); if (!XRPL_TX_RE.test(tx)) return json(400, { error: "invalid_field", field: "tx_hash" }); }
-    else return json(400, { error: "invalid_field", field: "network", detail: "eip155:8453 or xrpl:0" });
+    else return json(400, { error: "invalid_field", field: "network", detail: "eip155:8453, xrpl:0 or stellar:pubnet" });
     if (typeof b.data_returned !== "boolean") return json(400, { error: "invalid_field", field: "data_returned" });
     const summaryText = typeof b.summary === "string" ? b.summary.replace(/\s+/g, " ").trim() : "";
     if (!summaryText || summaryText.length > 300) return json(400, { error: "invalid_field", field: "summary", detail: "1-300 chars" });
     if (BANNED.test(summaryText)) return json(400, { error: "invalid_field", field: "summary", detail: "factual wording only" });
-    const look = network === "eip155:8453" ? await lookupBaseUsdc(deps.fetch, deps.baseRpc, tx) : await lookupXrplPayment(deps.fetch, deps.xrplRpc, tx);
+    const look = network === "eip155:8453" ? await lookupBaseUsdc(deps.fetch, deps.baseRpc, tx)
+      : network === "stellar:pubnet" ? await lookupStellarUsdc(deps.fetch, deps.stellarHorizon ?? STELLAR_HORIZON, tx)
+      : await lookupXrplPayment(deps.fetch, deps.xrplRpc, tx);
     if (!look.ok) return json(look.reason === "ledger_unavailable" ? 503 : 422, { recorded: false, reason: look.reason });
-    const buyers = (network === "eip155:8453" ? deps.buyers.evm : deps.buyers.xrpl).map((x) => x.toLowerCase());
+    const buyers = (network === "eip155:8453" ? deps.buyers.evm : network === "stellar:pubnet" ? deps.buyers.stellar ?? [] : deps.buyers.xrpl).map((x) => x.toLowerCase());
     const listed = (row.pay_tos ?? "").split(",");
     const pay = look.payments.find((p) => buyers.includes(p.from.toLowerCase()) && listed.includes(p.to.toLowerCase()));
     if (!pay) return json(422, { recorded: false, reason: "no payment from a Lumi wallet to a listed payTo in this tx" });

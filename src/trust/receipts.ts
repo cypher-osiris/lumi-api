@@ -4,18 +4,18 @@
  *
  * One receipt per Lumi test-buy of a seller. The body is hashed as SHA-256 of its RFC 8785-style canonical JSON
  * (with `receipt_hash` and `signer` removed) and the PAYING wallet signs `lumi-receipt:<network>:<tx_hash>:<receipt_hash>`
- * (XRPL: ripple-keypairs over the UTF-8 hex of the message; Base: EIP-191 personal_sign).
+ * (XRPL: ripple-keypairs over the UTF-8 hex of the message; Base: EIP-191 personal_sign; Stellar: ed25519 over the UTF-8 message, base64).
  * Signing happens only on the operator box (tools/sign_receipts.ts); the Worker never holds a wallet key. It only verifies
  * and stores receipts, serves them in the paid vendor report and paid Feed catalog lookups (not in trust/check), and verifies any receipt for free.
  */
-import { recoverEvmSigner, sha256Hex, verifyXrplSignature, xrplAddressOf, XRPL_ADDR_RE, EVM_ADDR_RE, XRPL_TX_RE, EVM_TX_RE } from "./verify";
+import { recoverEvmSigner, sha256Hex, verifyXrplSignature, verifyStellarSignature, xrplAddressOf, XRPL_ADDR_RE, EVM_ADDR_RE, XRPL_TX_RE, EVM_TX_RE, STELLAR_ADDR_RE, STELLAR_TX_RE } from "./verify";
 import type { D1Like } from "../config";
 import { dataReturnedView, deliveryState, inconclusiveReason } from "./delivery";
 
 export const RECEIPT_TYPE = "counterparty_delivery_receipt";
 export const RECEIPT_VERSION = "ars-evidence/0.1";
 export const RECEIPT_OUTCOMES = ["delivered", "no_data", "empty_result", "error_status", "timeout", "wrong_data", "other", "inconclusive"] as const;
-export type ReceiptNetwork = "xrpl:0" | "eip155:8453";
+export type ReceiptNetwork = "xrpl:0" | "eip155:8453" | "stellar:pubnet";
 
 export interface Receipt {
   type: typeof RECEIPT_TYPE;
@@ -33,7 +33,7 @@ export interface Receipt {
   /** A corrected receipt names the receipt it replaces; the old one stays verifiable (receipts_superseded). */
   supersedes?: { receipt_hash: string; reason: string; corrections_url?: string };
   receipt_hash: string;
-  signer: { key_type: "ripple-keypairs" | "eip191"; address: string; public_key?: string; message: string; signature: string };
+  signer: { key_type: "ripple-keypairs" | "eip191" | "stellar-ed25519"; address: string; public_key?: string; message: string; signature: string };
 }
 export type ReceiptBody = Omit<Receipt, "receipt_hash" | "signer">;
 
@@ -85,7 +85,8 @@ export async function verifyReceipt(r: any): Promise<ReceiptCheck> {
   for (const k of ["receipt_id", "issued_at", "issuer", "seller", "payment", "delivery", "receipt_hash", "signer"]) if (r[k] == null) errors.push("missing_" + k);
   if (errors.length) return out;
   const p = r.payment, s = r.signer;
-  if (p.network !== "xrpl:0" && p.network !== "eip155:8453") errors.push("payment.network");
+  if (p.network !== "xrpl:0" && p.network !== "eip155:8453" && p.network !== "stellar:pubnet") errors.push("payment.network");
+  if (p.network === "stellar:pubnet" && !STELLAR_TX_RE.test(String(p.tx_hash))) errors.push("payment.tx_hash");
   if (p.network === "xrpl:0" && !XRPL_TX_RE.test(String(p.tx_hash))) errors.push("payment.tx_hash");
   if (p.network === "eip155:8453" && !EVM_TX_RE.test(String(p.tx_hash))) errors.push("payment.tx_hash");
   if (!/^[0-9]+(\.[0-9]+)?$/.test(String(p.amount))) errors.push("payment.amount");
@@ -111,6 +112,11 @@ export async function verifyReceipt(r: any): Promise<ReceiptCheck> {
     const rec = recoverEvmSigner(msg, String(s.signature));
     out.signature_ok = !!rec && EVM_ADDR_RE.test(String(s.address)) && rec === String(s.address).toLowerCase();
     out.signer_is_payer = String(s.address).toLowerCase() === String(p.payer).toLowerCase();
+  } else if (s.key_type === "stellar-ed25519") {
+    if (p.network !== "stellar:pubnet") errors.push("key_type_network");
+    if (!STELLAR_ADDR_RE.test(String(s.address))) errors.push("signer.address");
+    out.signature_ok = STELLAR_ADDR_RE.test(String(s.address)) && verifyStellarSignature(msg, String(s.signature), String(s.address));
+    out.signer_is_payer = s.address === p.payer;
   } else errors.push("signer.key_type");
   // I-2: a valid signature over a stated hash that does not match the body proves nothing about this body.
   if (out.signature_ok && !out.hash_ok) { out.signature_ok = false; errors.push("signature_not_over_body"); }
@@ -253,9 +259,9 @@ export function receiptVerifyDoc(base: string) {
     verify_yourself: [
       "1. receipt_hash: remove receipt_hash and signer, serialise the rest as RFC 8785-style canonical JSON (keys sorted, no whitespace), SHA-256, lowercase hex. It must equal receipt_hash.",
       "2. message: signer.message must equal `lumi-receipt:<payment.network>:<payment.tx_hash>:<receipt_hash>`.",
-      "3. signature: XRPL (key_type ripple-keypairs): ripple-keypairs verify(<UTF-8 bytes of message as uppercase hex>, signature, public_key), and deriveAddress(public_key) = signer.address. Base (key_type eip191): EIP-191 personal_sign recovery of message gives signer.address.",
+      "3. signature: XRPL (key_type ripple-keypairs): ripple-keypairs verify(<UTF-8 bytes of message as uppercase hex>, signature, public_key), and deriveAddress(public_key) = signer.address. Base (key_type eip191): EIP-191 personal_sign recovery of message gives signer.address. Stellar (key_type stellar-ed25519): ed25519 verify of the UTF-8 message bytes with the base64 signature against the public key inside signer.address (G-address, StrKey).",
       "4. signer.address must equal payment.payer.",
-      "5. ledger: fetch payment.tx_hash. XRPL: validated, tesSUCCESS, Account = payer, Destination = seller.pay_to, delivered_amount = amount/asset, and SigningPubKey = signer.public_key. Base: status success with a USDC (0x8335…2913) Transfer from payer to seller.pay_to for amount.",
+      "5. ledger: fetch payment.tx_hash. XRPL: validated, tesSUCCESS, Account = payer, Destination = seller.pay_to, delivered_amount = amount/asset, and SigningPubKey = signer.public_key. Base: status success with a USDC (0x8335…2913) Transfer from payer to seller.pay_to for amount. Stellar: Horizon /transactions/<tx_hash> successful, and its operations show a USDC (issuer GA5Z…KZVN, SAC CCW67…MI75) transfer from payer to seller.pay_to for amount.",
       "6. delivery.* is the tester's signed statement about what the paid call returned. It cannot be proven on-chain; the seller can answer via the right to reply.",
     ],
     example_code_js: [
@@ -264,6 +270,7 @@ export function receiptVerifyDoc(base: string) {
       "const { receipt_hash, signer, ...body } = receipt; const h = sha256(toHex(canon(body))).slice(2); // must equal receipt_hash",
       "// XRPL: verify(Buffer.from(signer.message, 'utf8').toString('hex').toUpperCase(), signer.signature, signer.public_key) && deriveAddress(signer.public_key) === signer.address",
       "// Base: (await recoverMessageAddress({ message: signer.message, signature: signer.signature })).toLowerCase() === signer.address.toLowerCase()",
+      "// Stellar: import { Keypair } from '@stellar/stellar-sdk'; Keypair.fromPublicKey(signer.address).verify(Buffer.from(signer.message, 'utf8'), Buffer.from(signer.signature, 'base64'))",
     ],
     keys: "Signed on Lumi's operator box with the wallet that paid. Lumi's API never holds or exposes wallet keys.",
     methodology: `${base}/v1/trust/methodology`,
@@ -278,16 +285,18 @@ export function buildReceiptBody(
 ): ReceiptBody {
   const base = opts.base ?? "https://api.lumitrades.io";
   const xrpl = b.network === "xrpl:0";
+  const stellar = b.network === "stellar:pubnet";
+  const chainLabel = xrpl ? "XRPL" : stellar ? "Stellar" : "Base";
   let domain = b.domain ?? undefined;
   let endpoint = b.endpoint;
   if (!/^https?:\/\//i.test(endpoint)) endpoint = "https://" + endpoint;
   try { domain = domain ?? new URL(endpoint).hostname.toLowerCase(); } catch { /* keep */ }
-  const rail = `${xrpl ? "XRPL" : "Base"} ${b.asset}`;
-  const atomic = b.asset === "XRP" ? Math.round(Number(b.amount) * 1e6) : b.asset === "USDC" ? Math.round(Number(b.amount) * 1e6) : undefined;
+  const rail = `${chainLabel} ${b.asset}`;
+  const atomic = b.asset === "XRP" ? Math.round(Number(b.amount) * 1e6) : b.asset === "USDC" ? Math.round(Number(b.amount) * (stellar ? 1e7 : 1e6)) : undefined;
   return {
     type: RECEIPT_TYPE,
     version: RECEIPT_VERSION,
-    receipt_id: `lumi-${xrpl ? "xrpl" : "base"}-${b.tx_hash}`,
+    receipt_id: `lumi-${xrpl ? "xrpl" : stellar ? "stellar" : "base"}-${b.tx_hash}`,
     issued_at: opts.issuedAt,
     issuer: { name: "Lumi", methodology_url: `${base}/v1/trust/methodology`, methodology_version: "v0" },
     seller: { ...(b.kind === "vendor" ? { vendor_id: b.ref } : {}), endpoint, ...(domain ? { domain } : {}), pay_to: chain.pay_to },

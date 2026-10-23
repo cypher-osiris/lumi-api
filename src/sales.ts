@@ -10,12 +10,13 @@ export const OWN_WALLETS = [
   "0x5E617bac19912e6d212CB303ae84655E9E203532", // Base main (pay-to)
   "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM", // XRPL main (pay-to)
   "rpvsTYDZmX1j1ndmEFG6YjjZZwp6VRtQRz", // XRPL demo buyer (test-buys)
+  "GCKTH26VNR4H4WLCXS5DX6563XRQQXWP5QKQWFD6CHOGTZJ2N5GKBU2L", // Stellar wallet (pay-to + test-buyer)
 ];
 
 export interface SaleEvent {
   route: string;
   routeKey?: string;
-  rail: "xrpl" | "base";
+  rail: "xrpl" | "base" | "stellar";
   network: string;
   asset: string;
   /** Decimal units (XRP, not drops; USDC, not atomic). */
@@ -72,7 +73,7 @@ export class D1SalesStore implements SalesStore {
       ts: Number(x.ts),
       route: String(x.route),
       routeKey: (x.route_key as string) ?? null,
-      rail: x.rail as "xrpl" | "base",
+      rail: x.rail as "xrpl" | "base" | "stellar",
       network: String(x.network),
       asset: String(x.asset),
       amount: String(x.amount),
@@ -177,7 +178,7 @@ async function loadEmailMessage(): Promise<(from: string, to: string, raw: strin
 }
 
 export function alertText(r: SaleRow): string {
-  return `Lumi sale: ${r.routeKey ?? r.route} paid ${r.amount} ${r.asset} on ${r.rail === "base" ? "Base" : "XRPL"}${r.usd != null ? ` (~$${r.usd})` : ""}${r.isTest ? " [test wallet]" : ""} tx ${r.tx}`;
+  return `Lumi sale: ${r.routeKey ?? r.route} paid ${r.amount} ${r.asset} on ${r.rail === "base" ? "Base" : r.rail === "stellar" ? "Stellar" : "XRPL"}${r.usd != null ? ` (~$${r.usd})` : ""}${r.isTest ? " [test wallet]" : ""} tx ${r.tx}`;
 }
 
 export function alertEnabled(cfg: AlertConfig): boolean {

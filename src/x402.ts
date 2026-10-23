@@ -80,6 +80,8 @@ export interface Quote {
   amountsIou?: Partial<Record<string, string>>;
   /** Optional Base USDC price in atomic units (6 decimals); offered when cfg.evm is set. */
   amountEvm?: string;
+  /** Optional Stellar USDC price in atomic units (7 decimals); offered when cfg.stellar is set. */
+  amountStellar?: string;
   description: string;
   resourceUrl: string;
   /** x402 Bazaar discovery extension for this route (see bazaar.ts); a generic GET/JSON declaration when absent. */
@@ -169,7 +171,8 @@ function macInput(cfg: Config, routeKey: string, amount: string, exp: string, no
 function quoteAmounts(cfg: Config, quote: Quote): string {
   const ious = offeredIous(cfg, quote).map(([o, amt]) => `,${o.symbol}:${o.currency}:${o.issuer}:${amt}`).join("");
   const evm = cfg.evm && quote.amountEvm ? `,EVM:${cfg.evm.network}:${cfg.evm.asset}:${cfg.evm.payTo}:${quote.amountEvm}` : "";
-  return `XRP:${quote.amountDrops}${ious}${evm}`;
+  const st = cfg.stellar && quote.amountStellar ? `,STELLAR:${cfg.stellar.network}:${cfg.stellar.asset}:${cfg.stellar.payTo}:${quote.amountStellar}` : "";
+  return `XRP:${quote.amountDrops}${ious}${evm}${st}`;
 }
 
 function offeredIous(cfg: Config, quote: Quote): [IouOption, string][] {
@@ -332,8 +335,30 @@ export function buildAccepts(cfg: Config, quote: Quote, invoiceId: string): Paym
       extra: { invoiceId, sourceTag: cfg.sourceTag, issuer: o.issuer, symbol: o.symbol },
     });
   }
+  const st = buildStellarRequirement(cfg, quote, invoiceId);
+  if (st) out.push(st);
   return out;
 }
+
+/**
+ * Stellar USDC option (after the XRPL options): x402 v2 `exact` scheme on Stellar (@x402/stellar): the buyer signs a
+ * SEP-41 `transfer(from, payTo, amount)` on the USDC Stellar Asset Contract; the facilitator (OpenZeppelin Channels)
+ * sponsors the network fee (`extra.areFeesSponsored`, required by the client) and submits it. `amount` has 7 decimals.
+ */
+export function buildStellarRequirement(cfg: Config, quote: Quote, invoiceId: string): PaymentRequirements | null {
+  if (!cfg.stellar || !quote.amountStellar) return null;
+  return {
+    scheme: "exact",
+    network: cfg.stellar.network,
+    amount: quote.amountStellar,
+    asset: cfg.stellar.asset,
+    payTo: cfg.stellar.payTo,
+    maxTimeoutSeconds: cfg.invoiceTtlSeconds,
+    extra: { areFeesSponsored: true, invoiceId, symbol: "USDC", decimals: cfg.stellar.decimals },
+  };
+}
+
+export const isStellarRequirement = (r: { network?: unknown }) => typeof r.network === "string" && r.network.startsWith("stellar:");
 
 /**
  * Base USDC option (accepts[0] when configured): x402 v2 `exact` scheme for EVM, EIP-3009 transferWithAuthorization.
@@ -429,6 +454,17 @@ function decodePaymentPayload(header: string): PaymentPayload | null {
 }
 
 function sameRequirements(a: PaymentRequirements, b: PaymentRequirements): boolean {
+  if (isStellarRequirement(a) || isStellarRequirement(b)) {
+    return (
+      a.scheme === b.scheme &&
+      a.network === b.network &&
+      String(a.amount) === String(b.amount) &&
+      a.asset === b.asset &&
+      a.payTo === b.payTo &&
+      Number(a.maxTimeoutSeconds) === Number(b.maxTimeoutSeconds) &&
+      a.extra?.invoiceId === b.extra?.invoiceId
+    );
+  }
   if (isEvmRequirement(a) || isEvmRequirement(b)) {
     const lc = (v: unknown) => String(v ?? "").toLowerCase();
     return (
@@ -477,6 +513,7 @@ export function quoteUsd(quote: Quote): number | undefined {
   const iou = quote.amountsIou?.USDC ?? quote.amountsIou?.RLUSD;
   if (iou && Number.isFinite(Number(iou))) return Number(iou);
   if (quote.amountEvm && /^\d+$/.test(quote.amountEvm)) return Number(quote.amountEvm) / 1e6;
+  if (quote.amountStellar && /^\d+$/.test(quote.amountStellar)) return Number(quote.amountStellar) / 1e7;
   return undefined;
 }
 
@@ -615,6 +652,7 @@ async function requirePaymentOnce(
   }
   // Base (EVM) payments take their own path; everything below is the unchanged XRPL flow.
   if (isEvmRequirement(expected)) return requireEvmPayment(payload, expected, invoiceId, check.expiresAt, cfg, deps, quote, serve);
+  if (isStellarRequirement(expected)) return requireStellarPayment(payload, expected, invoiceId, check.expiresAt, cfg, deps, quote, serve);
 
   const facilitatorBody = JSON.stringify({ paymentPayload: payload, paymentRequirements: expected });
   const post = (path: string) =>
@@ -1033,4 +1071,114 @@ function evmFacilitators(cfg: Config, payload: PaymentPayload, expected: Payment
   }
   list.push(make("fallback", evm.facilitatorUrl, payload, false));
   return list;
+}
+
+// ---------------------------------------------------------------- Stellar flow
+
+const STELLAR_XDR_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+
+
+/**
+ * Stellar USDC settlement through the OpenZeppelin Channels x402 facilitator (Bearer API key). Same guarantees as the
+ * other rails: the invoice is claimed once in the replay guard before settlement, and the signed transaction itself is
+ * claimed too (sha256 of its XDR), so one signed transfer can never be redeemed against two invoices. The facilitator
+ * checks the transfer's asset, `to` = payTo and amount against the requirements; a Soroban auth entry is single-use
+ * on-chain, so a re-submitted transfer cannot move the buyer's USDC twice.
+ */
+async function requireStellarPayment(
+  payload: PaymentPayload,
+  expected: PaymentRequirements,
+  invoiceId: string,
+  expiresAt: number,
+  cfg: Config,
+  deps: PaywallDeps,
+  quote: Quote,
+  serve: (settlement: Settlement, paid: PaymentRequirements) => Promise<Response> | Response,
+): Promise<Response> {
+  const st = cfg.stellar!;
+  const xdr = (payload.payload as Record<string, unknown> | undefined)?.transaction;
+  if (typeof xdr !== "string" || xdr.length < 32 || xdr.length > 20_000 || !STELLAR_XDR_RE.test(xdr)) {
+    return paymentRequiredResponse(cfg, quote, "invalid_stellar_payload");
+  }
+  const txKey = `stellar:${expected.network}:${await sha256Hex(xdr)}`;
+  if (await deps.replay.isUsed(txKey)) return paymentRequiredResponse(cfg, quote, "authorization_already_used");
+
+  // The facilitator gets the requirements exactly as offered (incl. extra.invoiceId), never the client's echo.
+  const body = JSON.stringify({ x402Version: 2, paymentPayload: { ...payload, accepted: expected }, paymentRequirements: expected });
+  const post = (phase: "verify" | "settle") =>
+    deps.fetch(`${st.facilitatorUrl}/${phase}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${st.apiKey}` },
+      body,
+    });
+
+  // ---- verify (no money moves; safe to retry)
+  let verifyResp: Response;
+  try {
+    verifyResp = await post("verify");
+  } catch {
+    return transient("facilitator_unavailable");
+  }
+  if (verifyResp.status === 401 || verifyResp.status === 403 || verifyResp.status === 408 || verifyResp.status === 429 || verifyResp.status >= 500) {
+    deps.log?.({ event: "x402_stellar_facilitator", phase: "verify", status: verifyResp.status });
+    return transient("facilitator_unavailable", verifyResp.headers.get("Retry-After"));
+  }
+  const v = (await verifyResp.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!v || typeof v.isValid !== "boolean" || (v.isValid && verifyResp.status !== 200)) {
+    return json(502, { error: "invalid_verify_response", retryable: false, phase: "verify", settlementAttempted: false });
+  }
+  if (!v.isValid) return paymentRequiredResponse(cfg, quote, `verify_failed:${String(v.invalidReason || "verify_failed")}`);
+  const verifiedPayer = typeof v.payer === "string" ? v.payer : undefined;
+
+  // ---- one-time redemption: the invoice and the signed transaction
+  const ttl = Math.max(60, Math.ceil((expiresAt - Date.now()) / 1000) + 60);
+  try {
+    if (!(await deps.replay.claim(invoiceId, ttl))) return paymentRequiredResponse(cfg, quote, "invoice_already_used");
+    if (!(await deps.replay.claim(txKey, Math.max(ttl, 86_400)))) return paymentRequiredResponse(cfg, quote, "authorization_already_used");
+  } catch {
+    return transient("invoice_guard_unavailable");
+  }
+  const stale = staleRefusal(quote);
+  if (stale) return stale;
+
+  // ---- settle (the facilitator submits the fee-sponsored transfer on Stellar)
+  let settleResp: Response;
+  try {
+    settleResp = await post("settle");
+  } catch {
+    return settlementUnknown();
+  }
+  const s = (await settleResp.json().catch(() => null)) as Record<string, unknown> | null;
+  const tx = typeof s?.transaction === "string" ? s.transaction : "";
+  if (!s || typeof s.success !== "boolean") return settlementUnknown();
+  if (!s.success || settleResp.status !== 200) {
+    const definite = !s.success && !tx && settleResp.status >= 200 && settleResp.status < 500 && settleResp.status !== 408 && settleResp.status !== 429;
+    if (!definite) return settlementUnknown();
+    return paymentRequiredResponse(cfg, quote, `settle_failed:${String(s.errorReason ?? "unknown")}`);
+  }
+  const settlement: Settlement = {
+    success: true,
+    transaction: tx,
+    network: String(s.network || expected.network),
+    payer: typeof s.payer === "string" ? s.payer : verifiedPayer,
+  };
+  deps.log?.({ event: "x402_settled", route: quote.routeKey, asset: "USDC", amount: expected.amount, network: settlement.network, tx, payer: settlement.payer, facilitator: "openzeppelin" });
+  await emitSale(deps, {
+    route: quote.routeKey.split(":")[0],
+    routeKey: quote.routeKey,
+    rail: "stellar",
+    network: settlement.network,
+    asset: "USDC",
+    amount: (Number(expected.amount) / 1e7).toFixed(7).replace(/0+$/, "").replace(/\.$/, ""),
+    usd: quoteUsd(quote),
+    payer: settlement.payer,
+    tx,
+    facilitator: "openzeppelin",
+  });
+
+  const resp = await serve(settlement, expected);
+  const out = new Response(resp.body, resp);
+  out.headers.set(HEADER_PAYMENT_RESPONSE, settleResp.headers.get(HEADER_PAYMENT_RESPONSE) || encodeHeader(settlement));
+  out.headers.set("Cache-Control", "no-store");
+  return out;
 }

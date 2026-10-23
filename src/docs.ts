@@ -92,7 +92,10 @@ export const VERSION = "1.1.3";
 /** accepts[] indices: USDC on Base first (when configured), then XRP, then the XRPL stablecoins. */
 export function acceptsIndex(cfg: Config) {
   const off = cfg.evm ? 1 : 0;
-  return { evm: cfg.evm ? 0 : -1, xrp: off, iou: (i: number) => off + 1 + i, xrplRange: cfg.ious.length ? `${off}-${off + cfg.ious.length}` : String(off) };
+  return {
+    evm: cfg.evm ? 0 : -1, xrp: off, iou: (i: number) => off + 1 + i, xrplRange: cfg.ious.length ? `${off}-${off + cfg.ious.length}` : String(off),
+    stellar: cfg.stellar ? off + 1 + cfg.ious.length : -1,
+  };
 }
 
 /** Plain-English accepts order for docs. */
@@ -102,6 +105,7 @@ export function acceptsOrder(cfg: Config): string {
     ...(cfg.evm ? [`USDC on ${cfg.evm.networkName} (accepts[0])`] : []),
     `XRP (accepts[${ix.xrp}])`,
     ...cfg.ious.map((o, i) => `${o.symbol} on the XRP Ledger (accepts[${ix.iou(i)}])`),
+    ...(cfg.stellar ? [`USDC on ${cfg.stellar.networkName} (accepts[${ix.stellar}])`] : []),
   ].join(", ");
 }
 
@@ -122,7 +126,7 @@ export function indexDoc(cfg: Config, base: string, coins: CoinRef[]) {
       "and the raw paper-trade history, an all-coins signal scan, lite per-coin reads, funding rates, CoinMarketCap Fear & Greed with history, the next 48h of events, " +
       "plus an x402 'should I pay this URL?' check, paid x402 vendor reports and a daily policy brief. " +
       `Trial: ${TRIAL_SHORT} (see free_trial). ` +
-      `Agents call an endpoint, receive HTTP 402 with the price in ${acceptsOrder(cfg)}, sign ${cfg.evm ? "an EIP-3009 USDC authorization or " : ""}a small XRPL Payment, retry, and get JSON back. ` +
+      `Agents call an endpoint, receive HTTP 402 with the price in ${acceptsOrder(cfg)}, sign ${cfg.evm ? "an EIP-3009 USDC authorization or " : ""}${cfg.stellar ? "a Stellar USDC transfer or " : ""}a small XRPL Payment, retry, and get JSON back. ` +
       FRESHNESS_FIELDS,
     source: SOURCE,
     payment: {
@@ -235,10 +239,22 @@ export function wellKnownX402(cfg: Config, base: string) {
           amount: o.prices[e.route],
           payTo: cfg.payTo,
         })),
+        ...(cfg.stellar
+          ? [{
+              scheme: "exact",
+              network: cfg.stellar.network,
+              asset: cfg.stellar.asset,
+              asset_symbol: "USDC",
+              amount: cfg.stellar.amounts[e.route],
+              amount_usdc: cfg.stellar.prices[e.route],
+              payTo: cfg.stellar.payTo,
+              extra: { areFeesSponsored: true },
+            }]
+          : []),
       ],
     })).concat(planResources(cfg, base) as any),
     plans: { note: "Plan routes (seller monitoring, trust data feed) are one x402 payment per 30-day term or one-off, no auto-renew. The concrete URL quotes the list price; the payment binds to ?enrollment= or ?key_id= and is refused before settlement without a valid one (except Feed / Feed Pro, which issue a new key).", monitor: `${base}/v1/monitor`, feed: `${base}/v1/feed`, license: `${base}/v1/feed/license` },
-    facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [...(cfg.evm.cdp ? [cfg.evm.cdp.url] : []), cfg.evm.facilitatorUrl] : [])],
+    facilitators: [cfg.facilitatorUrl, ...(cfg.evm ? [...(cfg.evm.cdp ? [cfg.evm.cdp.url] : []), cfg.evm.facilitatorUrl] : []), ...(cfg.stellar ? [cfg.stellar.facilitatorUrl] : [])],
     networks: paymentNetworks(cfg),
     agent_card: `${base}/.well-known/agent-card.json`,
     openapi: `${base}/openapi.json`,
@@ -317,7 +333,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
           xrp_price: cfg.xrpPricing === "live"
             ? { mode: "live", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]), ...(cfg.xrpRate ? { xrp_usd: cfg.xrpRate.usd, as_of: cfg.xrpRate.as_of } : {}), note: "XRP amount = USD price / live XRP-USD rate (5-minute cache), rounded up to 0.0001 XRP; the 402 quote is binding" }
             : { mode: "fixed", currency: "XRP", amount: dropsToXrp(cfg.pricesDrops[e.route]) },
-          // Payment options in the same order as the 402 accepts[]: Base USDC first, then XRP, then the XRPL IOUs.
+          // Payment options in the same order as the 402 accepts[]: Base USDC first, then XRP, then the XRPL IOUs, then Stellar USDC.
           ...(cfg.evm
             ? { scheme: "exact", network: cfg.evm.network, asset: cfg.evm.asset, asset_symbol: "USDC", amount: cfg.evm.amounts[e.route], payTo: cfg.evm.payTo }
             : { scheme: "exact", network: cfg.network, asset: "XRP", amount_drops: cfg.pricesDrops[e.route], payTo: cfg.payTo }),
@@ -332,6 +348,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
               amount: o.prices[e.route],
               payTo: cfg.payTo,
             })),
+            ...(cfg.stellar ? [{ price: { mode: "fixed", currency: "USDC", amount: cfg.stellar.prices[e.route] }, scheme: "exact", network: cfg.stellar.network, asset: cfg.stellar.asset, amount: cfg.stellar.amounts[e.route], payTo: cfg.stellar.payTo }] : []),
           ],
         },
         responses: {
@@ -385,7 +402,7 @@ export function openApi(cfg: Config, base: string, coins: CoinRef[]) {
         "GET /v1/events gives sourced upcoming macro/crypto events; GET /v1/trades gives the raw paper-trade history; " +
         "GET /v1/institutional gives a daily sourced policy brief (regulators, central banks, banks, tokenization). " +
         `Each paid call is one x402 v2 'exact' payment: ${acceptsOrder(cfg)}` +
-        (cfg.evm ? ` (Base: ${cfg.evm.network}, token ${cfg.evm.asset}; XRPL: ${cfg.network})` : ` (${cfg.network})`) +
+        (cfg.evm ? ` (Base: ${cfg.evm.network}, token ${cfg.evm.asset}; XRPL: ${cfg.network}${cfg.stellar ? `; Stellar: ${cfg.stellar.network}, token ${cfg.stellar.asset}` : ""})` : ` (${cfg.network})`) +
         `; pick an option by network and asset. Unknown coins return 404 and stale data 503 before any payment is requested (not charged). ` +
         `Retries: send the same Idempotency-Key header (or the x402 payment-identifier extension id) with the same payment and the cached response is returned without a second charge. ` +
         `Every response carries as_of, data_age_seconds, next_update and stale_after. Full guide: ${base}/skill.md. Analytics only, not financial advice.`,
@@ -498,7 +515,7 @@ function orIous(cfg: Config): string {
 
 /** "XRP or RLUSD or USDC on the XRP Ledger, or USDC on Base" */
 export function settledIn(cfg: Config): string {
-  return `XRP${orIous(cfg)} on the XRP Ledger${cfg.evm ? `, or USDC on ${cfg.evm.networkName}` : ""}`;
+  return `XRP${orIous(cfg)} on the XRP Ledger${cfg.evm ? `, or USDC on ${cfg.evm.networkName}` : ""}${cfg.stellar ? `, or USDC on ${cfg.stellar.networkName}` : ""}`;
 }
 
 /** Every payment network, in `accepts` order (Base USDC first when configured, then the XRP Ledger). */
@@ -532,6 +549,20 @@ export function paymentNetworks(cfg: Config) {
       payload: "EIP-3009 transferWithAuthorization (gasless for the payer; @x402/evm, @x402/fetch)",
     });
   }
+  if (cfg.stellar) {
+    out.push({
+      network: cfg.stellar.network,
+      name: cfg.stellar.networkName,
+      scheme: "exact",
+      assets: ["USDC"],
+      token: cfg.stellar.asset,
+      decimals: cfg.stellar.decimals,
+      accepts_index: String(ix.stellar),
+      pay_to: cfg.stellar.payTo,
+      facilitator: cfg.stellar.facilitatorUrl,
+      payload: "signed SEP-41 USDC transfer (Soroban auth entry); fees sponsored by the facilitator (@x402/stellar, @x402/fetch)",
+    });
+  }
   return out;
 }
 
@@ -560,6 +591,18 @@ function assetsInfo(cfg: Config) {
       accepts_index: 0,
       pay_to: cfg.evm.payTo,
       note: "EIP-3009 signature only; the facilitator pays gas. Payer needs USDC on Base, no ETH.",
+    });
+  }
+  if (cfg.stellar) {
+    out.push({
+      symbol: "USDC",
+      name: `Circle USDC on ${cfg.stellar.networkName}`,
+      network: cfg.stellar.network,
+      asset: cfg.stellar.asset,
+      unit: 'atomic units (7 decimals) in accepts[].amount (e.g. "100000" = 0.01 USDC)',
+      accepts_index: ix.stellar,
+      pay_to: cfg.stellar.payTo,
+      note: "Signed SEP-41 transfer on the USDC contract; the facilitator sponsors the network fee. Payer needs a USDC trustline and balance on Stellar.",
     });
   }
   return out;
@@ -598,7 +641,8 @@ description: Pay-per-call crypto market reads from Lumi Trades (daily market bri
 Base URL: ${base}
 Network: \`${net}\` (${cfg.networkName}). Assets: XRP${cfg.ious.map((o) => ` or ${o.symbol} (${IOU_NAMES[o.symbol]}, issuer \`${o.issuer}\`, currency \`${o.currency}\`)`).join("")}. Pay to: \`${cfg.payTo}\`.
 ${cfg.evm ? `Also: \`${cfg.evm.network}\` (${cfg.evm.networkName}). Asset: USDC \`${cfg.evm.asset}\`. Pay to: \`${cfg.evm.payTo}\`. Facilitator: ${cfg.evm.cdp ? `${cfg.evm.cdp.url} (Coinbase CDP; fallback ${cfg.evm.facilitatorUrl})` : cfg.evm.facilitatorUrl}.
-` : ""}Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call${cfg.evm ? ", or one EIP-3009 USDC authorization on Base" : ""}).
+` : ""}${cfg.stellar ? `Also: \`${cfg.stellar.network}\` (${cfg.stellar.networkName}). Asset: USDC \`${cfg.stellar.asset}\` (Circle, 7 decimals). Pay to: \`${cfg.stellar.payTo}\`. Facilitator: ${cfg.stellar.facilitatorUrl} (OpenZeppelin, fees sponsored).
+` : ""}Protocol: [x402](https://xrpl.org/docs/agents/agentic-payments-x402) v2, \`exact\` scheme (one presigned XRPL Payment per call${cfg.evm ? ", or one EIP-3009 USDC authorization on Base" : ""}${cfg.stellar ? ", or one signed USDC transfer on Stellar" : ""}).
 No API key, no account, no sign-up for the per-call endpoints (the optional trust data feed uses keys, see below).
 A2A agent card: ${base}/.well-known/agent-card.json. MCP: ${base}/mcp.
 
@@ -708,6 +752,13 @@ The same 402 lists \`accepts[0]\` = \`{ scheme: "exact", network: "${cfg.evm.net
 Sign an EIP-3009 \`transferWithAuthorization\` for exactly \`amount\` to \`payTo\` and retry with \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <that entry, unchanged>, payload: { signature, authorization: { from, to, value, validAfter, validBefore, nonce } } })\`.
 Lumi's facilitator (${cfg.evm.cdp ? `Coinbase CDP, fallback ${cfg.evm.facilitatorUrl}` : cfg.evm.facilitatorUrl}) verifies it and submits it on ${cfg.evm.networkName}, paying the gas: your wallet needs USDC only, no ETH. Same rules: one invoice, one payment, never charged when data is stale.
 The official x402 client packages (\`@x402/fetch\` + \`@x402/evm\`) do this for you; USDC on ${cfg.evm.networkName} is the first option, so they pick it by default.
+` : ""}${cfg.stellar ? `
+### Paying with USDC on ${cfg.stellar.networkName} (accepts[${acceptsIndex(cfg).stellar}])
+
+The same 402 lists \`{ scheme: "exact", network: "${cfg.stellar.network}", asset: "${cfg.stellar.asset}", amount: "<atomic USDC, 7 decimals: 100000 = 0.01>", payTo: "${cfg.stellar.payTo}", maxTimeoutSeconds: ${cfg.invoiceTtlSeconds}, extra: { areFeesSponsored: true, invoiceId, symbol: "USDC", decimals: 7 } }\`.
+Sign a SEP-41 \`transfer(from, payTo, amount)\` on the USDC contract (auth entry only) and retry with \`PAYMENT-SIGNATURE: base64(JSON{ x402Version: 2, accepted: <that entry, unchanged>, payload: { transaction: "<XDR>" } })\`.
+Lumi's facilitator (${cfg.stellar.facilitatorUrl}, OpenZeppelin Channels) verifies it, sponsors the fee and submits it: your account needs a USDC trustline and balance, no extra XLM. Same rules: one invoice, one payment, never charged when data is stale.
+\`@x402/fetch\` + \`@x402/stellar\` (\`createEd25519Signer\`, \`ExactStellarScheme\`, network \`${cfg.stellar.network}\`) do this for you; register only the Stellar scheme so the client picks this option.
 ` : ""}
 
 ## Example: TypeScript / Node (npm \`x402-xrpl\`)
@@ -839,7 +890,7 @@ print(decode_payment_response(r.headers["PAYMENT-RESPONSE"]))
 
 Lumi publishes its automated observations of other x402 sellers on the XRP Ledger: an unpaid 402-quote check of each listed endpoint every 30 minutes,
 and small paid test-buys from Lumi's own wallets, each with the amount, ledger tx hash, HTTP status and whether the response contained data.
-Test-buys are capped and disclosed: curated XRPL vendors share a hard cap of about $0.50 a day (0.40 RLUSD + 0.10 XRP in total) (not every vendor is bought every day), Base catalog re-buys are capped at $0.10 per day, and no listing priced above $0.05 is bought. The real cadence per vendor is in the coverage figures of /v1/trust/vendors.
+Test-buys are capped and disclosed: test-buys share a hard cap of about $0.50 a day (0.30 RLUSD + 0.10 XRP for curated XRPL vendors, plus up to 0.15 USDC for Stellar sellers) (not every vendor is bought every day), Base catalog re-buys are capped at $0.10 per day, and no listing priced above $0.05 is bought. The real cadence per vendor is in the coverage figures of /v1/trust/vendors.
 Scores are observations with sample sizes, not ratings; few samples are marked low confidence; vendors are listed in allowlist order, not ranked.
 
 - Lookup before you pay: \`GET ${base}/v1/trust/vendors?url=<resource>\` | \`?domain=\` | \`?payTo=\` (full CDP Bazaar catalog, free quote checks on a rotating schedule = "quote-verified, low confidence"; not every listing is checked yet, the response's \`coverage\` line says "N resources across M domains indexed, X quote-verified, Y purchase-verified on Base (USDC); separately, Z XRPL endpoints from curated vendors purchase-verified"; on-chain test-buys = "purchase-verified", counted per chain: Base USDC buys of Bazaar listings vs XRPL buys of a small curated list (\`purchase_verified_by_chain\`); no match = \`{observed:false}\`, not a negative signal). Free lookups are answer-only (tier, last quote check, test-buy count; no tx hashes) and rate-limited per client; evidence is in the paid \`/v1/trust/check\` ($0.004) and \`/v1/trust/vendors/{id}/report\` ($0.02). Browse a teaser (top 100 most-used, 25 per page, 40 requests/day): \`GET ${base}/v1/trust/catalog?page=1\`.

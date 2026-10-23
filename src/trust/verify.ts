@@ -5,6 +5,7 @@
 import { verify as keypairVerify, deriveAddress } from "ripple-keypairs";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { ed25519 } from "@noble/curves/ed25519";
 
 export const RLUSD = { currency: "524C555344000000000000000000000000000000", issuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" };
 export const USDC_XRPL = { currency: "5553444300000000000000000000000000000000", issuer: "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE" };
@@ -16,6 +17,12 @@ export const XRPL_TX_RE = /^[0-9A-F]{64}$/;
 export const EVM_TX_RE = /^0x[0-9a-f]{64}$/;
 export const XRPL_ADDR_RE = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 export const EVM_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+export const STELLAR_TX_RE = /^[0-9a-f]{64}$/;
+export const STELLAR_ADDR_RE = /^G[A-Z2-7]{55}$/;
+export const STELLAR_NET = "stellar:pubnet";
+/** Circle USDC on Stellar pubnet (classic issuer; its SAC is CCW67TSZ…MI75). */
+export const STELLAR_USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+export const STELLAR_HORIZON = "https://horizon.stellar.org";
 
 export type Fetch = typeof fetch;
 
@@ -209,5 +216,80 @@ export function recoverEvmSigner(message: string, signature: string): string | n
     return "0x" + hex(keccak_256(pub.slice(1)).slice(-20));
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------- Stellar
+
+/** USDC moved by a successful Stellar pubnet tx: SEP-41 transfers (Horizon asset_balance_changes) and classic payments. */
+export async function lookupStellarUsdc(f: Fetch, horizon: string, hash: string): Promise<Lookup> {
+  const h = horizon.replace(/\/+$/, "");
+  const get = async (path: string) => {
+    const r = await f(`${h}${path}`, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`horizon http ${r.status}`);
+    return r.json() as Promise<any>;
+  };
+  let tx: any, ops: any;
+  try {
+    tx = await get(`/transactions/${hash}`);
+    if (!tx) return { ok: false, reason: "tx_not_found" };
+    if (tx.successful !== true) return { ok: false, reason: "tx_failed" };
+    ops = await get(`/transactions/${hash}/operations?limit=50`);
+  } catch {
+    return { ok: false, reason: "ledger_unavailable" };
+  }
+  const ts = Date.parse(String(tx.created_at ?? ""));
+  const payments: LedgerPayment[] = [];
+  for (const op of ops?._embedded?.records ?? []) {
+    const changes: any[] = op.type === "invoke_host_function" ? op.asset_balance_changes ?? [] :
+      op.type === "payment" ? [{ type: "transfer", from: op.from, to: op.to, amount: op.amount, asset_code: op.asset_code, asset_issuer: op.asset_issuer }] : [];
+    for (const c of changes) {
+      if (c?.type !== "transfer" || c.asset_code !== "USDC" || c.asset_issuer !== STELLAR_USDC_ISSUER) continue;
+      if (!(Number(c.amount) > 0)) continue;
+      payments.push({ hash, from: String(c.from), to: String(c.to), amount: String(Number(c.amount)), asset: "USDC", ts });
+    }
+  }
+  if (!payments.length) return { ok: false, reason: "not_a_payment" };
+  return { ok: true, payments };
+}
+
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function crc16xmodem(bytes: Uint8Array): number {
+  let crc = 0;
+  for (const b of bytes) {
+    crc ^= b << 8;
+    for (let i = 0; i < 8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc;
+}
+
+/** Raw 32-byte ed25519 public key of a Stellar G-address (StrKey, checksum verified), or null. */
+export function stellarPublicKey(address: string): Uint8Array | null {
+  if (!STELLAR_ADDR_RE.test(address)) return null;
+  let bits = 0, val = 0;
+  const out: number[] = [];
+  for (const ch of address) {
+    val = (val << 5) | B32.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) { out.push((val >>> (bits - 8)) & 0xff); bits -= 8; }
+  }
+  const raw = Uint8Array.from(out);
+  if (raw.length !== 35 || raw[0] !== 6 << 3) return null;
+  const crc = crc16xmodem(raw.slice(0, 33));
+  if (raw[33] !== (crc & 0xff) || raw[34] !== crc >> 8) return null;
+  return raw.slice(1, 33);
+}
+
+/** Stellar signature: ed25519 over the UTF-8 bytes of `message` by the G-address's key; signature as base64 (stellar-sdk Keypair.sign). */
+export function verifyStellarSignature(message: string, signatureB64: string, address: string): boolean {
+  try {
+    const pk = stellarPublicKey(address);
+    if (!pk) return false;
+    const sig = Uint8Array.from(atob(signatureB64), (c) => c.charCodeAt(0));
+    if (sig.length !== 64) return false;
+    return ed25519.verify(sig, new TextEncoder().encode(message), pk);
+  } catch {
+    return false;
   }
 }

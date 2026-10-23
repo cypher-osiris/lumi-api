@@ -5,10 +5,11 @@
 
 import { createBadges } from "./trust/badge";
 import { setPrivateNames } from "./sanitize";
-import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, type Config, type Env, type PaidRoute } from "./config";
+import { loadConfig, EXPLORERS, dropsToXrp, atomicToUsdc, LUMI_STELLAR_ADDRESS, stroopsToUsdc, type Config, type Env, type PaidRoute } from "./config";
+import { STELLAR_HORIZON } from "./trust/verify";
 import { DataSource, type DataFile } from "./data";
 import { D1TrialStore, MemoryTrialStore, SIWX_HEADER, SIWX_KEY, TRIAL_LIMITS, trialHint, wantsTrial, decodeSiwx, siwxChallenge, trialEligible, trialIpHash, usdcBalance, verifySiwx, trialChains, xrplTrialAccount, type TrialStore } from "./trial";
-import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, staleRefusal, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
+import { makeReplayGuard, json, requirePayment, paymentRequiredResponse, staleRefusal, HEADER_PAYMENT_SIGNATURE, HEADER_X_PAYMENT, assetLabel, isEvmRequirement, isStellarRequirement, type PaywallDeps, type PaymentRequirements, type Quote, type Settlement } from "./x402";
 import { PAID_ENDPOINTS } from "./catalog";
 import { bazaarExtension, resourceDescription, serviceMeta } from "./bazaar";
 import { indexDoc, indexHtml, openApi, skillMd, wellKnownX402, VERSION } from "./docs";
@@ -253,6 +254,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
   const trustStore: TrustStore = opts.trustStore ?? (env.TRUST_DB ? new D1TrustStore(env.TRUST_DB) : new MemoryTrustStore(SEED_OBSERVATIONS));
   const receiptStore: ReceiptStore = opts.receiptStore ?? (env.TRUST_DB ? new D1ReceiptStore(env.TRUST_DB) : new MemoryReceiptStore());
   const evmBuyers = split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS;
+  const stellarBuyers = split(env.TRUST_BUYER_STELLAR).length ? split(env.TRUST_BUYER_STELLAR) : [LUMI_STELLAR_ADDRESS];
+  const stellarHorizon = (env.STELLAR_HORIZON_URL || STELLAR_HORIZON).replace(/\/+$/, "");
   const evidenceStore = opts.evidenceStore ?? (env.TRUST_DB ? new D1EvidenceStore(env.TRUST_DB) : new MemoryEvidenceStore());
   const commerceStore: CommerceStore = opts.commerceStore ?? (env.TRUST_DB ? new D1CommerceStore(env.TRUST_DB) : new MemoryCommerceStore());
   const ownerReq = async (request: Request) => {
@@ -272,12 +275,13 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     evidence: evidenceStore,
     onStatusChanges: (changes) => commerceStore.addChanges(changes),
     baseRpcs: split(env.BASE_INDEX_RPCS).length ? split(env.BASE_INDEX_RPCS) : ["https://base-rpc.publicnode.com", "https://base.drpc.org", "https://gateway.tenderly.co/public/base"],
-    buyers: { xrpl: xrplBuyers, evm: split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS },
+    buyers: { xrpl: xrplBuyers, evm: split(env.TRUST_BUYER_EVM).length ? split(env.TRUST_BUYER_EVM) : DEFAULT_EVM_BUYERS, stellar: stellarBuyers },
+    stellarHorizon,
     self: {
       name: "Lumi Trades API",
       url: config.publicBaseUrl || "https://api.lumitrades.io",
       domains: ["lumitrades.io", "api.lumitrades.io"],
-      pay_to: [config.payTo, ...(config.evm ? [config.evm.payTo] : []), ...DEFAULT_EVM_BUYERS],
+      pay_to: [config.payTo, ...(config.evm ? [config.evm.payTo] : []), ...(config.stellar ? [config.stellar.payTo] : []), ...DEFAULT_EVM_BUYERS],
     },
     isOwner: async (request) => {
       const m = (request.headers.get("Authorization") ?? "").match(/^Bearer\s+(\S+)$/i);
@@ -299,6 +303,8 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
     publicBase: config.publicBaseUrl || undefined,
     receipts: receiptStore,
     evmBuyers,
+    stellarBuyers,
+    stellarHorizon,
     annotate: (doc, payTos) => commerce.annotate(doc, payTos),
   });
   const badges = createBadges({
@@ -777,6 +783,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
           samplesUrl: `${base}/v1/samples`,
           amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
           amountEvm: config.evm?.amounts[route],
+          amountStellar: config.stellar?.amounts[route],
           description: resourceDescription(route, `Lumi API ${endpoint.template}: ${endpoint.summary}`, { usd: config.evm?.prices[route] ?? config.ious.find((o) => o.symbol === "RLUSD")?.prices[route] }),
           resourceUrl: `${base}${path}`,
           bazaar: bazaarExtension(route, isReport ? "printmoneylab" : "xrp", undefined, config.evm?.prices[route]),
@@ -808,6 +815,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         samplesUrl: `${base}/v1/samples`,
         amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
         amountEvm: config.evm?.amounts[route],
+          amountStellar: config.stellar?.amounts[route],
         description: resourceDescription(route, `Lumi API ${endpoint.template}: ${endpoint.summary}`, { usd }),
         resourceUrl: `${base}${path}`,
         bazaar: bazaarExtension(route, undefined, { url: "https://api.example.com/v1/data" }, usd),
@@ -843,6 +851,7 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
       samplesUrl: `${base}/v1/samples`,
       amountsIou: Object.fromEntries(config.ious.map((o) => [o.symbol, o.prices[route]])),
       amountEvm: config.evm?.amounts[route],
+          amountStellar: config.stellar?.amounts[route],
       description: resourceDescription(
         route,
         `Lumi API ${endpoint.template}: ${endpoint.summary}`,
@@ -903,7 +912,18 @@ export function createApp(env: Env, opts: AppOptions = {}): App {
         if (ctx) ctx.waitUntil(p);
       }
       const evm = isEvmRequirement(paid);
-      const payment = evm
+      const payment = isStellarRequirement(paid)
+        ? {
+            transaction: s.transaction,
+            network: s.network,
+            payer: s.payer ?? null,
+            asset: "USDC",
+            amount: stroopsToUsdc(paid.amount),
+            amount_atomic: paid.amount,
+            token: paid.asset,
+            explorer: s.transaction && config.stellar ? `${config.stellar.explorer}${s.transaction}` : null,
+          }
+        : evm
         ? {
             transaction: s.transaction,
             network: s.network,

@@ -89,6 +89,7 @@ export function planQuote(cfg: Config, plan: PlanId, subject: string, usd: strin
     amountDrops: usdToDrops(usd, rate),
     amountsIou,
     amountEvm: cfg.evm ? String(Math.round(Number(usd) * 1e6)) : undefined,
+    amountStellar: cfg.stellar ? String(Math.round(Number(usd) * 1e7)) : undefined,
     description: `${TRUST_SERVICE_NAME} ${p.name}${p.family === "monitor" ? " (x402 seller monitoring)" : " (x402 trust data feed)"}${test ? " (TEST price for an owner-flagged Lumi test wallet)" : ""}. ${p.summary} No auto-renew.`.slice(0, 500),
     resourceUrl,
     service: { serviceName: TRUST_SERVICE_NAME, tags: p.family === "monitor" ? ["monitoring", "x402", "trust"] : ["data", "trust", "x402"], iconUrl: SERVICE_ICON },

@@ -72,6 +72,12 @@ EVM_NETWORK = "eip155:8453"                               # Base mainnet
 EVM_PAY_TO = "0x5E617bac19912e6d212CB303ae84655E9E203532" # Lumi's Base receiving wallet (address only)
 EVM_FACILITATOR_URL = "https://facilitator.payai.network" # keyless fallback; primary is Coinbase CDP when CDP_API_KEY_ID/SECRET secrets are set
 ACCEPT_BASE_USDC = "true"                                 # "false" turns the Base option off; prices follow PRICE_<ROUTE>_USDC
+# Stellar USDC over x402 (stellar:pubnet, @x402/stellar exact): offered after the XRPL options, same USD prices as Base USDC.
+# Facilitator: OpenZeppelin Channels (fees sponsored); its API key is the secret STELLAR_FACILITATOR_API_KEY. Address only here.
+STELLAR_NETWORK = "stellar:pubnet"
+STELLAR_PAY_TO = "GCKTH26VNR4H4WLCXS5DX6563XRQQXWP5QKQWFD6CHOGTZJ2N5GKBU2L" # Lumi's Stellar wallet (address only)
+STELLAR_FACILITATOR_URL = "https://channels.openzeppelin.com/x402"
+ACCEPT_STELLAR_USDC = "false"                             # off until the Stellar account is funded + has a USDC trustline
 # XRP options are priced from a live XRP/USD rate (median of several sources, cached 5 min, then last-known, then fixed PRICE_<R>_XRP).
 XRP_PRICING = "live"
 SALES_ALERT_FROM = "hello@lumitrades.io"                  # sender for the private sale alert; the recipient is a secret (SALES_ALERT_EMAIL)

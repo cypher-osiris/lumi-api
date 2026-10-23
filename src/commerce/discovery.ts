@@ -23,6 +23,7 @@ export function planAccepts(cfg: Config, id: PlanId) {
     ...(cfg.evm ? [{ scheme: "exact", network: cfg.evm.network, asset: cfg.evm.asset, asset_symbol: "USDC", amount: String(Math.round(Number(usd) * 1e6)), amount_usdc: usd, payTo: cfg.evm.payTo, extra: { name: cfg.evm.eip712.name, version: cfg.evm.eip712.version } }] : []),
     { scheme: "exact", network: cfg.network, asset: "XRP", amount: drops, amount_xrp: dropsToXrp(drops), payTo: cfg.payTo },
     ...cfg.ious.map((o) => ({ scheme: "exact", network: cfg.network, asset: o.currency, asset_symbol: o.symbol, issuer: o.issuer, amount: usd, payTo: cfg.payTo })),
+    ...(cfg.stellar ? [{ scheme: "exact", network: cfg.stellar.network, asset: cfg.stellar.asset, asset_symbol: "USDC", amount: String(Math.round(Number(usd) * 1e7)), amount_usdc: usd, payTo: cfg.stellar.payTo, extra: { areFeesSponsored: true } }] : []),
   ];
 }
 
@@ -109,6 +110,7 @@ export function commerceOpenApiPaths(cfg: Config, base: string) {
           alternatives: [
             ...(cfg.evm ? [{ price: { mode: "fixed", currency: "USDC", amount: p.usd }, scheme: "exact", network: cfg.evm.network, asset: cfg.evm.asset, amount: String(Math.round(Number(p.usd) * 1e6)), payTo: cfg.evm.payTo }] : []),
             ...cfg.ious.map((o) => ({ price: { mode: "fixed", currency: o.symbol, amount: p.usd }, network: cfg.network, asset: o.currency, issuer: o.issuer, amount: p.usd })),
+            ...(cfg.stellar ? [{ price: { mode: "fixed", currency: "USDC", amount: p.usd }, scheme: "exact", network: cfg.stellar.network, asset: cfg.stellar.asset, amount: String(Math.round(Number(p.usd) * 1e7)), payTo: cfg.stellar.payTo }] : []),
           ],
           term_days: p.days,
           auto_renew: false,

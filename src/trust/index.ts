@@ -22,7 +22,7 @@ import { isStorageQuotaError, storageUnavailableBody } from "./storage_errors";
 import type { LookupQuery } from "./catalog";
 import type { ObservationRow, ProbeRow, ProbeSummary, ReportRow, TrustStore } from "./store";
 import {
-  lookupXrplPayment, lookupBaseUsdc, verifyXrplSignature, xrplAddressOf, xrplRegularKey, recoverEvmSigner, sha256Hex,
+  lookupXrplPayment, lookupBaseUsdc, lookupStellarUsdc, STELLAR_HORIZON, verifyXrplSignature, xrplAddressOf, xrplRegularKey, recoverEvmSigner, sha256Hex,
   XRPL_TX_RE, EVM_TX_RE, XRPL_ADDR_RE, EVM_ADDR_RE, RLUSD, USDC_XRPL, type Fetch, type LedgerPayment,
 } from "./verify";
 
@@ -63,6 +63,9 @@ export interface TrustDeps {
   receipts?: ReceiptStore;
   /** EVM addresses whose payments are Lumi's own test-buys (Base receipts). */
   evmBuyers?: string[];
+  /** Stellar G-addresses whose payments are Lumi's own test-buys (Stellar receipts). */
+  stellarBuyers?: string[];
+  stellarHorizon?: string;
   /** Adds disclosure fields (seller monitoring = commercial relationship) to lookup docs. Never changes scores. */
   annotate?: (doc: Record<string, unknown>, payTos: string[]) => Promise<Record<string, unknown>>;
 }
@@ -344,7 +347,7 @@ export function methodologyDoc(base: string) {
     seller_monitoring: { ...MONITOR_METHODOLOGY, docs: `${base}/v1/monitor`, corrections: `${base}/v1/monitor/corrections` },
     what_is_measured: [
       "Free probes: every 30 minutes Lumi sends one unpaid request to each curated vendor endpoint and records whether it answers with a valid x402 v2 402 quote that offers an XRPL (xrpl:0) option paying an address listed for that vendor (curated list; Bazaar catalog listings get their own quote checks, see x402_catalog), the quoted price and asset, whether the quote carries a sourceTag, and the response time. Probes never send a payment.",
-      "Paid test-buys, by chain. Curated vendor list (/v1/trust/vendors): bought on XRPL (xrpl:0) in RLUSD or XRP from Lumi's XRPL wallet, periodic single calls within shared hard caps (about $0.50 a day: 0.40 RLUSD + 0.10 XRP per day in total across all curated vendors, so not every vendor is bought every day; no endpoint priced above 0.05; actual counts per vendor are in coverage). CDP Bazaar catalog listings: bought in USDC on Base (eip155:8453) from Lumi's Base buyer wallet, through the facilitator the seller's own 402 names, one buy per seller domain plus queued re-buys (no listing priced above $0.05; re-buys capped at $0.10 per day). Catalog listings are not test-bought on XRPL and curated vendors are not test-bought on Base. Every test-buy tx is checked on-chain (successful, sent by a Lumi wallet, received by a listed payTo) before it is stored. Each record (in the paid vendor report or paid trust/check; free surfaces show only date, HTTP status and data yes/no) shows the amount, asset, tx hash, HTTP status, whether the response contained data, latency, and a signed receipt (see receipts).",
+      "Paid test-buys, by chain. Curated vendor list (/v1/trust/vendors): bought on XRPL (xrpl:0) in RLUSD or XRP from Lumi's XRPL wallet, periodic single calls within shared hard caps (about $0.50 a day: 0.30 RLUSD + 0.10 XRP per day in total across all curated vendors, plus up to 0.15 USDC a day on Stellar, so not every vendor is bought every day; no endpoint priced above 0.05; actual counts per vendor are in coverage). CDP Bazaar catalog listings: bought in USDC on Base (eip155:8453) from Lumi's Base buyer wallet, through the facilitator the seller's own 402 names, one buy per seller domain plus queued re-buys (no listing priced above $0.05; re-buys capped at $0.10 per day). Stellar (stellar:pubnet) x402 sellers found in the Bazaar catalog: bought in USDC from Lumi's Stellar wallet within that shared daily cap (up to 0.15 USDC a day, no listing priced above $0.05). Catalog listings are not test-bought on XRPL and curated vendors are not test-bought on Base. Every test-buy tx is checked on-chain (successful, sent by a Lumi wallet, received by a listed payTo) before it is stored. Each record (in the paid vendor report or paid trust/check; free surfaces show only date, HTTP status and data yes/no) shows the amount, asset, tx hash, HTTP status, whether the response contained data, latency, and a signed receipt (see receipts).",
       "Agent reports: any agent that paid a listed vendor can POST /v1/reports. A report counts only if the payment is validated on-ledger (tesSUCCESS, sent by the reporter, delivered to a pay-to address listed for that vendor, within the last 7 days) AND the payer signs the challenge `lumi-report:<network>:<tx_hash>`. Unverified submissions are stored privately for abuse review and are never shown or scored.",
     ],
     x402_catalog: {
@@ -1198,7 +1201,9 @@ export function createTrust(deps: TrustDeps): Trust {
       }
       if (new URL(request.url).searchParams.get("ledger") === "1" && check.ok) {
         const p = r.payment;
-        const look = p.network === "xrpl:0" ? await lookupXrplPayment(deps.fetch, deps.xrplRpc, String(p.tx_hash)) : await lookupBaseUsdc(deps.fetch, deps.baseRpc, String(p.tx_hash));
+        const look = p.network === "xrpl:0" ? await lookupXrplPayment(deps.fetch, deps.xrplRpc, String(p.tx_hash))
+          : p.network === "stellar:pubnet" ? await lookupStellarUsdc(deps.fetch, deps.stellarHorizon ?? STELLAR_HORIZON, String(p.tx_hash))
+          : await lookupBaseUsdc(deps.fetch, deps.baseRpc, String(p.tx_hash));
         if (!look.ok) out.ledger = { ok: false, reason: look.reason };
         else {
           const pay = look.payments.find((x) => x.from.toLowerCase() === String(p.payer).toLowerCase() && x.to.toLowerCase() === String(r.seller.pay_to).toLowerCase());
@@ -1233,7 +1238,7 @@ export function createTrust(deps: TrustDeps): Trust {
       let b: any;
       try { b = await request.json(); } catch { return json(400, { error: "invalid_json" }); }
       const list: any[] = Array.isArray(b?.receipts) ? b.receipts.slice(0, 5) : [];
-      const xr = new Set(deps.buyers), ev = new Set((deps.evmBuyers ?? []).map((x) => x.toLowerCase()));
+      const xr = new Set(deps.buyers), ev = new Set((deps.evmBuyers ?? []).map((x) => x.toLowerCase())), stb = new Set(deps.stellarBuyers ?? []);
       const results: Record<string, unknown>[] = [];
       const ok: { tx_hash: string; network: string; kind: "vendor" | "catalog"; ref: string; receipt: Receipt }[] = [];
       for (const r of list) {
@@ -1241,7 +1246,7 @@ export function createTrust(deps: TrustDeps): Trust {
         const tx = String(r?.payment?.tx_hash ?? "");
         if (!c.ok) { results.push({ tx_hash: tx, stored: false, errors: c.errors }); continue; }
         const payer = String(r.payment.payer);
-        if (!(r.payment.network === "xrpl:0" ? xr.has(payer) : ev.has(payer.toLowerCase()))) { results.push({ tx_hash: tx, stored: false, errors: ["payer_not_lumi_wallet"] }); continue; }
+        if (!(r.payment.network === "xrpl:0" ? xr.has(payer) : r.payment.network === "stellar:pubnet" ? stb.has(payer) : ev.has(payer.toLowerCase()))) { results.push({ tx_hash: tx, stored: false, errors: ["payer_not_lumi_wallet"] }); continue; }
         const buy = await deps.receipts.buy(tx);
         if (!buy) { results.push({ tx_hash: tx, stored: false, errors: ["unknown_test_buy"] }); continue; }
         const mm = receiptMatchesBuy(r, buy);

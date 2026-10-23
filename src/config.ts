@@ -79,6 +79,18 @@ export interface Env {
   EVM_FACILITATOR?: string;
   /** Override for the CDP facilitator base URL (default https://api.cdp.coinbase.com/platform/v2/x402). */
   CDP_FACILITATOR_URL?: string;
+  /** Stellar (pubnet) receiving G-address for USDC over x402 (address only, never a key). Unset = Stellar payments off. */
+  STELLAR_PAY_TO?: string;
+  /** CAIP-2 Stellar network: stellar:pubnet (default) or stellar:testnet. */
+  STELLAR_NETWORK?: string;
+  /** x402 facilitator for the Stellar option (default: OpenZeppelin Channels, https://channels.openzeppelin.com/x402). */
+  STELLAR_FACILITATOR_URL?: string;
+  /** Bearer API key for the Stellar facilitator (`wrangler secret put STELLAR_FACILITATOR_API_KEY`). Required to offer Stellar. */
+  STELLAR_FACILITATOR_API_KEY?: string;
+  /** "false" disables the Stellar USDC option even when STELLAR_PAY_TO is set. Default on. */
+  ACCEPT_STELLAR_USDC?: string;
+  /** Horizon base URL used to verify Stellar test-buy transactions (default https://horizon.stellar.org). */
+  STELLAR_HORIZON_URL?: string;
   /** Durable Object namespace for the strongly-consistent invoice replay guard (recommended). */
   INVOICE_GUARD?: DurableObjectNamespaceLike;
   /** Optional KV namespace used as a weaker (eventually consistent) replay guard. */
@@ -97,6 +109,8 @@ export interface Env {
   TRUST_BUYER_ADDRESSES?: string;
   /** Comma-separated Base (EVM) addresses whose payments count as Lumi test-buys (default: Lumi's two Base wallets). */
   TRUST_BUYER_EVM?: string;
+  /** Comma-separated Stellar G-addresses whose payments count as Lumi test-buys (default: Lumi's Stellar wallet). */
+  TRUST_BUYER_STELLAR?: string;
   /** Cloudflare Queue producer for catalog ingest / quote-check jobs (Workers Free: fan-out keeps each invocation small). */
   TRUST_QUEUE?: { sendBatch(messages: { body: unknown }[]): Promise<unknown> };
   /** Sales alert (optional, off unless set): incoming-webhook URL (Slack/Discord/generic JSON POST). */
@@ -198,6 +212,8 @@ export interface Config {
   publicBaseUrl?: string;
   /** Base USDC option (x402 `exact`, EIP-3009), offered after every XRPL option. Undefined = off. */
   evm?: EvmOption;
+  /** Stellar USDC option (x402 `exact`, SEP-41 transfer, facilitator-sponsored fees), offered after Base. Undefined = off. */
+  stellar?: StellarOption;
   /** USD list price per route (the stablecoin price); live XRP pricing targets exactly this. */
   usdPrices: Record<PaidRoute, string>;
   /** fixed = PRICE_<R>_XRP; live = usdPrices / live XRP-USD rate (pricesDrops is updated in place per request). */
@@ -251,6 +267,89 @@ export const EVM_NETWORKS: Record<EvmNetwork, Omit<EvmOption, "payTo" | "prices"
 };
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+export type StellarNetwork = "stellar:pubnet" | "stellar:testnet";
+export interface StellarOption {
+  network: StellarNetwork;
+  networkName: "Stellar" | "Stellar testnet";
+  payTo: string;
+  /** SEP-41 contract (C...) of Circle USDC (the Stellar Asset Contract). */
+  asset: string;
+  decimals: 7;
+  facilitatorUrl: string;
+  /** Bearer key for the facilitator (secret; never logged or echoed). */
+  apiKey: string;
+  explorer: string;
+  /** Decimal USDC prices per route (same USD list prices as Base USDC). */
+  prices: Record<PaidRoute, string>;
+  /** Atomic USDC amounts (7 decimals) per route, as sent in accepts[].amount. */
+  amounts: Record<PaidRoute, string>;
+}
+
+/** Lumi's Stellar wallet (payTo + test-buyer). Public address only. */
+export const LUMI_STELLAR_ADDRESS = "GCKTH26VNR4H4WLCXS5DX6563XRQQXWP5QKQWFD6CHOGTZJ2N5GKBU2L";
+/** Circle USDC on Stellar: classic issuer and its Stellar Asset Contract (SEP-41). */
+export const STELLAR_NETWORKS: Record<StellarNetwork, { networkName: StellarOption["networkName"]; asset: string; issuer: string; explorer: string; horizon: string }> = {
+  "stellar:pubnet": {
+    networkName: "Stellar",
+    asset: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    explorer: "https://stellar.expert/explorer/public/tx/",
+    horizon: "https://horizon.stellar.org",
+  },
+  "stellar:testnet": {
+    networkName: "Stellar testnet",
+    asset: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+    explorer: "https://stellar.expert/explorer/testnet/tx/",
+    horizon: "https://horizon-testnet.stellar.org",
+  },
+};
+export const STELLAR_FACILITATOR_URL = "https://channels.openzeppelin.com/x402";
+const STELLAR_ADDRESS = /^G[A-Z2-7]{55}$/;
+
+/** Decimal USDC ("0.015") to Stellar atomic units with 7 decimals ("150000"), no floats. */
+export function usdcToStroops(v: string): string {
+  const s = iouValue(v);
+  const [whole, frac = ""] = s.split(".");
+  return (BigInt(whole) * 10_000_000n + BigInt((frac + "0000000").slice(0, 7))).toString();
+}
+
+export function stroopsToUsdc(a: string): string {
+  const d = BigInt(a);
+  const frac = (d % 10_000_000n).toString().padStart(7, "0").replace(/0+$/, "");
+  return frac ? `${d / 10_000_000n}.${frac}` : (d / 10_000_000n).toString();
+}
+
+function stellarConfig(env: Env): StellarOption | undefined {
+  const e = env as Record<string, string | undefined>;
+  const payTo = (env.STELLAR_PAY_TO || "").trim();
+  const apiKey = (env.STELLAR_FACILITATOR_API_KEY || "").trim();
+  if (!payTo || !apiKey || (env.ACCEPT_STELLAR_USDC ?? "true").trim().toLowerCase() === "false") return undefined;
+  if (!STELLAR_ADDRESS.test(payTo)) throw new Error("STELLAR_PAY_TO must be a Stellar G-address");
+  const network = (env.STELLAR_NETWORK || "stellar:pubnet").trim() as StellarNetwork;
+  const net = STELLAR_NETWORKS[network];
+  if (!net) throw new Error(`unsupported STELLAR_NETWORK: ${network} (use stellar:pubnet or stellar:testnet)`);
+  const prices = {} as Record<PaidRoute, string>;
+  const amounts = {} as Record<PaidRoute, string>;
+  for (const r of PAID_ROUTES) {
+    const R = r.toUpperCase();
+    prices[r] = iouValue(e[`PRICE_${R}_STELLAR_USDC`] || e[`PRICE_${R}_BASE_USDC`] || e[`PRICE_${R}_USDC`] || DEFAULT_PRICES[r].usd);
+    amounts[r] = usdcToStroops(prices[r]);
+  }
+  return {
+    network,
+    networkName: net.networkName,
+    payTo,
+    asset: net.asset,
+    decimals: 7,
+    facilitatorUrl: (env.STELLAR_FACILITATOR_URL || STELLAR_FACILITATOR_URL).replace(/\/+$/, ""),
+    apiKey,
+    explorer: net.explorer,
+    prices,
+    amounts,
+  };
+}
 
 /** Decimal USDC string ("0.015") to atomic units with 6 decimals ("15000"), no floats. */
 export function usdcToAtomic(v: string): string {
@@ -412,6 +511,7 @@ export function loadConfig(env: Env): Config {
     invoiceTtlSeconds: Number(env.INVOICE_TTL_SECONDS || 300),
     publicBaseUrl: env.PUBLIC_BASE_URL?.replace(/\/+$/, "") || undefined,
     evm: evmConfig(env),
+    stellar: stellarConfig(env),
     usdPrices: Object.fromEntries(
       PAID_ROUTES.map((r) => {
         const R = r.toUpperCase();

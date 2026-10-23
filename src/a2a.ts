@@ -109,7 +109,8 @@ const FREE_DESCRIPTIONS: Record<string, string> = {
 function priceLine(cfg: Config, route: PaidRoute): string {
   const parts = [`${dropsToXrp(cfg.pricesDrops[route])} XRP`, ...cfg.ious.map((o) => `${o.prices[route]} ${o.symbol}`)];
   const xrpl = `${parts.join(" / ")} on the XRP Ledger`;
-  return cfg.evm ? `${xrpl}, or ${cfg.evm.prices[route]} USDC on ${cfg.evm.networkName}` : xrpl;
+  const st = cfg.stellar ? `, or ${cfg.stellar.prices[route]} USDC on ${cfg.stellar.networkName}` : "";
+  return (cfg.evm ? `${xrpl}, or ${cfg.evm.prices[route]} USDC on ${cfg.evm.networkName}` : xrpl) + st;
 }
 
 export function agentCard(cfg: Config, base: string) {

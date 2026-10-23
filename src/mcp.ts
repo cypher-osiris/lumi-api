@@ -511,7 +511,7 @@ async function callTool(name: string, args: Args, ctx: Ctx): Promise<ToolResult>
           network: cfg.network,
           access: owner ? "owner key: paid tools return data at no charge" : "public: free tools only; paid tools return the price and how to pay",
           ...(ctx.bearerRejected ? { auth_note: "The Authorization bearer token was not recognised; serving public access." } : {}),
-          pay_with: ["XRP", ...cfg.ious.map((o) => o.symbol), ...(cfg.evm ? [`USDC on ${cfg.evm.networkName} (${cfg.evm.network})`] : [])],
+          pay_with: ["XRP", ...cfg.ious.map((o) => o.symbol), ...(cfg.evm ? [`USDC on ${cfg.evm.networkName} (${cfg.evm.network})`] : []), ...(cfg.stellar ? [`USDC on ${cfg.stellar.networkName} (${cfg.stellar.network})`] : [])],
           a2a: `${base}/.well-known/agent-card.json`,
           wallet: "none (remote server; pay via x402 at the REST endpoint or run the lumi-trades-mcp npm package with your own XRPL wallet)",
           endpoints: idx.paid_endpoints.map((e) => ({ path: e.path, prices: e.prices, summary: e.summary })),
@@ -623,8 +623,9 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
   const priceText = cfg.evm
     ? `${cfg.evm.prices[tool.route]} USDC on ${cfg.evm.networkName}, or ${xrplText} on the XRP Ledger`
     : `${xrplText} on the XRP Ledger`;
+  const priceTextAll = cfg.stellar ? `${priceText}, or ${cfg.stellar.prices[tool.route]} USDC on ${cfg.stellar.networkName}` : priceText;
   const summary =
-    `${tool.name} is a paid Lumi tool: ${priceText} per call (x402). ` +
+    `${tool.name} is a paid Lumi tool: ${priceTextAll} per call (x402). ` +
     "This remote MCP connection has no wallet, so nothing was charged and no data was returned. " +
     "The data is fresh and available right now. To get it, either pay per call via x402 at the REST endpoint below, " +
     `or install the ${NPM_PACKAGE} MCP server (npm) with your own wallet (USDC on Base, or the XRP Ledger) so it can pay automatically within spend caps.`;
@@ -637,17 +638,19 @@ function paymentRequired(tool: PaidTool, restUrl: string, cfg: Config, base: str
           charged: false,
           tool: tool.name,
           what_you_get: endpoint.summary,
-          price: cfg.evm ? [prices[prices.length - 1], ...prices.slice(0, -1)] : prices,
+          price: [...(cfg.evm ? [prices[prices.length - 1], ...prices.slice(0, -1)] : prices), ...(cfg.stellar ? [{ asset: "USDC", amount: cfg.stellar.prices[tool.route], network: cfg.stellar.network, token: cfg.stellar.asset }] : [])],
           network: cfg.network,
           pay_to: cfg.payTo,
           ...(cfg.evm ? { base: { network: cfg.evm.network, pay_to: cfg.evm.payTo, asset: cfg.evm.asset } } : {}),
+          ...(cfg.stellar ? { stellar: { network: cfg.stellar.network, pay_to: cfg.stellar.payTo, asset: cfg.stellar.asset } } : {}),
           how_to_pay: [
             {
               option: "x402 REST call",
               url: restUrl,
               steps:
                 "GET the URL -> HTTP 402 with x402 v2 terms (PAYMENT-REQUIRED); sign an EIP-3009 USDC authorization on Base (or an XRPL Payment) for the quoted amount; " +
-                "retry with the PAYMENT-SIGNATURE header -> 200 with the data. @x402/fetch + @x402/evm (Base) or the x402-xrpl SDK (npm or PyPI) does this in one call.",
+                "retry with the PAYMENT-SIGNATURE header -> 200 with the data. @x402/fetch + @x402/evm (Base) or the x402-xrpl SDK (npm or PyPI) does this in one call" +
+                (cfg.stellar ? "; on Stellar, @x402/fetch + @x402/stellar signs a USDC transfer (fees sponsored)." : "."),
               guide: `${base}/skill.md`,
             },
             ...(cfg.evm

@@ -129,6 +129,9 @@ function fnv(s: string): string {
   return h.toString(36);
 }
 
+/** Circle USDC on Stellar mainnet (SEP-41 contract, 7 decimals). */
+const STELLAR_USDC_SAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75";
+
 function optUsd(a: any): number | null {
   const amt = a?.amount ?? a?.maxAmountRequired;
   if (amt == null) return null;
@@ -136,6 +139,7 @@ function optUsd(a: any): number | null {
   const net = String(a.network ?? "");
   if ((net === "eip155:8453" || net === "base") && asset.toLowerCase() === BASE_USDC) return Number(amt) / 1e6;
   if (net.startsWith("solana") && asset === SOLANA_USDC) return Number(amt) / 1e6;
+  if (net === "stellar:pubnet" && asset === STELLAR_USDC_SAC) return Number(amt) / 1e7;
   return null;
 }
 
@@ -725,6 +729,7 @@ export function tierOf(row: CatalogRow, buys: BuyRow[], now: number): string {
 export function explorerFor(network: string, tx: string) {
   if (network === "xrpl:0") return `https://livenet.xrpl.org/transactions/${tx}`;
   if (network === "eip155:8453") return `https://basescan.org/tx/${tx}`;
+  if (network === "stellar:pubnet") return `https://stellar.expert/explorer/public/tx/${tx}`;
   return null;
 }
 
